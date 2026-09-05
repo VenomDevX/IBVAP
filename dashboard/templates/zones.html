@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Zones{% endblock %}
+{% block nav_zones %}active{% endblock %}
+{% block page_title %}Virtual Zone Configuration{% endblock %}
+
+{% block content %}
+<div class="zones-layout">
+    <div class="card">
+        <div class="card-header">
+            <h3><i class="fas fa-draw-polygon"></i> Configured Zones</h3>
+        </div>
+        <div class="card-body">
+            <div class="table-container">
+                <table class="data-table">
+                    <thead>
+                        <tr><th>Zone ID</th><th>Name</th><th>Camera</th><th>Type</th><th>Status</th></tr>
+                    </thead>
+                    <tbody id="zones-tbody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadZones() {
+    try {
+        const res = await apiFetch('/api/zones');
+        const zones = await res.json();
+        document.getElementById('zones-tbody').innerHTML = zones.map(z => `
+            <tr>
+                <td class="mono">${z.zone_id}</td>
+                <td>${z.name}</td>
+                <td>${z.camera_id}</td>
+                <td><span class="zone-type-badge ${z.type}">${z.type}</span></td>
+                <td><span class="status-dot ${z.enabled ? 'online' : 'offline'}"></span> ${z.enabled ? 'Active' : 'Disabled'}</td>
+            </tr>
+        `).join('') || '<tr><td colspan="5" class="text-center">No zones configured</td></tr>';
+    } catch (err) { console.error('Failed to load zones:', err); }
+}
+document.addEventListener('DOMContentLoaded', loadZones);
+</script>
+{% endblock %}

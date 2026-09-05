@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block nav_settings %}active{% endblock %}
+{% block page_title %}System Settings{% endblock %}
+
+{% block content %}
+<div class="settings-grid">
+    <div class="card">
+        <div class="card-header"><h3><i class="fas fa-user-cog"></i> User Info</h3></div>
+        <div class="card-body">
+            <div class="context-info">
+                <p><strong>Username:</strong> <span id="s-username">—</span></p>
+                <p><strong>Role:</strong> <span id="s-role">—</span></p>
+            </div>
+        </div>
+    </div>
+    <div class="card">
+        <div class="card-header"><h3><i class="fas fa-server"></i> System Info</h3></div>
+        <div class="card-body">
+            <div class="context-info" id="system-info">
+                <p>Loading...</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('s-username').textContent = localStorage.getItem('ibvap_user') || 'Unknown';
+    document.getElementById('s-role').textContent = localStorage.getItem('ibvap_role') || 'Unknown';
+
+    apiFetch('/api/statistics/summary').then(r => r.json()).then(data => {
+        document.getElementById('system-info').innerHTML = `
+            <p><strong>Total Cameras:</strong> ${data.total_cameras}</p>
+            <p><strong>Online Cameras:</strong> ${data.online_cameras}</p>
+            <p><strong>Total Alerts:</strong> ${data.total_alerts}</p>
+            <p><strong>Active Tracks:</strong> ${data.active_tracks}</p>
+        `;
+    }).catch(() => {});
+});
+</script>
+{% endblock %}

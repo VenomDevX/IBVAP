@@ -1,0 +1,209 @@
+"""
+IBVAP — YOLOv8 Object Detector
+Wrapper around Ultralytics YOLO for person/vehicle detection.
+"""
+
+import time
+from typing import List, Optional, Dict
+from pathlib import Path
+
+import numpy as np
+import cv2
+from loguru import logger
+
+try:
+    from ultralytics import YOLO
+except ImportError:
+    YOLO = None
+    logger.warning("ultralytics not installed — detector will use mock mode")
+
+from src.detection.detection_result import DetectionResult, FrameDetections
+
+
+# COCO class names for the classes we care about
+COCO_TARGET_CLASSES: Dict[int, str] = {
+    0: "person",
+    1: "bicycle",
+    2: "car",
+    3: "motorcycle",
+    5: "bus",
+    7: "truck",
+}
+
+
+class ObjectDetector:
+    """
+    YOLOv8-based object detector.
+    Detects people, vehicles, and other configurable object classes.
+    """
+
+    def __init__(
+        self,
+        model_path: str = "yolov8n.pt",
+        confidence_threshold: float = 0.40,
+        nms_threshold: float = 0.45,
+        target_classes: Optional[List[int]] = None,
+        device: str = "auto",
+        imgsz: int = 640,
+    ):
+        self.confidence_threshold = confidence_threshold
+        self.nms_threshold = nms_threshold
+        self.target_classes = target_classes or [0, 2, 3, 5, 7]
+        self.imgsz = imgsz
+        self._model = None
+        self._device = device
+        self._model_path = model_path
+
+        # Performance tracking
+        self._inference_times: list = []
+        self._total_detections: int = 0
+
+        self._load_model()
+
+    def _load_model(self):
+        """Load the YOLO model."""
+        if YOLO is None:
+            logger.warning("YOLO not available — running in mock mode")
+            return
+
+        try:
+            logger.info(f"Loading detection model: {self._model_path}")
+            self._model = YOLO(self._model_path)
+
+            # Auto-detect device
+            if self._device == "auto":
+                import torch
+                self._device = "cuda" if torch.cuda.is_available() else "cpu"
+
+            logger.success(f"Detection model loaded on {self._device}")
+
+        except Exception as e:
+            logger.error(f"Failed to load detection model: {e}")
+            self._model = None
+
+    def detect(self, frame: np.ndarray, frame_id: int = 0,
+               camera_id: str = "") -> FrameDetections:
+        """
+        Run object detection on a single frame.
+
+        Args:
+            frame: BGR image (numpy array)
+            frame_id: Frame sequence number
+            camera_id: Camera identifier
+
+        Returns:
+            FrameDetections containing all detected objects
+        """
+        timestamp = time.time()
+        detections: List[DetectionResult] = []
+
+        if self._model is None:
+            return FrameDetections(
+                frame_id=frame_id,
+                camera_id=camera_id,
+                timestamp=timestamp,
+                detections=detections
+            )
+
+        try:
+            start_time = time.time()
+
+            # Run inference
+            results = self._model(
+                frame,
+                conf=self.confidence_threshold,
+                iou=self.nms_threshold,
+                imgsz=self.imgsz,
+                device=self._device,
+                classes=self.target_classes,
+                verbose=False,
+            )
+
+            inference_time = time.time() - start_time
+            self._inference_times.append(inference_time)
+
+            # Parse results
+            if results and len(results) > 0:
+                result = results[0]
+                boxes = result.boxes
+
+                if boxes is not None and len(boxes) > 0:
+                    for box in boxes:
+                        x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
+                        conf = float(box.conf[0].cpu().numpy())
+                        cls_id = int(box.cls[0].cpu().numpy())
+
+                        class_name = COCO_TARGET_CLASSES.get(cls_id, f"class_{cls_id}")
+
+                        detection = DetectionResult(
+                            bbox=(int(x1), int(y1), int(x2), int(y2)),
+                            class_id=cls_id,
+                            class_name=class_name,
+                            confidence=conf,
+                        )
+                        detections.append(detection)
+
+            self._total_detections += len(detections)
+
+        except Exception as e:
+            logger.error(f"Detection error on frame {frame_id}: {e}")
+
+        return FrameDetections(
+            frame_id=frame_id,
+            camera_id=camera_id,
+            timestamp=timestamp,
+            detections=detections
+        )
+
+    def get_average_inference_time(self) -> float:
+        """Get average inference time in milliseconds."""
+        if not self._inference_times:
+            return 0.0
+        # Keep last 100 measurements
+        recent = self._inference_times[-100:]
+        return (sum(recent) / len(recent)) * 1000
+
+    def get_fps(self) -> float:
+        """Get approximate detection FPS."""
+        avg_ms = self.get_average_inference_time()
+        return 1000.0 / avg_ms if avg_ms > 0 else 0.0
+
+    @staticmethod
+    def draw_detections(frame: np.ndarray, frame_detections: FrameDetections,
+                        show_confidence: bool = True) -> np.ndarray:
+        """Draw bounding boxes and labels on frame."""
+        annotated = frame.copy()
+
+        colors = {
+            "person": (0, 255, 0),      # Green
+            "car": (255, 165, 0),        # Orange
+            "motorcycle": (255, 255, 0), # Yellow
+            "bus": (0, 165, 255),         # Orange-blue
+            "truck": (0, 0, 255),         # Red
+            "bicycle": (255, 0, 255),     # Magenta
+        }
+
+        for det in frame_detections.detections:
+            x1, y1, x2, y2 = det.bbox
+            color = colors.get(det.class_name, (128, 128, 128))
+
+            # Bounding box
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+
+            # Label
+            label = det.class_name
+            if show_confidence:
+                label += f" {det.confidence:.2f}"
+
+            (label_w, label_h), _ = cv2.getTextSize(
+                label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1
+            )
+            cv2.rectangle(
+                annotated, (x1, y1 - label_h - 8), (x1 + label_w, y1), color, -1
+            )
+            cv2.putText(
+                annotated, label, (x1, y1 - 4),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1
+            )
+
+        return annotated

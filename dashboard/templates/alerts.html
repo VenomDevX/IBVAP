@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Alerts{% endblock %}
+{% block nav_alerts %}active{% endblock %}
+{% block page_title %}Alert Center{% endblock %}
+
+{% block content %}
+<div class="filters-bar">
+    <select id="filter-level" onchange="filterAlerts()" class="select-small">
+        <option value="">All Levels</option>
+        <option value="critical">🔴 Critical</option>
+        <option value="high">🟠 High</option>
+        <option value="medium">🟡 Medium</option>
+        <option value="low">🟢 Low</option>
+    </select>
+    <select id="filter-reviewed" onchange="filterAlerts()" class="select-small">
+        <option value="">All Status</option>
+        <option value="false">Unreviewed</option>
+        <option value="true">Reviewed</option>
+    </select>
+    <select id="filter-camera" onchange="filterAlerts()" class="select-small">
+        <option value="">All Cameras</option>
+    </select>
+    <button onclick="loadAlerts()" class="btn btn-sm"><i class="fas fa-refresh"></i> Refresh</button>
+</div>
+
+<div class="table-container">
+    <table class="data-table" id="alerts-table">
+        <thead>
+            <tr>
+                <th>Level</th>
+                <th>Alert ID</th>
+                <th>Event Type</th>
+                <th>Camera</th>
+                <th>Time</th>
+                <th>Score</th>
+                <th>Status</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="alerts-tbody"></tbody>
+    </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/alerts.js"></script>
+{% endblock %}

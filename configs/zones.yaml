@@ -1,0 +1,67 @@
+zones:
+  CAM_STREET:
+    - id: "ZONE_STREET_RESTRICTED"
+      name: "Street Intersection"
+      type: "restricted"
+      points:
+        - [0, 500]
+        - [1920, 500]
+        - [1920, 1080]
+        - [0, 1080]
+      enabled: true
+      trigger_classes: ["person", "car", "truck"]
+  
+  CAM_PEOPLE:
+    - id: "ZONE_PEOPLE_LOITERING"
+      name: "Restricted Walkway"
+      type: "restricted"
+      points:
+        - [400, 200]
+        - [1500, 200]
+        - [1500, 1000]
+        - [400, 1000]
+      enabled: true
+      trigger_classes: ["person"]
+
+  CAM_HIGHWAY:
+    - id: "ZONE_HIGHWAY_BUFFER"
+      name: "Highway Approach"
+      type: "buffer"
+      points:
+        - [100, 100]
+        - [1800, 100]
+        - [1800, 900]
+        - [100, 900]
+      enabled: true
+      trigger_classes: ["car", "truck", "bus"]
+
+  CAM_CHECKPOINT:
+    - id: "ZONE_CHECKPOINT_RESTRICTED"
+      name: "Checkpoint Entry"
+      type: "restricted"
+      points:
+        - [200, 200]
+        - [1700, 200]
+        - [1700, 800]
+        - [200, 800]
+      enabled: true
+      trigger_classes: ["person"]
+
+fences:
+  CAM_STREET:
+    - id: "FENCE_STREET_CROSSING"
+      name: "Illegal Street Crossing"
+      point_a: [200, 700]
+      point_b: [1700, 700]
+      trigger_direction: "both"
+      enabled: true
+      trigger_classes: ["person", "car"]
+
+  CAM_HIGHWAY:
+    - id: "FENCE_HIGHWAY_TOLL"
+      name: "Toll Barrier"
+      point_a: [100, 500]
+      point_b: [1800, 500]
+      trigger_direction: "both"
+      enabled: true
+      trigger_classes: ["car", "truck"]

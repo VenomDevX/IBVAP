@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Events{% endblock %}
+{% block nav_events %}active{% endblock %}
+{% block page_title %}Event History{% endblock %}
+
+{% block content %}
+<div class="filters-bar">
+    <select id="filter-type" onchange="loadEvents()" class="select-small">
+        <option value="">All Types</option>
+        <option value="restricted_zone_entry">Zone Entry</option>
+        <option value="fence_crossing">Fence Crossing</option>
+        <option value="loitering">Loitering</option>
+        <option value="night_movement">Night Movement</option>
+        <option value="combined_suspicious_activity">Combined Suspicious</option>
+    </select>
+    <select id="filter-risk" onchange="loadEvents()" class="select-small">
+        <option value="">All Risk Levels</option>
+        <option value="critical">Critical</option>
+        <option value="high">High</option>
+        <option value="medium">Medium</option>
+        <option value="low">Low</option>
+    </select>
+    <button onclick="loadEvents()" class="btn btn-sm"><i class="fas fa-refresh"></i> Refresh</button>
+</div>
+
+<div class="table-container">
+    <table class="data-table" id="events-table">
+        <thead>
+            <tr>
+                <th>Risk</th>
+                <th>Event ID</th>
+                <th>Type</th>
+                <th>Camera</th>
+                <th>Object</th>
+                <th>Time</th>
+                <th>Score</th>
+                <th>Factors</th>
+                <th>Details</th>
+            </tr>
+        </thead>
+        <tbody id="events-tbody"></tbody>
+    </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadEvents() {
+    const type = document.getElementById('filter-type').value;
+    const risk = document.getElementById('filter-risk').value;
+    let url = '/api/events?limit=100';
+    if (type) url += `&event_type=${type}`;
+    if (risk) url += `&risk_level=${risk}`;
+
+    try {
+        const res = await apiFetch(url);
+        const events = await res.json();
+        const tbody = document.getElementById('events-tbody');
+        tbody.innerHTML = events.map(e => `
+            <tr>
+                <td><span class="risk-badge ${e.risk_level}">${getRiskEmoji(e.risk_level)}</span></td>
+                <td class="mono">${e.event_id}</td>
+                <td>${formatEventType(e.event_type)}</td>
+                <td>${e.camera_id}</td>
+                <td>${e.object_type}</td>
+                <td>${formatTime(e.timestamp)}</td>
+                <td><strong>${e.risk_score?.toFixed(0) || 0}</strong></td>
+                <td>${(e.contributing_factors || []).slice(0, 2).join(', ')}</td>
+                <td><a href="/events/${e.event_id}" class="btn btn-xs">View</a></td>
+            </tr>
+        `).join('');
+    } catch (err) { console.error('Failed to load events:', err); }
+}
+
+document.addEventListener('DOMContentLoaded', loadEvents);
+</script>
+{% endblock %}

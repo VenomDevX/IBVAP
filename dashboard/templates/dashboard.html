@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block nav_dashboard %}active{% endblock %}
+{% block page_title %}Command Dashboard{% endblock %}
+
+{% block content %}
+<!-- Summary Stats -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-icon cameras"><i class="fas fa-video"></i></div>
+        <div class="stat-info">
+            <span class="stat-value" id="stat-cameras">0</span>
+            <span class="stat-label">Cameras Online</span>
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon alerts"><i class="fas fa-bell"></i></div>
+        <div class="stat-info">
+            <span class="stat-value" id="stat-alerts">0</span>
+            <span class="stat-label">Active Alerts</span>
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-icon tracks"><i class="fas fa-route"></i></div>
+        <div class="stat-info">
+            <span class="stat-value" id="stat-tracks">0</span>
+            <span class="stat-label">Active Tracks</span>
+        </div>
+    </div>
+    <div class="stat-card critical">
+        <div class="stat-icon critical-icon"><i class="fas fa-exclamation-triangle"></i></div>
+        <div class="stat-info">
+            <span class="stat-value" id="stat-critical">0</span>
+            <span class="stat-label">Critical Alerts</span>
+        </div>
+    </div>
+</div>
+
+<!-- Main Grid -->
+<div class="dashboard-grid">
+    <!-- Camera Feed -->
+    <div class="card camera-card">
+        <div class="card-header">
+            <h3><i class="fas fa-video"></i> Live Feed</h3>
+            <select id="camera-select" onchange="switchCamera(this.value)" class="select-small">
+                <option value="">Select Camera</option>
+            </select>
+        </div>
+        <div class="card-body">
+            <div class="video-container" id="video-container">
+                <img id="video-feed" src="" alt="Camera Feed" class="video-feed" style="display:none">
+                <div class="video-placeholder" id="video-placeholder">
+                    <i class="fas fa-video-slash"></i>
+                    <p>Select a camera to view feed</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Current Alerts -->
+    <div class="card alerts-card">
+        <div class="card-header">
+            <h3><i class="fas fa-bell"></i> Recent Alerts</h3>
+            <a href="/alerts-page" class="btn btn-sm">View All</a>
+        </div>
+        <div class="card-body">
+            <div class="alert-list" id="alert-list">
+                <div class="empty-state">
+                    <i class="fas fa-check-circle"></i>
+                    <p>No active alerts</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Event Timeline -->
+    <div class="card timeline-card">
+        <div class="card-header">
+            <h3><i class="fas fa-list-timeline"></i> Event Timeline</h3>
+            <a href="/events-page" class="btn btn-sm">View All</a>
+        </div>
+        <div class="card-body">
+            <div class="timeline" id="event-timeline">
+                <div class="empty-state">
+                    <i class="fas fa-clock"></i>
+                    <p>No recent events</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Camera Status -->
+    <div class="card status-card">
+        <div class="card-header">
+            <h3><i class="fas fa-signal"></i> Camera Status</h3>
+        </div>
+        <div class="card-body">
+            <div class="camera-status-list" id="camera-status-list">
+                <div class="empty-state">
+                    <i class="fas fa-video-slash"></i>
+                    <p>No cameras configured</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/dashboard.js"></script>
+{% endblock %}

@@ -1,0 +1,46 @@
+# =============================================================================
+# IBVAP — Detection & Behavior Thresholds
+# =============================================================================
+
+detection:
+  confidence_threshold: 0.40
+  nms_threshold: 0.45
+  # Classes to detect (COCO class IDs)
+  # 0=person, 1=bicycle, 2=car, 3=motorcycle, 5=bus, 7=truck
+  target_classes: [0, 2, 3, 5, 7]
+  # Model variant: yolov8n, yolov8s, yolov8m
+  model_variant: "yolov8n"
+  # Input size
+  imgsz: 640
+
+tracking:
+  tracker: "bytetrack"
+  # Track is considered lost after N frames without detection
+  max_age: 30
+  # Minimum consecutive detections to confirm a track
+  min_hits: 3
+  # IoU threshold for matching
+  iou_threshold: 0.3
+
+behavior:
+  # Loitering: seconds before flagging
+  loitering_threshold_seconds: 30
+  # Loitering: minimum movement distance (pixels) — below this = stationary
+  loitering_min_movement: 50
+  # Night hours
+  night_start: "19:00"
+  night_end: "05:00"
+  # Frame brightness threshold for low-light detection (0-255)
+  low_light_brightness_threshold: 60
+  # Direction analysis: minimum trajectory points needed
+  direction_min_points: 5
+  # Speed calculation: pixels per second threshold for "stationary"
+  stationary_speed_threshold: 5.0
+
+alerts:
+  # Cooldown: seconds before re-alerting on same track + same event type
+  cooldown_seconds: 60
+  # Maximum alerts per minute per camera
+  max_alerts_per_minute: 10
+  # Minimum risk score to generate an alert
+  min_alert_risk_score: 20

@@ -1,0 +1,62 @@
+# =============================================================================
+# IBVAP — Risk Engine Weights
+# =============================================================================
+# R = w1*S + w2*T + w3*B + w4*I + w5*V
+#
+# S = Spatial risk (zone proximity, zone entry, fence crossing)
+# T = Temporal risk (night-time, loitering duration, time-of-day)
+# B = Behavioral risk (direction, speed, trajectory anomaly)
+# I = Identity risk (unknown face, low confidence identity)
+# V = Vehicle risk (unknown plate, suspicious vehicle behavior)
+
+weights:
+  spatial: 0.30       # w1 — Spatial context
+  temporal: 0.20      # w2 — Temporal context
+  behavioral: 0.25    # w3 — Behavioral signals
+  identity: 0.15      # w4 — Identity context
+  vehicle: 0.10       # w5 — Vehicle context
+
+# Risk level thresholds (score 0-100)
+levels:
+  low: 25
+  medium: 50
+  high: 75
+  # Anything above 'high' threshold is CRITICAL
+
+# Individual spatial risk scores
+spatial_scores:
+  in_restricted_zone: 90
+  in_buffer_zone: 50
+  fence_crossed: 95
+  approaching_fence: 60
+  in_safe_zone: 5
+
+# Individual temporal risk scores
+temporal_scores:
+  night_time: 40
+  loitering_30s: 50
+  loitering_60s: 70
+  loitering_120s: 90
+  dawn_dusk: 20
+
+# Individual behavioral risk scores
+behavioral_scores:
+  toward_restricted: 60
+  toward_fence: 70
+  wrong_direction: 50
+  abnormal_speed: 40
+  stationary_in_zone: 55
+
+# Individual identity risk scores
+identity_scores:
+  unknown_person: 60
+  uncertain_match: 40
+  known_authorized: 0
+  no_face_detected: 20
+
+# Individual vehicle risk scores
+vehicle_scores:
+  unknown_plate: 50
+  no_plate_detected: 30
+  plate_read_low_confidence: 35
+  known_vehicle: 0

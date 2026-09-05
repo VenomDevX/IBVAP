@@ -1,0 +1,41 @@
+cameras:
+  - id: "CAM_STREET"
+    name: "Street Traffic Camera"
+    source: "./data/custom/street_traffic.mp4"
+    fps: 30
+    resolution: [1920, 1080]
+    capabilities:
+      - "detection"
+      - "tracking"
+      - "face"
+      - "anpr"
+
+  - id: "CAM_PEOPLE"
+    name: "Pedestrian Surveillance"
+    source: "./data/custom/people_walking.mp4"
+    fps: 30
+    resolution: [1920, 1080]
+    capabilities:
+      - "detection"
+      - "tracking"
+      - "face"
+
+  - id: "CAM_HIGHWAY"
+    name: "Highway Border Crossing"
+    source: "./data/custom/highway_border.mp4"
+    fps: 30
+    resolution: [1920, 1080]
+    capabilities:
+      - "detection"
+      - "tracking"
+      - "anpr"
+
+  - id: "CAM_CHECKPOINT"
+    name: "Indoor Checkpoint"
+    source: "./data/custom/indoor_checkpoint.mp4"
+    fps: 30
+    resolution: [1920, 1080]
+    capabilities:
+      - "detection"
+      - "tracking"
+      - "face"

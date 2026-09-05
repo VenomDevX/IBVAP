@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}IBVAP{% endblock %} — Intelligent Border Video Analytics</title>
+    <meta name="description" content="AI-Based Intelligent Video Analytics Platform for Border Surveillance">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link rel="stylesheet" href="/static/css/style.css">
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <!-- Sidebar Navigation -->
+    <nav class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <div class="logo">
+                <i class="fas fa-shield-halved"></i>
+                <span>IBVAP</span>
+            </div>
+            <small class="logo-subtitle">Border Surveillance AI</small>
+        </div>
+
+        <ul class="nav-links">
+            <li><a href="/" class="nav-link {% block nav_dashboard %}{% endblock %}">
+                <i class="fas fa-grid-2"></i><span>Dashboard</span>
+            </a></li>
+            <li><a href="/cameras" class="nav-link {% block nav_cameras %}{% endblock %}">
+                <i class="fas fa-video"></i><span>Cameras</span>
+            </a></li>
+            <li><a href="/alerts-page" class="nav-link {% block nav_alerts %}{% endblock %}">
+                <i class="fas fa-bell"></i><span>Alerts</span>
+                <span class="badge" id="alert-badge" style="display:none">0</span>
+            </a></li>
+            <li><a href="/events-page" class="nav-link {% block nav_events %}{% endblock %}">
+                <i class="fas fa-list-timeline"></i><span>Events</span>
+            </a></li>
+            <li><a href="/zones-page" class="nav-link {% block nav_zones %}{% endblock %}">
+                <i class="fas fa-draw-polygon"></i><span>Zones</span>
+            </a></li>
+            <li><a href="/settings" class="nav-link {% block nav_settings %}{% endblock %}">
+                <i class="fas fa-gear"></i><span>Settings</span>
+            </a></li>
+        </ul>
+
+        <div class="sidebar-footer">
+            <div class="user-info">
+                <i class="fas fa-user-circle"></i>
+                <span id="current-user">Operator</span>
+            </div>
+            <button onclick="logout()" class="btn-logout">
+                <i class="fas fa-sign-out-alt"></i>
+            </button>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <!-- Top Bar -->
+        <header class="topbar">
+            <div class="topbar-left">
+                <button class="menu-toggle" onclick="toggleSidebar()">
+                    <i class="fas fa-bars"></i>
+                </button>
+                <h1 class="page-title">{% block page_title %}Dashboard{% endblock %}</h1>
+            </div>
+            <div class="topbar-right">
+                <div class="system-status" id="system-status">
+                    <span class="status-dot online"></span>
+                    <span>System Online</span>
+                </div>
+                <div class="datetime" id="datetime"></div>
+            </div>
+        </header>
+
+        <!-- Page Content -->
+        <div class="content">
+            {% block content %}{% endblock %}
+        </div>
+    </main>
+
+    <!-- Alert Toast Container -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <script src="/static/js/app.js"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>
