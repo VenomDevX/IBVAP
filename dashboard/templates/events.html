@@ -23,28 +23,15 @@
     <button onclick="loadEvents()" class="btn btn-sm"><i class="fas fa-refresh"></i> Refresh</button>
 </div>
 
-<div class="table-container">
-    <table class="data-table" id="events-table">
-        <thead>
-            <tr>
-                <th>Risk</th>
-                <th>Event ID</th>
-                <th>Type</th>
-                <th>Camera</th>
-                <th>Object</th>
-                <th>Time</th>
-                <th>Score</th>
-                <th>Factors</th>
-                <th>Details</th>
-            </tr>
-        </thead>
-        <tbody id="events-tbody"></tbody>
-    </table>
+<div class="table-container" id="events-grid-wrapper">
+    <!-- Grid.js will mount here -->
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
+let gridInstance = null;
+
 async function loadEvents() {
     const type = document.getElementById('filter-type').value;
     const risk = document.getElementById('filter-risk').value;
@@ -55,20 +42,31 @@ async function loadEvents() {
     try {
         const res = await apiFetch(url);
         const events = await res.json();
-        const tbody = document.getElementById('events-tbody');
-        tbody.innerHTML = events.map(e => `
-            <tr>
-                <td><span class="risk-badge ${e.risk_level}">${getRiskEmoji(e.risk_level)}</span></td>
-                <td class="mono">${e.event_id}</td>
-                <td>${formatEventType(e.event_type)}</td>
-                <td>${e.camera_id}</td>
-                <td>${e.object_type}</td>
-                <td>${formatTime(e.timestamp)}</td>
-                <td><strong>${e.risk_score?.toFixed(0) || 0}</strong></td>
-                <td>${(e.contributing_factors || []).slice(0, 2).join(', ')}</td>
-                <td><a href="/events/${e.event_id}" class="btn btn-xs">View</a></td>
-            </tr>
-        `).join('');
+        
+        const mappedData = events.map(e => [
+            gridjs.html(`<span class="risk-badge ${e.risk_level}">${getRiskEmoji(e.risk_level)}</span>`),
+            e.event_id,
+            formatEventType(e.event_type),
+            e.camera_id,
+            e.object_type,
+            formatTime(e.timestamp),
+            e.risk_score?.toFixed(0) || 0,
+            (e.contributing_factors || []).slice(0, 2).join(', '),
+            gridjs.html(`<a href="/events/${e.event_id}" class="btn btn-xs">View</a>`)
+        ]);
+
+        if (gridInstance) {
+            gridInstance.updateConfig({ data: mappedData }).forceRender();
+        } else {
+            gridInstance = new gridjs.Grid({
+                columns: ["Risk", "Event ID", "Type", "Camera", "Object", "Time", "Score", "Factors", "Details"],
+                data: mappedData,
+                search: true,
+                sort: true,
+                pagination: { enabled: true, limit: 15 },
+                className: { table: 'data-table' }
+            }).render(document.getElementById('events-grid-wrapper'));
+        }
     } catch (err) { console.error('Failed to load events:', err); }
 }
 

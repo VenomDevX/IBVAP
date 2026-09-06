@@ -9,29 +9,52 @@
     <div class="stat-card">
         <div class="stat-icon cameras"><i class="fas fa-video"></i></div>
         <div class="stat-info">
-            <span class="stat-value" id="stat-cameras">0</span>
+            <span class="stat-value skeleton" id="stat-cameras">0/0</span>
             <span class="stat-label">Cameras Online</span>
         </div>
     </div>
     <div class="stat-card">
         <div class="stat-icon alerts"><i class="fas fa-bell"></i></div>
         <div class="stat-info">
-            <span class="stat-value" id="stat-alerts">0</span>
+            <span class="stat-value skeleton" id="stat-alerts">0</span>
             <span class="stat-label">Active Alerts</span>
         </div>
     </div>
     <div class="stat-card">
         <div class="stat-icon tracks"><i class="fas fa-route"></i></div>
         <div class="stat-info">
-            <span class="stat-value" id="stat-tracks">0</span>
+            <span class="stat-value skeleton" id="stat-tracks">0</span>
             <span class="stat-label">Active Tracks</span>
         </div>
     </div>
     <div class="stat-card critical">
         <div class="stat-icon critical-icon"><i class="fas fa-exclamation-triangle"></i></div>
         <div class="stat-info">
-            <span class="stat-value" id="stat-critical">0</span>
+            <span class="stat-value skeleton" id="stat-critical">0</span>
             <span class="stat-label">Critical Alerts</span>
+        </div>
+    </div>
+</div>
+
+<!-- Charts Grid -->
+<div class="charts-grid" style="display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 24px;">
+    <!-- Trend Chart -->
+    <div class="card chart-card">
+        <div class="card-header">
+            <h3><i class="fas fa-chart-line"></i> Alert Trend (Last 24h)</h3>
+        </div>
+        <div class="card-body">
+            <div id="alert-trend-chart"></div>
+        </div>
+    </div>
+    
+    <!-- Type Breakdown -->
+    <div class="card chart-card">
+        <div class="card-header">
+            <h3><i class="fas fa-chart-pie"></i> Alert Breakdown</h3>
+        </div>
+        <div class="card-body">
+            <div id="alert-type-chart"></div>
         </div>
     </div>
 </div>
@@ -107,5 +130,6 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/apexcharts"></script>
 <script src="/static/js/dashboard.js"></script>
 {% endblock %}

@@ -75,7 +75,7 @@ async function loadEventDetail() {
                 <div class="card evidence-card">
                     <div class="card-header"><h3><i class="fas fa-image"></i> Evidence</h3></div>
                     <div class="card-body">
-                        <img src="/snapshots/${e.evidence_path.split('/').pop()}" alt="Evidence" class="evidence-img">
+                        <img src="/snapshots/${e.evidence_path.replace(/\\\\/g, '/').split('/').pop()}" alt="Evidence" class="evidence-img">
                     </div>
                 </div>` : ''}
             </div>

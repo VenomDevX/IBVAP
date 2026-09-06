@@ -22,6 +22,8 @@ async function loadAlertCameras() {
     } catch (err) { console.error(err); }
 }
 
+let gridInstance = null;
+
 async function loadAlerts() {
     const level = document.getElementById('filter-level')?.value || '';
     const reviewed = document.getElementById('filter-reviewed')?.value || '';
@@ -35,31 +37,35 @@ async function loadAlerts() {
     try {
         const res = await apiFetch(url);
         const alerts = await res.json();
-        const tbody = document.getElementById('alerts-tbody');
+        
+        const mappedData = alerts.map(a => [
+            gridjs.html(`<span class="risk-badge ${a.risk_level}">${getRiskEmoji(a.risk_level)} ${a.risk_level}</span>`),
+            a.alert_id,
+            formatEventType(a.event_type),
+            a.camera_id,
+            formatTime(a.timestamp),
+            a.risk_score?.toFixed(0) || 0,
+            gridjs.html(a.reviewed
+                ? '<span style="color:var(--success)"><i class="fas fa-check"></i> Reviewed</span>'
+                : '<span style="color:var(--warning)"><i class="fas fa-clock"></i> Pending</span>'),
+            gridjs.html(`
+                <a href="/events/${a.event_id}" class="btn btn-xs">View</a>
+                ${!a.reviewed ? `<button class="btn btn-xs btn-success" onclick="reviewAlert('${a.alert_id}')">Review</button>` : ''}
+            `)
+        ]);
 
-        if (!alerts.length) {
-            tbody.innerHTML = '<tr><td colspan="8" class="text-center" style="padding:40px;color:var(--text-muted)">No alerts found</td></tr>';
-            return;
+        if (gridInstance) {
+            gridInstance.updateConfig({ data: mappedData }).forceRender();
+        } else {
+            gridInstance = new gridjs.Grid({
+                columns: ["Level", "Alert ID", "Event Type", "Camera", "Time", "Score", "Status", "Actions"],
+                data: mappedData,
+                search: true,
+                sort: true,
+                pagination: { enabled: true, limit: 15 },
+                className: { table: 'data-table' }
+            }).render(document.getElementById('alerts-grid-wrapper'));
         }
-
-        tbody.innerHTML = alerts.map(a => `
-            <tr>
-                <td><span class="risk-badge ${a.risk_level}">${getRiskEmoji(a.risk_level)} ${a.risk_level}</span></td>
-                <td class="mono">${a.alert_id}</td>
-                <td>${formatEventType(a.event_type)}</td>
-                <td>${a.camera_id}</td>
-                <td>${formatTime(a.timestamp)}</td>
-                <td><strong>${a.risk_score?.toFixed(0) || 0}</strong></td>
-                <td>${a.reviewed
-                    ? '<span style="color:var(--success)"><i class="fas fa-check"></i> Reviewed</span>'
-                    : '<span style="color:var(--warning)"><i class="fas fa-clock"></i> Pending</span>'
-                }</td>
-                <td>
-                    <a href="/events/${a.event_id}" class="btn btn-xs">View</a>
-                    ${!a.reviewed ? `<button class="btn btn-xs btn-success" onclick="reviewAlert('${a.alert_id}')">Review</button>` : ''}
-                </td>
-            </tr>
-        `).join('');
     } catch (err) {
         console.error('Failed to load alerts:', err);
     }

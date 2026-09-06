@@ -23,22 +23,8 @@
     <button onclick="loadAlerts()" class="btn btn-sm"><i class="fas fa-refresh"></i> Refresh</button>
 </div>
 
-<div class="table-container">
-    <table class="data-table" id="alerts-table">
-        <thead>
-            <tr>
-                <th>Level</th>
-                <th>Alert ID</th>
-                <th>Event Type</th>
-                <th>Camera</th>
-                <th>Time</th>
-                <th>Score</th>
-                <th>Status</th>
-                <th>Actions</th>
-            </tr>
-        </thead>
-        <tbody id="alerts-tbody"></tbody>
-    </table>
+<div class="table-container" id="alerts-grid-wrapper">
+    <!-- Grid.js will mount here -->
 </div>
 {% endblock %}
 

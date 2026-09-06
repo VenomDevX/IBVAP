@@ -5,10 +5,13 @@
 
 let currentCameraId = null;
 let pollInterval = null;
+let trendChart = null;
+let typeChart = null;
 
 // ======================== Init ========================
 
 document.addEventListener('DOMContentLoaded', () => {
+    initCharts();
     loadDashboardData();
     loadCameraList();
     pollInterval = setInterval(loadDashboardData, 5000);
@@ -28,9 +31,16 @@ async function loadDashboardData() {
         const summary = await summaryRes.json();
 
         document.getElementById('stat-cameras').textContent = `${summary.online_cameras}/${summary.total_cameras}`;
+        document.getElementById('stat-cameras').classList.remove('skeleton');
+        
         document.getElementById('stat-alerts').textContent = summary.unreviewed_alerts || 0;
+        document.getElementById('stat-alerts').classList.remove('skeleton');
+        
         document.getElementById('stat-tracks').textContent = summary.active_tracks || 0;
+        document.getElementById('stat-tracks').classList.remove('skeleton');
+        
         document.getElementById('stat-critical').textContent = summary.critical_alerts || 0;
+        document.getElementById('stat-critical').classList.remove('skeleton');
 
         // Load alerts
         loadRecentAlerts();
@@ -40,6 +50,9 @@ async function loadDashboardData() {
 
         // Load events
         loadEventTimeline();
+
+        // Update charts
+        loadChartData();
 
     } catch (err) {
         console.error('Dashboard data error:', err);
@@ -175,5 +188,66 @@ async function loadEventTimeline() {
         `).join('');
     } catch (err) {
         console.error('Timeline error:', err);
+    }
+}
+
+// ======================== Charts ========================
+
+function initCharts() {
+    // 1. Alert Trend Chart (Line/Area)
+    const trendOptions = {
+        series: [{ name: 'Alerts', data: [] }],
+        chart: { type: 'area', height: 260, toolbar: { show: false }, background: 'transparent', fontFamily: 'Inter, sans-serif' },
+        colors: ['#2563eb'],
+        fill: { type: 'gradient', gradient: { shadeIntensity: 1, opacityFrom: 0.4, opacityTo: 0.05, stops: [0, 90, 100] } },
+        dataLabels: { enabled: false },
+        stroke: { curve: 'smooth', width: 2 },
+        xaxis: { categories: [], labels: { style: { colors: '#94a3b8' } }, axisBorder: { show: false }, axisTicks: { show: false } },
+        yaxis: { labels: { style: { colors: '#94a3b8' } } },
+        grid: { borderColor: 'rgba(148, 163, 184, 0.1)', strokeDashArray: 4 },
+        tooltip: { theme: 'dark' }
+    };
+    trendChart = new ApexCharts(document.querySelector("#alert-trend-chart"), trendOptions);
+    trendChart.render();
+
+    // 2. Alert Type Breakdown (Donut)
+    const typeOptions = {
+        series: [],
+        labels: [],
+        chart: { type: 'donut', height: 260, background: 'transparent', fontFamily: 'Inter, sans-serif' },
+        colors: ['#2563eb', '#16a34a', '#d97706', '#dc2626', '#0891b2', '#9333ea'],
+        plotOptions: { pie: { donut: { size: '75%' } } },
+        dataLabels: { enabled: false },
+        stroke: { show: false },
+        legend: { position: 'right', labels: { colors: '#94a3b8' } },
+        tooltip: { theme: 'dark' }
+    };
+    typeChart = new ApexCharts(document.querySelector("#alert-type-chart"), typeOptions);
+    typeChart.render();
+}
+
+async function loadChartData() {
+    try {
+        // Fetch timeseries
+        const tsRes = await apiFetch('/api/statistics/timeseries');
+        const tsData = await tsRes.json();
+        if (trendChart && tsData.data.length > 0) {
+            trendChart.updateSeries([{ name: 'Alerts', data: tsData.data }]);
+            trendChart.updateOptions({ xaxis: { categories: tsData.labels } });
+        }
+
+        // Fetch types
+        const statRes = await apiFetch('/api/statistics');
+        const statData = await statRes.json();
+        const types = statData.alert_stats?.by_type || {};
+        const typeLabels = Object.keys(types).map(formatEventType);
+        const typeSeries = Object.values(types);
+        
+        if (typeChart && typeSeries.length > 0) {
+            typeChart.updateSeries(typeSeries);
+            typeChart.updateOptions({ labels: typeLabels });
+        }
+    } catch (err) {
+        console.error('Chart load error:', err);
     }
 }

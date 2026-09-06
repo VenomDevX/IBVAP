@@ -73,3 +73,40 @@ async def get_summary(user: dict = Depends(require_auth)):
         )
 
     return summary
+
+
+@router.get("/timeseries")
+async def get_timeseries(user: dict = Depends(require_auth)):
+    """Get alert counts bucketed by hour for the last 24 hours."""
+    from src.api.app import get_pipeline
+    import time
+    from datetime import datetime
+
+    pipeline = get_pipeline()
+    if not pipeline:
+        return {"labels": [], "data": []}
+
+    alerts = pipeline.alert_engine._alerts
+    now = time.time()
+    one_day_ago = now - (24 * 3600)
+
+    # Filter alerts from last 24h
+    recent = [a for a in alerts if a.timestamp >= one_day_ago]
+
+    # Bucket by hour
+    buckets = {i: 0 for i in range(24)}
+    for a in recent:
+        hour_diff = int((now - a.timestamp) / 3600)
+        if 0 <= hour_diff < 24:
+            buckets[23 - hour_diff] += 1
+
+    # Generate labels (e.g. 14:00)
+    labels = []
+    data = []
+    for i in range(24):
+        t = now - ((23 - i) * 3600)
+        dt = datetime.fromtimestamp(t)
+        labels.append(dt.strftime("%H:00"))
+        data.append(buckets[i])
+
+    return {"labels": labels, "data": data}

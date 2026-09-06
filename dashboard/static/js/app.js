@@ -146,6 +146,8 @@ function updateAlertBadge() {
 // Sidebar toggle
 function toggleSidebar() {
     document.getElementById('sidebar').classList.toggle('open');
+    const overlay = document.getElementById('sidebar-overlay');
+    if (overlay) overlay.classList.toggle('active');
 }
 
 // Update datetime
@@ -168,9 +170,34 @@ function setCurrentUser() {
     }
 }
 
+// ======================== Theme ========================
+
+function toggleTheme() {
+    const isLight = document.documentElement.classList.toggle('light-theme');
+    localStorage.setItem('ibvap_theme', isLight ? 'light' : 'dark');
+    updateThemeIcon(isLight);
+}
+
+function updateThemeIcon(isLight) {
+    const icon = document.querySelector('#theme-toggle i');
+    if (icon) {
+        icon.className = isLight ? 'fas fa-sun' : 'fas fa-moon';
+    }
+}
+
+function loadTheme() {
+    const theme = localStorage.getItem('ibvap_theme') || 'dark'; // Dark default
+    const isLight = theme === 'light';
+    if (isLight) {
+        document.documentElement.classList.add('light-theme');
+    }
+    updateThemeIcon(isLight);
+}
+
 // ======================== Init ========================
 
 document.addEventListener('DOMContentLoaded', () => {
+    loadTheme();
     checkAuth();
     setCurrentUser();
     updateDateTime();
