@@ -141,6 +141,7 @@ class UserModel(Base):
     role = Column(String(50), default="operator")  # admin, operator, auditor
     full_name = Column(String(200), default="")
     is_active = Column(Boolean, default=True)
+    allowed_areas = Column(JSON, default=list)
     created_at = Column(DateTime, default=datetime.utcnow)
     last_login = Column(DateTime, nullable=True)
 

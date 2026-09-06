@@ -19,9 +19,10 @@ class Database:
 
     def __init__(self, db_url: str = None):
         self.db_url = db_url or os.getenv("DATABASE_URL", DEFAULT_DB_URL)
+        connect_args = {"check_same_thread": False} if self.db_url.startswith("sqlite") else {}
         self.engine = create_engine(
             self.db_url,
-            connect_args={"check_same_thread": False},  # SQLite threading
+            connect_args=connect_args,
             echo=False,
         )
         self.SessionLocal = sessionmaker(

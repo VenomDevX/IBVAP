@@ -138,10 +138,13 @@ class Repository:
     # ======================== USERS ========================
 
     def create_user(self, username: str, hashed_password: str,
-                    role: str = "operator", full_name: str = "") -> UserModel:
+                    role: str = "operator", full_name: str = "",
+                    allowed_areas: list = None, is_active: bool = True) -> UserModel:
         user = UserModel(
             username=username, hashed_password=hashed_password,
-            role=role, full_name=full_name
+            role=role, full_name=full_name,
+            allowed_areas=allowed_areas or [],
+            is_active=is_active
         )
         self.session.add(user)
         self.session.commit()
@@ -152,6 +155,9 @@ class Repository:
 
     def get_all_users(self) -> List[UserModel]:
         return self.session.query(UserModel).all()
+
+    def count_users(self) -> int:
+        return self.session.query(UserModel).count()
 
     # ======================== AUDIT LOGS ========================
 

@@ -118,6 +118,12 @@ def create_app() -> FastAPI:
             return templates.TemplateResponse(request, "login.html")
         return HTMLResponse("<h1>Login</h1>")
 
+    @app.get("/signup", response_class=HTMLResponse)
+    async def signup_page(request: Request):
+        if templates:
+            return templates.TemplateResponse(request, "signup.html")
+        return HTMLResponse("<h1>Sign Up</h1>")
+
     @app.get("/cameras", response_class=HTMLResponse)
     async def cameras_page(request: Request):
         if templates:
