@@ -10,15 +10,21 @@ __pycache__/
 dist/
 build/
 backend/venv/
+.venv/
+venv/
 
 # --- Node ---
 frontend/node_modules/
 frontend/dist/
 
-# --- Environment ---
+# --- Environment / Secrets ---
 .env
 .env.local
 .env.production
+.env.*.local
+*.pem
+*.key
+signing_keys.json
 
 # --- Database ---
 *.db
@@ -34,12 +40,23 @@ backend/models/risk/*
 # --- Dataset & Training Data ---
 backend/data/
 data/
+datasets/
+dataset/
 *.jpg
 *.jpeg
 *.png
+*.bmp
+*.tiff
 *.mp4
 *.avi
 *.mov
+*.mkv
+
+# --- External Dataset Drive ---
+# If your dataset is on J:\Data set or similar, it's outside the repo
+# but this ensures any copied/symlinked data dirs are excluded
+**/Data set/
+**/data set/
 
 # --- YOLO Training Runs ---
 runs/
@@ -50,6 +67,8 @@ backend/runs/
 *.pth
 *.weights
 *.onnx
+*.tflite
+*.engine
 
 # --- Runtime Outputs ---
 outputs/
@@ -68,6 +87,7 @@ desktop.ini
 
 # --- Supabase ---
 supabase/.temp/
+supabase/.branches/
 
 # --- Misc ---
 *.log

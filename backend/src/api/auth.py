@@ -6,7 +6,7 @@ import os
 # The Supabase URL and Key should ideally come from environment variables.
 # For local development with `npx supabase start`, we can use the default local values.
 SUPABASE_URL = os.getenv("SUPABASE_URL", "http://127.0.0.1:54321")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "***REDACTED_SUPABASE_KEY***") # We will skip strict signature validation in dev if key is not set properly, or just rely on the token.
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 
 security = HTTPBearer()
 
