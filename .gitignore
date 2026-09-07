@@ -1,48 +1,74 @@
-# Python
+# =============================================================================
+# IBVAP — .gitignore
+# =============================================================================
+
+# --- Python ---
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
 *.egg-info/
+*.egg
 dist/
 build/
-*.egg
+backend/venv/
 
-# Virtual Environment
-venv/
-.venv/
-env/
+# --- Node ---
+frontend/node_modules/
+frontend/dist/
 
-# Environment
+# --- Environment ---
 .env
+.env.local
+.env.production
 
-# Database
+# --- Database ---
 *.db
-*.sqlite
 *.sqlite3
 
-# Data & Models (large files)
+# --- AI Models (large files) ---
+backend/models/detection/*.pt
+backend/models/face/*
+backend/models/anpr/*
+backend/models/risk/*
+!backend/models/**/.gitkeep
+
+# --- Dataset & Training Data ---
+backend/data/
 data/
-models/detection/*.pt
-models/face/
-models/anpr/
-models/risk/
+*.jpg
+*.jpeg
+*.png
+*.mp4
+*.avi
+*.mov
 
-# Outputs
-outputs/snapshots/
-outputs/logs/
-outputs/metrics/
-outputs/videos/
+# --- YOLO Training Runs ---
+runs/
+backend/runs/
 
-# IDE
+# --- Model Weights ---
+*.pt
+*.pth
+*.weights
+*.onnx
+
+# --- Runtime Outputs ---
+outputs/
+backend/outputs/
+
+# --- IDE ---
 .vscode/
 .idea/
 *.swp
 *.swo
 
-# OS
-Thumbs.db
+# --- OS ---
 .DS_Store
+Thumbs.db
+desktop.ini
 
-# Jupyter
-.ipynb_checkpoints/
+# --- Supabase ---
+supabase/.temp/
+
+# --- Misc ---
+*.log
+.agents/

@@ -1,0 +1,106 @@
+# Unified YOLO Dataset Configuration for IBVAP
+# Place this file anywhere or keep it in backend/configs/
+
+# 1. Path to your dataset directory
+path: F:/Projects/SIH 26187/backend/data/unified_yolo
+
+# 2. Relative paths to train and val images (relative to the 'path' above)
+train: images/train
+val: images/valid  # Note: You can use the same folder if you only have one split
+
+# 3. Number of classes
+nc: 91
+
+# 4. Class names
+names:
+  0: Person
+  1: Soldier
+  2: Car
+  3: Bus
+  4: Forklift
+  5: Motorcycle
+  6: Bicycle
+  7: License Plate
+  8: Tank
+  9: Generic Jet
+  10: Large Military Plane
+  11: Dog
+  12: Cat
+  13: Bird
+  14: Horse
+  15: Cow
+  16: Sheep
+  17: Night Vision Object
+  18: A10
+  19: A400M
+  20: AG600
+  21: AH64
+  22: AV8B
+  23: An124
+  24: An22
+  25: An225
+  26: An72
+  27: B1
+  28: B2
+  29: B21
+  30: B52
+  31: Be200
+  32: C130
+  33: C17
+  34: C2
+  35: C390
+  36: C5
+  37: CH47
+  38: CL415
+  39: E2
+  40: E7
+  41: EF2000
+  42: F117
+  43: F14
+  44: F15
+  45: F16
+  46: F18
+  47: F22
+  48: F35
+  49: F4
+  50: H6
+  51: J10
+  52: J20
+  53: JAS39
+  54: JF17
+  55: JH7
+  56: KC135
+  57: KF21
+  58: KJ600
+  59: Ka27
+  60: Ka52
+  61: MQ9
+  62: Mi24
+  63: Mi28
+  64: Mig29
+  65: Mig31
+  66: Mirage2000
+  67: P3
+  68: RQ4
+  69: Rafale
+  70: SR71
+  71: Su24
+  72: Su25
+  73: Su34
+  74: Su57
+  75: TB001
+  76: TB2
+  77: Tornado
+  78: Tu160
+  79: Tu22M
+  80: Tu95
+  81: U2
+  82: UH60
+  83: US2
+  84: V22
+  85: Vulcan
+  86: WZ7
+  87: XB70
+  88: Y20
+  89: YF23
+  90: Z19

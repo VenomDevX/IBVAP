@@ -1,40 +1,32 @@
-version: '3.8'
+# =============================================================================
+# IBVAP — Docker Compose (Development)
+# Lightweight stack: Backend API + Frontend UI
+# Database & Auth handled by Supabase CLI (npx supabase start)
+# =============================================================================
 
 services:
-  db:
-    image: postgres:15-alpine
-    container_name: ibvap_db
-    restart: always
-    environment:
-      POSTGRES_USER: ibvap_user
-      POSTGRES_PASSWORD: ibvap_password
-      POSTGRES_DB: ibvap
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ibvap_user -d ibvap"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-  app:
-    build: .
-    container_name: ibvap_app
-    restart: always
+  # Python FastAPI Backend (AI Microservice)
+  backend:
+    build: ./backend
+    container_name: ibvap_backend
+    restart: unless-stopped
     ports:
       - "8000:8000"
     volumes:
       - ./outputs:/app/outputs
-      - ./data:/app/data
-      - ./models:/app/models
+      - ./backend/configs:/app/configs
     environment:
-      - DATABASE_URL=postgresql://ibvap_user:ibvap_password@db:5432/ibvap
-      - PYTHONUNBUFFERED=1
-    depends_on:
-      db:
-        condition: service_healthy
+      - DATABASE_URL=postgresql://postgres:postgres@host.docker.internal:54322/postgres
+      - IBVAP_CONFIG_DIR=/app/configs
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
-volumes:
-  postgres_data:
+  # React Frontend (Nginx)
+  frontend:
+    build: ./frontend
+    container_name: ibvap_frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
