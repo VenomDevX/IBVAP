@@ -34,7 +34,10 @@ class Database:
         """Create all tables."""
         Base.metadata.create_all(bind=self.engine)
         self._initialized = True
-        logger.success(f"Database initialized: {self.db_url}")
+        # Mask password in log output
+        import re
+        safe_url = re.sub(r'://([^:]+):([^@]+)@', r'://\1:***@', self.db_url)
+        logger.success(f"Database initialized: {safe_url}")
 
     def get_session(self) -> Session:
         """Get a new database session."""

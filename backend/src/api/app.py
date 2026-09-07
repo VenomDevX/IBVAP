@@ -5,20 +5,29 @@ Frontend is served separately by React/Vite.
 """
 
 import os
+import json
 from pathlib import Path
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from loguru import logger
 
 from src.api.routes import cameras, events, alerts, zones, tracks, statistics, stream
+from src.api.auth import _verify_token
 from src.api.websocket import ws_manager
 from src.pipeline.pipeline import IBVAPPipeline
 
 # Global pipeline reference
 pipeline: IBVAPPipeline = None
+
+# Rate limiter
+limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
 
 
 @asynccontextmanager
@@ -56,14 +65,23 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # CORS — allow React frontend
+    # CORS — restrict to allowed frontend origins
+    cors_origins = os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:3000,http://localhost:80,http://127.0.0.1:3000"
+    ).split(",")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=[o.strip() for o in cors_origins],
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
+        allow_headers=["Authorization", "Content-Type"],
     )
+
+    # Rate limiting
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    app.add_middleware(SlowAPIMiddleware)
 
     # Snapshots directory (for evidence images)
     snapshots_dir = Path("./outputs/snapshots")
@@ -82,6 +100,17 @@ def create_app() -> FastAPI:
     # ======================== WebSocket ========================
     @app.websocket("/ws/alerts")
     async def websocket_alerts(websocket: WebSocket):
+        # Authenticate via query param: /ws/alerts?token=<jwt>
+        token = websocket.query_params.get("token")
+        if not token:
+            await websocket.close(code=4001, reason="Missing auth token")
+            return
+        try:
+            _verify_token(token)
+        except Exception:
+            await websocket.close(code=4003, reason="Invalid or expired token")
+            return
+
         await ws_manager.connect(websocket)
         try:
             while True:

@@ -18,6 +18,11 @@ COPY . .
 # Create output directories
 RUN mkdir -p outputs/snapshots outputs/logs outputs/metrics outputs/videos
 
+# Create non-root user for security
+RUN useradd -m -r -s /bin/false appuser \
+    && chown -R appuser:appuser /app
+USER appuser
+
 EXPOSE 8000
 
 CMD ["python", "main.py", "--host", "0.0.0.0", "--port", "8000"]

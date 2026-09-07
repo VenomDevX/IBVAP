@@ -110,13 +110,13 @@ CREATE POLICY "Allow authenticated read access" ON alerts FOR SELECT TO authenti
 CREATE POLICY "Allow authenticated read access" ON zones FOR SELECT TO authenticated USING (true);
 CREATE POLICY "Allow authenticated read access" ON user_profiles FOR SELECT TO authenticated USING (true);
 
--- Allow service role (backend) to do everything
-CREATE POLICY "Allow service role full access" ON cameras USING (true) WITH CHECK (true);
-CREATE POLICY "Allow service role full access" ON tracks USING (true) WITH CHECK (true);
-CREATE POLICY "Allow service role full access" ON events USING (true) WITH CHECK (true);
-CREATE POLICY "Allow service role full access" ON alerts USING (true) WITH CHECK (true);
-CREATE POLICY "Allow service role full access" ON zones USING (true) WITH CHECK (true);
-CREATE POLICY "Allow service role full access" ON user_profiles USING (true) WITH CHECK (true);
+-- Allow service role (backend) to do everything — restricted to service_role only
+CREATE POLICY "Allow service role full access" ON cameras TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "Allow service role full access" ON tracks TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "Allow service role full access" ON events TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "Allow service role full access" ON alerts TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "Allow service role full access" ON zones TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "Allow service role full access" ON user_profiles TO service_role USING (true) WITH CHECK (true);
 
 -- Realtime subscriptions setup
 begin;

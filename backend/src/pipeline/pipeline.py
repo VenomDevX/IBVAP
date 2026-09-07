@@ -417,18 +417,31 @@ class IBVAPPipeline:
 
     def _create_default_users(self, db):
         """Create default admin and operator users."""
+        import secrets
+
         try:
             from src.api.auth import hash_password
 
             session = db.get_session()
             repo = Repository(session)
 
+            # Read passwords from env vars — generate secure random ones if not set
+            admin_pw = os.environ.get("IBVAP_ADMIN_PASSWORD")
+            if not admin_pw:
+                admin_pw = secrets.token_urlsafe(16)
+                logger.warning(f"IBVAP_ADMIN_PASSWORD not set. Generated temp password: {admin_pw}")
+
+            operator_pw = os.environ.get("IBVAP_OPERATOR_PASSWORD")
+            if not operator_pw:
+                operator_pw = secrets.token_urlsafe(16)
+                logger.warning(f"IBVAP_OPERATOR_PASSWORD not set. Generated temp password: {operator_pw}")
+
             if not repo.get_user("admin"):
-                repo.create_user("admin", hash_password("admin123"), "admin", "Administrator")
+                repo.create_user("admin", hash_password(admin_pw), "admin", "Administrator")
                 logger.info("Created default admin user")
 
             if not repo.get_user("operator"):
-                repo.create_user("operator", hash_password("operator123"), "operator", "Operator")
+                repo.create_user("operator", hash_password(operator_pw), "operator", "Operator")
                 logger.info("Created default operator user")
 
             session.close()
