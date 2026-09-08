@@ -12,6 +12,8 @@ import cv2
 import numpy as np
 from loguru import logger
 
+from src.alerts import evidence
+
 from src.alerts.alert import Alert
 from src.fusion.context_fusion import FusedEvent
 
@@ -138,17 +140,11 @@ class AlertEngine:
     def _save_snapshot(self, frame: np.ndarray, camera_id: str,
                        event_id: str):
         """Save an evidence snapshot image and compute its SHA-256 hash."""
-        import hashlib
         try:
             filename = f"{camera_id}_{event_id}_{int(time.time())}.jpg"
             filepath = os.path.join(self.snapshots_dir, filename)
             cv2.imwrite(filepath, frame)
-            
-            # Compute SHA-256 hash for evidence hashing
-            with open(filepath, "rb") as f:
-                file_hash = hashlib.sha256(f.read()).hexdigest()
-                
-            return filepath, file_hash
+            return filepath, evidence.sha256_file(filepath)
         except Exception as e:
             logger.error(f"Failed to save snapshot: {e}")
             return None, None

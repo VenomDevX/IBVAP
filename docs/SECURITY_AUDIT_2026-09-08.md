@@ -92,7 +92,7 @@ Fix: guarded `del response.headers["server"]`. Underscores the H14 point — pin
 |---|---|---|
 | H1 | `snapshot_hash` computed, returned by the API, but **never persisted** (`repository.create_alert` omits it) | **[FIXED]** |
 | H2 | 9 more unbounded collections grow forever | **[FIXED]** deque(maxlen) + TTL-pruned cooldown dicts |
-| H3 | Plaintext generated admin / operator password would be `logger.warning`-ed into `outputs/logs/*.log` (7-day retention) — currently dead code because `hash_password` does not exist, but one "fix" away from active | **[PLANNED]** (logging lines removed; dead provisioning path left disabled) |
+| H3 | Plaintext generated password would be logged if the dead `_create_default_users` path were revived | **[FIXED]** path deleted (local `users` table unused; auth is Supabase) |
 | H4 | Threaded SQLite, no WAL / busy-timeout -> dropped evidence under load | **[FIXED]** WAL + 5s busy_timeout + synchronous=NORMAL |
 | H5 | SQL bound-parameters written verbatim into logs on query error | **[FIXED]** `hide_parameters=True` |
 | H6 | Raw PyJWT exception text returned to unauthenticated callers (signature vs. expiry vs. audience oracle) | **[FIXED]** |
@@ -101,15 +101,15 @@ Fix: guarded `del response.headers["server"]`. Underscores the H14 point — pin
 | H9 | `scripts/reset_db.py` — unguarded, irreversible `drop_all()` + `create_all()` | **[FIXED]** (type-RESET confirm / `--yes`, blocked when `IBVAP_ENV=production`) |
 | H10 | `events.py` `offset` has no `ge=0` and no upper bound | **[FIXED]** |
 | H11 | `notifiers.py` unbounded thread/alert, no SMTP timeout | **[FIXED]** 2-worker pool + 10s timeout + redacted contact logging |
-| H12 | No TLS — bearer JWTs cleartext | **[NEEDS DECISION]** localhost-only for SIH? nginx-tls.conf + DEPLOYMENT.md TBD |
+| H12 | No TLS — bearer JWTs cleartext | **[PARTIAL]** `frontend/nginx-tls.conf` + `docker-compose.tls.yml` + `docs/DEPLOYMENT.md` ready (HSTS, redirect, TRUSTED_PROXY); needs a cert at deploy time |
 | H13 | Supabase session (incl. refresh token) in `localStorage` | **[NEEDS DECISION]** needs a BFF/cookie model — larger change |
 | H14 | All backend deps are `>=` lower bounds, no lockfile; `roboflow` / `paddlepaddle` / `paddleocr` / `insightface` declared but **never imported by the runtime** (~GB of attack surface for zero function) | **[PLANNED]** (split into `requirements-training.txt`; runtime deps pinned `==`) |
 | H15 | Compose shipped dev mode / no secrets / backend on host | **[FIXED]** IBVAP_ENV=production, env_file, expose(not ports), healthcheck, no-new-privileges, cap_drop, mem limit; prod boot-asserts on missing SUPABASE_JWT_SECRET |
 | H16 | Frontend build had no Supabase env -> dummy key | **[FIXED]** Dockerfile build args via compose; supabase.ts fails loud; base image nginx-unprivileged |
-| H17 | `/api/audit` any-operator readable; audit trail never written | **[PARTIAL]** route now require_role('auditor'); the AuditLogModel middleware write is Phase 4 |
-| H18 | Zero tests, zero CI (`backend/tests/` is just `__init__.py`) | **[TODO]** |
-| H19 | Evidence "integrity": SHA-256 stored in the same unencrypted SQLite as the record it protects = data-quality check, **not** tamper evidence against anyone with DB write access | **[NEEDS DECISION]** (sign + hash-chain + external anchor, or amend the docs) |
-| H20 | No retention / deletion for snapshots, events, `identity_results`, `anpr_results` (biometric / PII kept forever) — NFR-06 unmet | **[NEEDS DECISION]** (retention policy) |
+| H17 | `/api/audit` any-operator readable; audit trail never written | **[FIXED]** route -> require_role('auditor'); `RequestLoggingMiddleware` now writes an `AuditLogModel` row for every successful mutating request + evidence read (actor from the token) |
+| H18 | Zero tests, zero CI | **[PARTIAL]** starter suite (`test_auth_guards.py`, `test_core_logic.py`: risk-engine golden, evidence-chain tamper-detect, bounded-collections) + `.github/workflows/ci.yml`; not full coverage yet |
+| H19 | Evidence "integrity" was only a data-quality check | **[FIXED]** append-only HMAC hash-chain over `events`/`alerts` (`src/alerts/evidence.py`, `scripts/verify_evidence_chain.py`); TRD/README amended to say tamper-EVIDENT not tamper-PROOF + KMS/anchoring recommended for prod |
+| H20 | No retention/deletion (biometric/PII kept forever) | **[FIXED]** `configs/retention.yaml` + `scripts/purge_expired.py --dry-run` (rows + orphaned snapshot files); defaults snapshots/events 90-180d, identity/plate 30d, audit 2y |
 | H21 | git history still contains the removed Supabase anon key + JWT-secret fallback + `admin123` | **[NEEDS DECISION]** (rotate keys; `git filter-repo` to purge) |
 | H22 | MJPEG generator is a sync `while True` with no disconnect check — a handful of `/api/stream` requests exhaust the AnyIO threadpool and hang the whole API | **[PLANNED]** (disconnect check + frame cap) |
 

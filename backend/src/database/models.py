@@ -56,7 +56,7 @@ class EventModel(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     event_id = Column(String(50), unique=True, nullable=False, index=True)
-    camera_id = Column(String(50), ForeignKey("cameras.camera_id"), nullable=False)
+    camera_id = Column(String(50), ForeignKey("cameras.camera_id"), nullable=False, index=True)
     track_id = Column(Integer, nullable=True)
     event_type = Column(String(100), nullable=False, index=True)
     timestamp = Column(DateTime, nullable=False, index=True)
@@ -70,6 +70,8 @@ class EventModel(Base):
     temporal_context = Column(JSON, default=dict)
     evidence_path = Column(String(500), nullable=True)
     evidence_hash = Column(String(64), nullable=True)
+    prev_hash = Column(String(64), nullable=True)
+    chain_hash = Column(String(64), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
@@ -83,7 +85,7 @@ class AlertModel(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     alert_id = Column(String(50), unique=True, nullable=False, index=True)
-    camera_id = Column(String(50), ForeignKey("cameras.camera_id"), nullable=False)
+    camera_id = Column(String(50), ForeignKey("cameras.camera_id"), nullable=False, index=True)
     event_id = Column(String(50), ForeignKey("events.event_id"), nullable=False)
     track_id = Column(Integer, nullable=True)
     event_type = Column(String(100), nullable=False)
@@ -96,9 +98,11 @@ class AlertModel(Base):
     snapshot_hash = Column(String(64), nullable=True)
     plate_result = Column(String(50), nullable=True)
     identity_result = Column(String(100), nullable=True)
-    reviewed = Column(Boolean, default=False)
+    reviewed = Column(Boolean, default=False, index=True)
     reviewed_by = Column(String(100), nullable=True)
     reviewed_at = Column(DateTime, nullable=True)
+    prev_hash = Column(String(64), nullable=True)
+    chain_hash = Column(String(64), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
@@ -156,7 +160,7 @@ class AuditLogModel(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     action = Column(String(100), nullable=False)
-    username = Column(String(100), nullable=False)
+    username = Column(String(100), nullable=False, index=True)
     details = Column(JSON, default=dict)
     ip_address = Column(String(50), nullable=True)
     timestamp = Column(DateTime, default=datetime.utcnow, index=True)

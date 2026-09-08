@@ -1,0 +1,13 @@
+# Overlay: TLS termination at nginx.
+#   docker compose -f docker-compose.yml -f docker-compose.tls.yml up
+services:
+  backend:
+    environment:
+      - TRUSTED_PROXY=1
+  frontend:
+    ports:
+      - "80:8080"
+      - "443:8443"
+    volumes:
+      - ./certs:/etc/nginx/certs:ro
+    command: ["nginx", "-c", "/etc/nginx/conf.d/nginx-tls.conf", "-g", "daemon off;"]

@@ -13,6 +13,7 @@ from src.database.models import (
     CameraModel, TrackModel, EventModel, AlertModel,
     IdentityResultModel, ANPRResultModel, UserModel, AuditLogModel, ZoneModel
 )
+from src.alerts import evidence
 
 
 class Repository:
@@ -74,12 +75,38 @@ class Repository:
             evidence_path=event_data.get("evidence_path"),
             evidence_hash=event_data.get("evidence_hash"),
         )
+        self._chain(event, EventModel, [
+            "event_id", "camera_id", "track_id", "event_type", "timestamp",
+            "object_type", "risk_score", "risk_level", "evidence_hash",
+        ])
         self.session.add(event)
         self.session.commit()
         return event
 
+    def _chain(self, row, model, fields):
+        """Attach prev_hash / chain_hash linking this row to the previous one."""
+        last = (
+            self.session.query(model.chain_hash)
+            .filter(model.chain_hash.isnot(None))
+            .order_by(desc(model.id))
+            .first()
+        )
+        prev = last[0] if last else None
+        record = {f: getattr(row, f) for f in fields}
+        row.prev_hash = prev or evidence.GENESIS
+        row.chain_hash = evidence.compute_hash(record, prev)
+
     def get_event(self, event_id: str) -> Optional[EventModel]:
         return self.session.query(EventModel).filter_by(event_id=event_id).first()
+
+    def delete_before(self, model, cutoff, ts_field="timestamp") -> int:
+        """Delete rows older than `cutoff` (a datetime). Returns the count."""
+        col = getattr(model, ts_field)
+        q = self.session.query(model).filter(col < cutoff)
+        n = q.count()
+        q.delete(synchronize_session=False)
+        self.session.commit()
+        return n
 
     def get_events(self, camera_id: str = None, event_type: str = None,
                    risk_level: str = None, limit: int = 100,
@@ -122,6 +149,10 @@ class Repository:
             plate_result=alert_data.get("plate_result"),
             identity_result=alert_data.get("identity_result"),
         )
+        self._chain(alert, AlertModel, [
+            "alert_id", "camera_id", "event_id", "track_id", "event_type",
+            "timestamp", "risk_score", "risk_level", "object_type", "snapshot_hash",
+        ])
         self.session.add(alert)
         self.session.commit()
         return alert
