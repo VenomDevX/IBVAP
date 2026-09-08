@@ -83,7 +83,7 @@ SIH 26187/
 | Risk | Explainable weighted score `R = w1·S + w2·T + w3·B + w4·I + w5·V`, 4 levels | Implemented |
 | Risk | Optional ML event-level classifier (RandomForest) for baseline comparison | Scaffolded — no trained model / feature dataset yet |
 | Alerts | Dedup + rate-limit + min-risk threshold, WebSocket push | Implemented |
-| Evidence | Snapshot capture + **SHA-256 hash** stored with event/alert | Implemented |
+| Evidence | Snapshot SHA-256 + append-only HMAC **hash chain** over event/alert rows; `verify_evidence_chain.py` detects tampering (tamper-evident, not tamper-proof) | Implemented |
 | Identity | Face detect / embed / match modules | Module code present — **not called by the pipeline** |
 | ANPR | Plate crop + OCR | `pytesseract` helper with mock fallback — TRD target is PaddleOCR |
 | Dashboard | Live feed, alerts, events, event detail, camera status | Implemented |

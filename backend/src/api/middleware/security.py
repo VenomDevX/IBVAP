@@ -9,6 +9,8 @@ IBVAP — Security Middleware
 import os
 import time
 import uuid
+
+import jwt as _jwt
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
@@ -56,7 +58,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
             "img-src 'self' data: blob:; "
-            "script-src 'self' 'unsafe-inline'; "
+            "script-src 'self'; "
             "style-src 'self' 'unsafe-inline'; "
             "connect-src 'self' ws: wss:;"
         )
@@ -77,6 +79,41 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
     # Paths to skip logging (noisy health checks, static files)
     SKIP_PATHS = {"/api/health", "/favicon.ico"}
+
+    _AUDIT_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+    @staticmethod
+    def _actor(request) -> str:
+        auth = request.headers.get("authorization", "")
+        if auth.lower().startswith("bearer "):
+            try:
+                claims = _jwt.decode(auth[7:], options={"verify_signature": False})
+                return claims.get("email") or claims.get("sub") or "unknown"
+            except Exception:
+                return "unknown"
+        return "anonymous"
+
+    def _write_audit(self, request, status_code: int, client_ip: str, request_id: str):
+        path = request.url.path
+        is_mutation = request.method in self._AUDIT_METHODS and path.startswith("/api/")
+        is_evidence = request.method == "GET" and path.startswith("/snapshots/")
+        if not (is_mutation or is_evidence) or status_code >= 400:
+            return
+        try:
+            from src.database.db import get_database
+            from src.database.repository import Repository
+            session = get_database().get_session()
+            try:
+                Repository(session).create_audit_log(
+                    action=f"{request.method} {path}",
+                    username=self._actor(request),
+                    details={"status": status_code, "request_id": request_id},
+                    ip_address=client_ip,
+                )
+            finally:
+                session.close()
+        except Exception as e:
+            logger.error(f"audit write failed: {e}")
 
     async def dispatch(self, request: Request, call_next) -> Response:
         # Skip noisy endpoints
@@ -121,6 +158,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             else:
                 logger.info(log_msg)
 
+            self._write_audit(request, response.status_code, client_ip, request_id)
             return response
 
         except Exception as e:

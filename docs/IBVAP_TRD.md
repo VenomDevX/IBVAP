@@ -451,7 +451,7 @@ The platform shall:
   (path traversal, injection patterns, upload-size cap).
 - No fixed default credentials — seed passwords come from `IBVAP_ADMIN_PASSWORD` /
   `IBVAP_OPERATOR_PASSWORD`, else a random password is generated and logged once.
-- Evidence integrity: SHA-256 hash of every snapshot stored with its event/alert.
+- Evidence integrity: SHA-256 of every snapshot **plus** an append-only HMAC hash chain over the `events` and `alerts` rows (`src/alerts/evidence.py`) — each row commits to the previous row's hash, so altering or reordering any row breaks every later link. `scripts/verify_evidence_chain.py` walks the chain and re-hashes each snapshot file. **Tamper-EVIDENT, not tamper-PROOF**: an attacker who also holds `EVIDENCE_HMAC_KEY` can rewrite the whole chain — for production the key belongs in a KMS and the chain head should be periodically anchored to external WORM storage.
 - Audit log (`/api/audit`, admin-only): action, username, IP, timestamp.
 - Client-side session timeout after 30 min inactivity (`useSessionTimeout`).
 - API docs (`/docs`, `/openapi.json`) disabled in `production` mode.
