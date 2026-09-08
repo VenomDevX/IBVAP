@@ -57,6 +57,7 @@ class VideoSource:
         self._source_fps: float = 30.0
         self._source_width: int = 0
         self._source_height: int = 0
+        self._is_file: bool = False
 
     @property
     def status(self) -> CameraStatus:
@@ -84,10 +85,12 @@ class VideoSource:
 
             # Determine if RTSP or file
             if source.startswith("rtsp://") or source.startswith("http://"):
+                self._is_file = False
                 self._cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
                 # Set buffer size for RTSP to reduce latency
                 self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             else:
+                self._is_file = True
                 self._cap = cv2.VideoCapture(source)
 
             if not self._cap.isOpened():
@@ -133,8 +136,15 @@ class VideoSource:
             ret, frame = self._cap.read()
 
             if not ret:
-                self._status = CameraStatus.ERROR
-                return False, None
+                # A file source that ran out of frames is not an error — loop it
+                # (the demo cameras are looping clips). Only a live stream that
+                # stops delivering frames is a genuine fault.
+                if self._is_file:
+                    self._cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    ret, frame = self._cap.read()
+                if not ret:
+                    self._status = CameraStatus.ERROR if not self._is_file else CameraStatus.OFFLINE
+                    return False, None
 
             # Resize if configured
             if self.camera_info.resolution:
@@ -149,6 +159,8 @@ class VideoSource:
             self._last_frame_time = now
             self._frame = frame
             self._frame_id += 1
+            if self._status != CameraStatus.ONLINE:
+                self._status = CameraStatus.ONLINE
 
             return True, frame
 

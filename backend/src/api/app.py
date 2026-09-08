@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -21,7 +21,7 @@ from loguru import logger
 
 import asyncio
 from src.api.routes import cameras, events, alerts, zones, tracks, statistics, stream, reports, audit, snapshots
-from src.api.auth import _verify_token
+from src.api.auth import _verify_token, require_auth
 from src.api.websocket import ws_manager
 from src.api.middleware.security import SecurityHeadersMiddleware, RequestLoggingMiddleware
 from src.api.middleware.input_validator import InputValidationMiddleware
@@ -166,6 +166,18 @@ def create_app() -> FastAPI:
     @app.get("/api/health")
     async def health_check():
         return {"status": "ok", "service": "ibvap-backend"}
+
+    # ======================== Current User ========================
+    @app.get("/api/auth/me", tags=["Auth"])
+    async def whoami(user: dict = Depends(require_auth)):
+        """The caller's resolved application identity (role drives the UI's feature gating)."""
+        return {
+            "user_id": user["user_id"],
+            "email": user["email"],
+            "username": (user["email"].split("@")[0] if user["email"] else user["user_id"]),
+            "role": user["app_role"],
+            "allowed_areas": user["allowed_areas"],
+        }
 
     if is_production:
         logger.info("Running in PRODUCTION mode — API docs disabled")

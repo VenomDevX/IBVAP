@@ -1,11 +1,15 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
 import { supabase } from '../api/supabase';
+import { apiFetch } from '../api/client';
 import type { User, Session } from '@supabase/supabase-js';
+
+type AppRole = 'admin' | 'operator' | 'auditor' | null;
 
 interface AuthState {
   isAuthenticated: boolean;
   user: User | null;
   session: Session | null;
+  role: AppRole;
   loading: boolean;
   logout: () => Promise<void>;
 }
@@ -15,6 +19,7 @@ const AuthContext = createContext<AuthState | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
+  const [role, setRole] = useState<AppRole>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -37,6 +42,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => subscription.unsubscribe();
   }, []);
 
+  // Resolve the application role (lives in user_profiles, not the JWT) whenever we have a session.
+  useEffect(() => {
+    let cancelled = false;
+    if (!session) { setRole(null); return; }
+    apiFetch('/api/auth/me')
+      .then(r => r.json())
+      .then(me => { if (!cancelled) setRole((me?.role as AppRole) ?? 'operator'); })
+      .catch(() => { if (!cancelled) setRole('operator'); });
+    return () => { cancelled = true; };
+  }, [session]);
+
   const logout = async () => {
     await supabase.auth.signOut();
   };
@@ -44,7 +60,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isAuthenticated = !!user;
 
   return (
-    <AuthContext.Provider value={{ isAuthenticated, user, session, loading, logout }}>
+    <AuthContext.Provider value={{ isAuthenticated, user, session, role, loading, logout }}>
       {!loading && children}
     </AuthContext.Provider>
   );

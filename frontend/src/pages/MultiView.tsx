@@ -40,8 +40,7 @@ export default function MultiView() {
 
   return (
     <div className="multiview-page">
-      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-        <h2><i className="fas fa-th-large"></i> Multi-Camera View</h2>
+      <div className="page-toolbar" style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginBottom: '12px' }}>
         <div className="grid-controls" style={{ display: 'flex', gap: '0.5rem' }}>
           <button 
             className={`btn btn-sm ${gridSize === 4 ? 'btn-primary' : 'btn-outline'}`}

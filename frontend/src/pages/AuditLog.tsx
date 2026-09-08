@@ -47,13 +47,9 @@ export default function AuditLog() {
 
   return (
     <div className="audit-page">
-      <div className="page-header" style={{ marginBottom: '1rem' }}>
-        <h2><i className="fas fa-clipboard-list"></i> System Audit Logs</h2>
-      </div>
-      
       {loading && <div className="loading"><i className="fas fa-spinner fa-spin" /> Loading Logs...</div>}
-      
-      <div ref={gridRef} />
+
+      <div className="table-container" ref={gridRef} />
     </div>
   );
 }

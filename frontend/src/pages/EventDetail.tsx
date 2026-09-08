@@ -80,10 +80,19 @@ export default function EventDetail() {
         {event.evidence_path && (
           <Card title="Evidence" icon="fas fa-image" className="evidence-card">
             <img
-              src={mediaSrc(`/snapshots/${event.evidence_path.replace(/\\\\/g, '/').split('/').pop()}`, token)}
-              alt="Evidence"
+              src={mediaSrc(`/snapshots/${event.evidence_path.replace(/\\/g, '/').split('/').pop()}`, token)}
+              alt="Evidence snapshot"
               className="evidence-img"
+              onError={(e) => {
+                const img = e.target as HTMLImageElement;
+                img.hidden = true;
+                const fb = img.nextElementSibling as HTMLElement | null;
+                if (fb) fb.hidden = false;
+              }}
             />
+            <div className="empty-state" hidden>
+              <i className="fas fa-image" /><p>Evidence image unavailable</p>
+            </div>
             {event.evidence_hash && (
               <div style={{ marginTop: '10px', fontSize: '0.85em', color: '#666', wordBreak: 'break-all' }}>
                 <strong>SHA-256 Hash:</strong> {event.evidence_hash}

@@ -70,12 +70,8 @@ export default function MapView() {
   }
 
   return (
-    <div className="map-page" style={{ height: 'calc(100vh - 100px)' }}>
-      <div className="page-header" style={{ marginBottom: '1rem' }}>
-        <h2><i className="fas fa-map-marked-alt"></i> Global Map View</h2>
-      </div>
-
-      <div style={{ height: '100%', borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border-color)' }}>
+    <div className="map-page" style={{ height: 'calc(100vh - 112px)' }}>
+      <div style={{ height: '100%', borderRadius: 'var(--radius-sm)', overflow: 'hidden', border: '1px solid var(--border-color)' }}>
         <MapContainer center={[centerLat, centerLng]} zoom={13} style={{ height: '100%', width: '100%' }}>
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'

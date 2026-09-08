@@ -9,13 +9,15 @@ interface Toast {
 }
 
 let toastId = 0;
+const MAX_VISIBLE = 4;
 
 export default function ToastContainer() {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const handleAlert = useCallback((alert: Alert) => {
     const id = ++toastId;
-    setToasts(prev => [...prev, { id, alert }]);
+    // keep only the most recent few so a burst of alerts can't blanket the screen
+    setToasts(prev => [...prev, { id, alert }].slice(-MAX_VISIBLE));
     setTimeout(() => {
       setToasts(prev => prev.filter(t => t.id !== id));
     }, 5000);
