@@ -1,10 +1,15 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'http://127.0.0.1:54321';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-if (!supabaseAnonKey) {
-  console.warn('VITE_SUPABASE_ANON_KEY is not set. Auth will not work.');
+if (!supabaseUrl || !supabaseAnonKey) {
+  // Loud, visible failure — a silent dummy key hides a broken build.
+  const msg = 'VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY are not set at build time. Auth is disabled.';
+  console.error(msg);
+  document.body.innerHTML =
+    '<pre style="padding:2rem;font:14px monospace;color:#b00">' + msg + '</pre>';
+  throw new Error(msg);
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey || 'dummy_key_to_prevent_crash');
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);

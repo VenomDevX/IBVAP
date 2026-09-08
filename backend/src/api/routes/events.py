@@ -6,7 +6,7 @@ Event querying and detail endpoints.
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional
 
-from src.api.auth import require_auth
+from src.api.auth import require_auth, scoped_cameras
 from src.database.db import get_database
 from src.database.repository import Repository
 
@@ -18,15 +18,16 @@ async def list_events(
     camera_id: Optional[str] = None,
     event_type: Optional[str] = None,
     risk_level: Optional[str] = None,
-    limit: int = Query(default=100, le=500),
-    offset: int = 0,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0, le=100_000),
     user: dict = Depends(require_auth),
 ):
     """Get events with optional filters."""
     db = get_database()
     session = db.get_session()
     repo = Repository(session)
-    events = repo.get_events(camera_id, event_type, risk_level, limit, offset)
+    events = repo.get_events(camera_id, event_type, risk_level, limit, offset,
+                            allowed_cameras=scoped_cameras(user))
     result = [
         {
             "event_id": e.event_id,

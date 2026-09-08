@@ -1,0 +1,15 @@
+# Training / data-prep / optional-feature dependencies — NOT needed to run the API.
+-r requirements.txt
+
+roboflow>=1.1.24            # dataset download (scripts/legacy, scripts/add_plates)
+psycopg2-binary>=2.9.9      # only if DATABASE_URL points at Postgres
+
+# --- Optional feature modules (guarded imports in src/; disabled if absent) ---
+insightface>=0.7.3         # src/face/*  — face recognition
+onnxruntime>=1.16.0
+paddlepaddle>=2.5.0        # src/anpr/plate_ocr.py — ANPR (heavyweight)
+paddleocr>=2.7.0
+pytesseract>=0.3.10        # src/features/anpr.py — plate OCR fallback
+
+# --- Phase 2 fine-grained classifier ---
+timm>=1.0.0

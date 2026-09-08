@@ -1,28 +1,30 @@
-# Stage 1: Python backend
+# IBVAP backend — FastAPI AI microservice
 FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
 
 WORKDIR /app
 
-# Install system dependencies for OpenCV, etc.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 libglib2.0-0 libsm6 libxext6 libxrender-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
+# Runtime deps only (training/optional deps live in requirements-training.txt)
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install -r requirements.txt
 
-# Copy application code
 COPY . .
 
-# Create output directories
-RUN mkdir -p outputs/snapshots outputs/logs outputs/metrics outputs/videos
-
-# Create non-root user for security
-RUN useradd -m -r -s /bin/false appuser \
-    && chown -R appuser:appuser /app
+# Writable dirs owned by the runtime user; application code stays root-owned
+RUN mkdir -p outputs/snapshots outputs/logs outputs/metrics outputs/videos data \
+    && useradd -m -r -s /usr/sbin/nologin appuser \
+    && chown -R appuser:appuser /app/outputs /app/data
 USER appuser
 
 EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=40s \
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health').status==200 else 1)"
 
 CMD ["python", "main.py", "--host", "0.0.0.0", "--port", "8000"]

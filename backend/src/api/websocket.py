@@ -16,6 +16,7 @@ class WebSocketManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
         self._lock = asyncio.Lock()
+        self._loop = None
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
@@ -46,17 +47,20 @@ class WebSocketManager:
                 if conn in self.active_connections:
                     self.active_connections.remove(conn)
 
+    def attach_loop(self, loop):
+        """Capture the running event loop so non-async threads can schedule broadcasts."""
+        self._loop = loop
+
     def broadcast_sync(self, message: dict):
-        """Synchronous broadcast wrapper for use from non-async code."""
+        """Schedule a broadcast from a worker thread (e.g. a camera pipeline)."""
+        loop = self._loop
+        if loop is None or not loop.is_running():
+            logger.warning("broadcast_sync: no running loop attached; alert not pushed to WS clients")
+            return
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.ensure_future(self.broadcast(message))
-            else:
-                loop.run_until_complete(self.broadcast(message))
-        except RuntimeError:
-            # No event loop available
-            pass
+            asyncio.run_coroutine_threadsafe(self.broadcast(message), loop)
+        except Exception as e:
+            logger.error(f"broadcast_sync failed: {e}")
 
     @property
     def connection_count(self) -> int:

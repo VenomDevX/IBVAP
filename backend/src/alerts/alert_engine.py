@@ -6,7 +6,7 @@ Generates, deduplicates, and manages security alerts.
 import time
 import os
 from typing import Dict, List, Optional, Callable
-from collections import defaultdict
+from collections import defaultdict, deque
 
 import cv2
 import numpy as np
@@ -39,7 +39,7 @@ class AlertEngine:
         self.snapshots_dir = snapshots_dir
 
         self._alert_counter: int = 0
-        self._alerts: List[Alert] = []
+        self._alerts = deque(maxlen=5000)
         self._recent_alerts: Dict[str, float] = {}  # dedup key -> timestamp
         self._rate_counter: Dict[str, list] = defaultdict(list)  # camera_id -> [timestamps]
         self._notification_callbacks: List[Callable] = []
@@ -64,6 +64,9 @@ class AlertEngine:
         Applies deduplication, rate limiting, and minimum risk threshold.
         """
         now = time.time()
+
+        cutoff = now - self.cooldown_seconds
+        self._recent_alerts = {k: t for k, t in self._recent_alerts.items() if t > cutoff}
 
         # --- Check minimum risk ---
         if fused_event.risk_score < self.min_risk_score:

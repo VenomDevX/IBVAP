@@ -1,28 +1,17 @@
-# Stage 1: Build the React application
+# IBVAP frontend — Vite build served by nginx (unprivileged)
 FROM node:20-alpine AS build
-
 WORKDIR /app
-
-# Install dependencies
-COPY package.json package-lock.json ./
+COPY package*.json ./
 RUN npm ci
-
-# Copy the rest of the application
 COPY . .
-
-# Build the app
+# Vite inlines these at build time
+ARG VITE_SUPABASE_URL
+ARG VITE_SUPABASE_ANON_KEY
+ENV VITE_SUPABASE_URL=$VITE_SUPABASE_URL \
+    VITE_SUPABASE_ANON_KEY=$VITE_SUPABASE_ANON_KEY
 RUN npm run build
 
-# Stage 2: Serve the application with Nginx
-FROM nginx:alpine
-
-# Copy the custom Nginx configuration
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-
-# Copy the built React app to Nginx's web root
+FROM nginxinc/nginx-unprivileged:alpine
 COPY --from=build /app/dist /usr/share/nginx/html
-
-# Expose port 80
-EXPOSE 80
-
-CMD ["nginx", "-g", "daemon off;"]
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+EXPOSE 8080

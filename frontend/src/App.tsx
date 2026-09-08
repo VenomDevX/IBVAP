@@ -28,7 +28,7 @@ function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
-      <Route path="/signup" element={<Signup />} />
+      {import.meta.env.DEV && <Route path="/signup" element={<Signup />} />}
       <Route
         element={
           <ProtectedRoute>

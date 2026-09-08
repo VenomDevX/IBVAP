@@ -6,6 +6,7 @@ IBVAP — Security Middleware
 - Request ID tracking for audit trails
 """
 
+import os
 import time
 import uuid
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -44,7 +45,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             response.headers["Pragma"] = "no-cache"
 
         # Remove server identification header
-        response.headers.pop("server", None)
+        # MutableHeaders has no .pop() in Starlette >=1.x — and uvicorn writes the
+        # Server header at the protocol layer anyway, so this is best-effort.
+        try:
+            del response.headers["server"]
+        except KeyError:
+            pass
 
         # Content Security Policy for any HTML responses
         response.headers["Content-Security-Policy"] = (
@@ -86,10 +92,12 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         method = request.method
         path = request.url.path
 
-        # Forward headers for proxy deployments
-        forwarded_for = request.headers.get("x-forwarded-for", "")
-        if forwarded_for:
-            client_ip = forwarded_for.split(",")[0].strip()
+        # X-Forwarded-For is client-controlled unless we sit behind a known proxy
+        if os.getenv("TRUSTED_PROXY", "").lower() in ("1", "true", "yes"):
+            forwarded_for = request.headers.get("x-forwarded-for", "")
+            if forwarded_for:
+                client_ip = forwarded_for.split(",")[0].strip()
+                client_ip = "".join(client_ip.split())[:64]
 
         start_time = time.time()
 

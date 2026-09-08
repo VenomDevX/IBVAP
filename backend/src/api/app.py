@@ -19,7 +19,8 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from loguru import logger
 
-from src.api.routes import cameras, events, alerts, zones, tracks, statistics, stream, reports, audit
+import asyncio
+from src.api.routes import cameras, events, alerts, zones, tracks, statistics, stream, reports, audit, snapshots
 from src.api.auth import _verify_token
 from src.api.websocket import ws_manager
 from src.api.middleware.security import SecurityHeadersMiddleware, RequestLoggingMiddleware
@@ -48,6 +49,9 @@ async def lifespan(app: FastAPI):
 
     pipeline.alert_engine.register_callback(alert_callback)
 
+    # Give the WS manager the running loop so camera worker threads can push alerts
+    ws_manager.attach_loop(asyncio.get_running_loop())
+
     # Start camera pipelines
     pipeline.start_all()
 
@@ -64,6 +68,12 @@ def create_app() -> FastAPI:
     
     # Production mode disables interactive docs
     is_production = os.getenv("IBVAP_ENV", "development").lower() == "production"
+
+    if is_production and not os.getenv("SUPABASE_JWT_SECRET"):
+        raise RuntimeError(
+            "IBVAP_ENV=production but SUPABASE_JWT_SECRET is not set — refusing to start "
+            "(every request would fail auth or fall back to a blocking network check)."
+        )
     
     app = FastAPI(
         title="IBVAP — Intelligent Border Video Analytics Platform",
@@ -92,12 +102,12 @@ def create_app() -> FastAPI:
     # 2. CORS — restrict to allowed frontend origins
     cors_origins = os.getenv(
         "CORS_ORIGINS",
-        "http://localhost:3000,http://localhost:80,http://127.0.0.1:3000"
+        "http://localhost,http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000"
     ).split(",")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[o.strip() for o in cors_origins],
-        allow_credentials=True,
+        allow_origins=[o.strip() for o in cors_origins if o.strip()],
+        allow_credentials=False,  # pure bearer-token API, no cookies
         allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
         allow_headers=["Authorization", "Content-Type"],
     )
@@ -116,10 +126,8 @@ def create_app() -> FastAPI:
     # 6. Input validation (path traversal, injection, upload size)
     app.add_middleware(InputValidationMiddleware)
 
-    # Snapshots directory (for evidence images)
-    snapshots_dir = Path(os.getenv("IBVAP_SNAPSHOTS_DIR", "./outputs/snapshots"))
-    snapshots_dir.mkdir(parents=True, exist_ok=True)
-    app.mount("/snapshots", StaticFiles(directory=str(snapshots_dir)), name="snapshots")
+    # Snapshots dir (evidence images) — served via an authenticated route, NOT a static mount
+    Path(os.getenv("IBVAP_SNAPSHOTS_DIR", "./outputs/snapshots")).mkdir(parents=True, exist_ok=True)
 
     # ======================== API Routes ========================
     app.include_router(cameras.router, prefix="/api/cameras", tags=["Cameras"])
@@ -131,6 +139,7 @@ def create_app() -> FastAPI:
     app.include_router(stream.router, prefix="/api/stream", tags=["Video Stream"])
     app.include_router(reports.router, prefix="/api/reports", tags=["Reports"])
     app.include_router(audit.router, prefix="/api/audit", tags=["Audit Logs"])
+    app.include_router(snapshots.router, prefix="/snapshots", tags=["Snapshots"])
 
     # ======================== WebSocket ========================
     @app.websocket("/ws/alerts")

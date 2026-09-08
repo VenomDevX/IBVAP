@@ -4,6 +4,7 @@ High-level track lifecycle management and querying.
 """
 
 import time
+from collections import deque
 from typing import Dict, List, Optional
 
 from src.tracking.track import Track
@@ -19,7 +20,8 @@ class TrackManager:
     def __init__(self, expiry_seconds: float = 10.0):
         self.expiry_seconds = expiry_seconds
         self._tracks: Dict[int, Track] = {}
-        self._expired_tracks: List[Track] = []
+        self._expired_tracks = deque(maxlen=1000)
+        self._expired_ids: set = set()
 
     def update_tracks(self, active_tracks: Dict[int, Track]):
         """Sync internal state with tracker output."""
@@ -31,7 +33,11 @@ class TrackManager:
             track = self._tracks[tid]
             if not track.is_active or (now - track.last_seen) > self.expiry_seconds:
                 track.is_active = False
-                self._expired_tracks.append(track)
+                if tid not in self._expired_ids:
+                    self._expired_ids.add(tid)
+                    self._expired_tracks.append(track)
+        if len(self._expired_ids) > 5000:
+            self._expired_ids = {t.track_id for t in self._expired_tracks}
 
     def get_active_tracks(self) -> Dict[int, Track]:
         """Get all currently active tracks."""

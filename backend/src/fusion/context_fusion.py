@@ -6,6 +6,7 @@ This is the CORE NOVELTY of IBVAP.
 
 import time
 from typing import Dict, List, Optional
+from collections import deque
 from dataclasses import dataclass, field
 from loguru import logger
 
@@ -87,7 +88,7 @@ class ContextFusion:
 
     def __init__(self):
         self._event_counter: int = 0
-        self._fused_events: List[FusedEvent] = []
+        self._fused_events = deque(maxlen=5000)
         # Deduplication: track_id -> last fused event time
         self._last_fusion: Dict[int, float] = {}
         self._fusion_cooldown: float = 30.0  # seconds
@@ -111,6 +112,9 @@ class ContextFusion:
         or None if they don't warrant a fused event.
         """
         now = time.time()
+
+        fcut = now - self._fusion_cooldown * 4
+        self._last_fusion = {k: t for k, t in self._last_fusion.items() if t > fcut}
 
         # Check cooldown
         if track_id in self._last_fusion:

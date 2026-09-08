@@ -4,18 +4,13 @@ Alert querying, review, and management endpoints.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
 from typing import Optional
 
-from src.api.auth import require_auth
+from src.api.auth import require_auth, scoped_cameras
 from src.database.db import get_database
 from src.database.repository import Repository
 
 router = APIRouter()
-
-
-class ReviewRequest(BaseModel):
-    reviewed_by: str = "operator"
 
 
 @router.get("")
@@ -30,7 +25,8 @@ async def list_alerts(
     db = get_database()
     session = db.get_session()
     repo = Repository(session)
-    alerts_list = repo.get_alerts(camera_id, risk_level, reviewed, limit)
+    alerts_list = repo.get_alerts(camera_id, risk_level, reviewed, limit,
+                                 allowed_cameras=scoped_cameras(user))
     result = [
         {
             "alert_id": a.alert_id,
@@ -96,19 +92,19 @@ async def get_alert(alert_id: str, user: dict = Depends(require_auth)):
 
 
 @router.post("/{alert_id}/review")
-async def review_alert(alert_id: str, review: ReviewRequest,
-                       user: dict = Depends(require_auth)):
-    """Mark an alert as reviewed."""
+async def review_alert(alert_id: str, user: dict = Depends(require_auth)):
+    """Mark an alert as reviewed. Attribution comes from the auth token only."""
+    actor = user.get("email") or user.get("user_id") or "unknown"
     db = get_database()
     session = db.get_session()
-    repo = Repository(session)
-    success = repo.mark_alert_reviewed(alert_id, user.get("username", review.reviewed_by))
-
-    if success:
-        repo.create_audit_log("review_alert", user["username"],
-                              {"alert_id": alert_id})
-
-    session.close()
+    success = False
+    try:
+        repo = Repository(session)
+        success = repo.mark_alert_reviewed(alert_id, actor)
+        if success:
+            repo.create_audit_log("review_alert", actor, {"alert_id": alert_id})
+    finally:
+        session.close()
 
     if not success:
         raise HTTPException(status_code=404, detail="Alert not found")
