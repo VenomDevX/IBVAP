@@ -49,9 +49,19 @@ export function formatEventType(type: string): string {
 }
 
 export function formatTime(timestamp: string | number): string {
-  if (!timestamp) return '—';
+  if (!timestamp && timestamp !== 0) return '—';
   try {
-    const date = new Date(timestamp);
+    let ms: number;
+    if (typeof timestamp === 'number') {
+      // epoch seconds vs milliseconds — some endpoints send seconds
+      ms = timestamp < 1e12 ? timestamp * 1000 : timestamp;
+    } else if (/^\d+(\.\d+)?$/.test(timestamp.trim())) {
+      const n = parseFloat(timestamp);
+      ms = n < 1e12 ? n * 1000 : n;
+    } else {
+      ms = new Date(timestamp).getTime();
+    }
+    const date = new Date(ms);
     if (isNaN(date.getTime())) return String(timestamp);
     return date.toLocaleString('en-IN', {
       hour: '2-digit', minute: '2-digit', second: '2-digit',

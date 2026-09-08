@@ -20,7 +20,9 @@ export default function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
 
-  const title = PAGE_TITLES[location.pathname] || 'IBVAP';
+  const title =
+    PAGE_TITLES[location.pathname] ||
+    (location.pathname.startsWith('/events/') ? 'Event Detail' : 'IBVAP');
 
   return (
     <>
