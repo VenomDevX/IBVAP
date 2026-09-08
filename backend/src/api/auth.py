@@ -5,12 +5,16 @@ Auth model: Supabase issues the JWT; the *application* role lives in the
 `user_profiles` table. The Supabase `role` claim is always "authenticated" for
 human users and must NOT be used for authorization. The app role is resolved
 with a service-role client and cached briefly.
+
+Dev bypass: set IBVAP_DEV_BYPASS=<token> (and keep IBVAP_ENV != production) to accept
+that exact bearer token as an admin without Supabase. Off by default.
 """
 
 import os
 import time
 
 import jwt
+from jwt import PyJWKClient
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from loguru import logger
@@ -20,9 +24,34 @@ SUPABASE_URL = os.getenv("SUPABASE_URL", "http://127.0.0.1:54321")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")                  # anon key (fallback token check)
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")  # service_role — reads user_profiles
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")
+# Optional: enforce the token `iss`. Leave unset unless you know the exact issuer string
+# (decode a real token from supabase.auth.getSession()). A mismatch rejects every token.
+SUPABASE_JWT_ISSUER = os.getenv("SUPABASE_JWT_ISSUER", "").strip() or None
 
-# HS256 secret is project-wide, so also bind the issuer
-_ISSUER = f"{SUPABASE_URL.rstrip('/')}/auth/v1"
+# Modern Supabase signs user access tokens with an asymmetric key (ES256/RS256)
+# published via JWKS. The legacy shared HS256 secret only covers the static
+# anon/service_role keys, so we must verify real tokens against the JWKS.
+_JWKS_URL = f"{SUPABASE_URL.rstrip('/')}/auth/v1/.well-known/jwks.json"
+_jwks_client = None
+
+
+def _jwks():
+    global _jwks_client
+    if _jwks_client is None:
+        _jwks_client = PyJWKClient(_JWKS_URL, cache_keys=True, lifespan=3600)
+    return _jwks_client
+
+
+def _unauth(detail: str) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=detail,
+                         headers={"WWW-Authenticate": "Bearer"})
+
+# Dev-only static-token bypass (off unless IBVAP_DEV_BYPASS is set)
+_DEV_BYPASS = os.getenv("IBVAP_DEV_BYPASS", "").strip()
+_IS_DEV = os.getenv("IBVAP_ENV", "development").lower() != "production"
+if _DEV_BYPASS and _IS_DEV:
+    logger.warning("IBVAP_DEV_BYPASS is set — a static bearer token grants admin. "
+                   "Never use this outside local development.")
 
 VALID_ROLES = ("admin", "supervisor", "operator", "auditor")
 DEFAULT_ROLE = "operator"
@@ -64,6 +93,9 @@ def resolve_profile(user_id: str) -> dict:
     if hit and hit[0] > now:
         return hit[1]
 
+    if user_id == "dev-admin":
+        return {"role": "admin", "allowed_areas": []}
+
     profile = {"role": DEFAULT_ROLE, "allowed_areas": []}
     client = _get_service_client()
     if client is not None and user_id and user_id != "unknown":
@@ -89,50 +121,31 @@ def resolve_profile(user_id: str) -> dict:
 
 def _verify_token(token: str) -> dict:
     """Verify a Supabase JWT and return its payload."""
-    if SUPABASE_JWT_SECRET:
-        try:
-            return jwt.decode(
-                token,
-                SUPABASE_JWT_SECRET,
-                algorithms=["HS256"],
-                audience="authenticated",
-                issuer=_ISSUER,
-                options={"require": ["exp", "sub", "aud"]},
-            )
-        except jwt.ExpiredSignatureError:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token has expired",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        except jwt.InvalidTokenError as e:
-            logger.warning(f"JWT rejected: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid authentication credentials",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+    if _DEV_BYPASS and _IS_DEV and token == _DEV_BYPASS:
+        return {"sub": "dev-admin", "email": "admin@ibvap.local", "role": "authenticated"}
 
-    # Fallback: verify via the Supabase API (blocking; only when no local secret)
     try:
-        client = get_supabase()
-        user_response = client.auth.get_user(token)
-        if user_response and user_response.user:
-            return {
-                "sub": user_response.user.id,
-                "email": user_response.user.email,
-                "role": "authenticated",
-            }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Token verification failed: {e}")
+        alg = jwt.get_unverified_header(token).get("alg", "")
+    except jwt.InvalidTokenError:
+        raise _unauth("Invalid authentication credentials")
 
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
+    kwargs = dict(audience="authenticated", options={"require": ["exp", "sub", "aud"]})
+    if SUPABASE_JWT_ISSUER:
+        kwargs["issuer"] = SUPABASE_JWT_ISSUER
+
+    try:
+        if alg == "HS256":
+            if not SUPABASE_JWT_SECRET:
+                raise jwt.InvalidTokenError("HS256 token but SUPABASE_JWT_SECRET is unset")
+            return jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=["HS256"], **kwargs)
+        # asymmetric — verify against the project's published JWKS
+        key = _jwks().get_signing_key_from_jwt(token).key
+        return jwt.decode(token, key, algorithms=["ES256", "RS256", "EdDSA"], **kwargs)
+    except jwt.ExpiredSignatureError:
+        raise _unauth("Token has expired")
+    except Exception as e:
+        logger.warning(f"JWT rejected (alg={alg}): {e}")
+        raise _unauth("Invalid authentication credentials")
 
 
 async def require_auth(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:

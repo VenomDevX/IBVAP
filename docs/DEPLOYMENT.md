@@ -1,25 +1,48 @@
 # IBVAP — Deployment
 
-## Local / SIH demo (no TLS)
+## Local dev runbook (order matters)
 
 ```bash
-# 1. Supabase (auth + user_profiles only)
-npx supabase start
-npx supabase migration up           # includes 20260908181145_rls_lockdown.sql
+# 1. Local Supabase (auth + user_profiles only). Config edits need a full restart:
+npx supabase stop && npx supabase start
+npx supabase migration up          # 20260906… init, 20260908…_rls_lockdown, 20260908…_grants
+npx supabase status                # copy API URL / anon / service_role / JWT secret
 
 # 2. Backend env
 cp backend/.env.example backend/.env
-#   set SUPABASE_URL, SUPABASE_KEY (anon), SUPABASE_SERVICE_KEY (service_role),
-#       SUPABASE_JWT_SECRET, EVIDENCE_HMAC_KEY (long random)
+#   SUPABASE_URL           = the API URL from `supabase status` (keep the SAME host
+#                            spelling — 127.0.0.1 — in frontend/.env too)
+#   SUPABASE_KEY           = anon key          SUPABASE_SERVICE_KEY = service_role key
+#   SUPABASE_JWT_SECRET    = the "JWT secret"  (used for the static keys / HS256 fallback;
+#                            real user tokens are ES256 and verified via the project JWKS)
+#   SUPABASE_JWT_ISSUER    = leave BLANK unless it exactly matches a real token's `iss`
+#   EVIDENCE_HMAC_KEY      = a long random string
+#   IBVAP_PORT             = 8002   (frontend/vite.config.ts proxies /api here)
 
-# 3. Seed operator accounts (signup is disabled)
+# 3. Create login accounts (self-signup is disabled by design)
 cd backend
-python scripts/seed_users.py --email admin@ibvap.local    --password '<pw>' --role admin
-python scripts/seed_users.py --email operator@ibvap.local --password '<pw>' --role operator
+python scripts/seed_users.py --defaults
+#   -> admin / admin123   and   operator / operator123
+#      (passwords come from IBVAP_ADMIN_PASSWORD / IBVAP_OPERATOR_PASSWORD)
 
 # 4. Run
+python main.py --port 8002                     # backend
+cd ../frontend && npm run dev                   # http://localhost:3001
+
+# Diagnose any auth problem end to end:
+python backend/scripts/check_auth.py --email admin@ibvap.local --password admin123 --backend http://127.0.0.1:8002
+```
+
+**"Email logins are disabled"** = GoTrue's email provider is off. `[auth.email] enable_signup`
+in `supabase/config.toml` must be `true` (the CLI mis-reads `false` as *disable the whole
+provider*); open registration is blocked separately by `[auth] enable_signup = false`. Restart
+the stack after editing (`supabase stop && start` — config does not hot-reload).
+
+## Docker (production mode)
+
+```bash
 docker compose up --build
-#   frontend on :80 -> nginx (:8080) -> backend (:8000, not published)
+#   frontend :80 -> nginx (:8080) -> backend (:8000 inside the network, not published)
 ```
 
 The compose file runs the backend in **production** mode: `/docs` is off, the backend

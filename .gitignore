@@ -104,3 +104,8 @@ supabase/.branches/
 /License Plate Recognition*/
 /*.yolov8/
 /*.v[0-9]*i.yolov8/
+
+# SQLite WAL sidecars
+*.db-shm
+*.db-wal
+*.db-journal
