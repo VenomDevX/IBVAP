@@ -188,6 +188,12 @@ a:hover { color: var(--accent-secondary); }
 .card-body { padding: 16px 20px; }
 
 /* --- Dashboard Grid --- */
+.dashboard-actions { display: flex; justify-content: flex-end; gap: 10px; margin-bottom: 15px; }
+.charts-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 24px; }
+.feed-controls { display: flex; gap: 10px; align-items: center; }
+.timeline-item-body { flex: 1; }
+.camera-status-meta { display: flex; align-items: center; gap: 8px; }
+.dashboard-actions .btn i { margin-right: 5px; }
 .dashboard-grid { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: auto auto; gap: 16px; }
 .camera-card { grid-row: span 1; }
 .alerts-card { grid-row: span 1; }
