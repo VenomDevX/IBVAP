@@ -160,7 +160,7 @@ class AlertEngine:
         return False
 
     def get_all_alerts(self, limit: int = 100) -> List[dict]:
-        return [a.to_dict() for a in reversed(self._alerts[-limit:])]
+        return [a.to_dict() for a in reversed(list(self._alerts)[-limit:])]
 
     def get_unreviewed_alerts(self) -> List[dict]:
         return [a.to_dict() for a in reversed(self._alerts) if not a.reviewed]

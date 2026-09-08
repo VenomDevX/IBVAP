@@ -140,7 +140,7 @@ def _verify_token(token: str) -> dict:
             return jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=["HS256"], **kwargs)
         # asymmetric — verify against the project's published JWKS
         key = _jwks().get_signing_key_from_jwt(token).key
-        return jwt.decode(token, key, algorithms=["ES256", "RS256", "EdDSA"], **kwargs)
+        return jwt.decode(token, key, algorithms=["ES256", "RS256", "RS384", "RS512", "EdDSA"], **kwargs)
     except jwt.ExpiredSignatureError:
         raise _unauth("Token has expired")
     except Exception as e:

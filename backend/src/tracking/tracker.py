@@ -103,7 +103,7 @@ class MultiObjectTracker:
                     tid = int(tracker_id)
                     active_ids.add(tid)
 
-                    bbox = tuple(tracked.xyxy[i].astype(int))
+                    bbox = tuple(int(v) for v in tracked.xyxy[i])
                     conf = float(tracked.confidence[i])
                     cls_id = int(tracked.class_id[i])
 

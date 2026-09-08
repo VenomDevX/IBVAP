@@ -109,3 +109,4 @@ supabase/.branches/
 *.db-shm
 *.db-wal
 *.db-journal
+.playwright-mcp/

@@ -259,7 +259,7 @@ class ContextFusion:
         return "general_activity"
 
     def get_recent_events(self, limit: int = 100) -> List[dict]:
-        return [e.to_dict() for e in self._fused_events[-limit:]]
+        return [e.to_dict() for e in list(self._fused_events)[-limit:]]
 
     def get_events_by_camera(self, camera_id: str, limit: int = 50) -> List[dict]:
         return [
