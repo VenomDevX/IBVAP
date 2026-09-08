@@ -245,7 +245,7 @@ class FenceDetector:
                 "direction": e.direction,
                 "object_type": e.object_type,
             }
-            for e in self._recent_crossings[-limit:]
+            for e in list(self._recent_crossings)[-limit:]
         ]
 
     @staticmethod

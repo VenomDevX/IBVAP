@@ -70,7 +70,7 @@ class TrackManager:
         return [t for t in self._tracks.values() if t.is_active and t.is_loitering]
 
     def get_recent_expired(self, limit: int = 50) -> List[Track]:
-        return self._expired_tracks[-limit:]
+        return list(self._expired_tracks)[-limit:]
 
     @property
     def active_count(self) -> int:

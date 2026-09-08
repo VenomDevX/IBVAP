@@ -220,7 +220,7 @@ class BehaviorEngine:
         )
 
     def get_recent_events(self, limit: int = 100) -> List[dict]:
-        return [e.to_dict() for e in self._recent_events[-limit:]]
+        return [e.to_dict() for e in list(self._recent_events)[-limit:]]
 
     def get_statistics(self) -> dict:
         from collections import Counter
