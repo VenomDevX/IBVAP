@@ -13,7 +13,7 @@ import re
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
-from src.api.auth import require_auth
+from src.api.auth import require_auth_media
 
 router = APIRouter()
 
@@ -25,7 +25,7 @@ def _snapshots_dir() -> str:
 
 
 @router.get("/{name}")
-async def get_snapshot(name: str, _user: dict = Depends(require_auth)):
+async def get_snapshot(name: str, _user: dict = Depends(require_auth_media)):
     """Serve one evidence image by filename (no traversal, no listing)."""
     if not _NAME_RE.match(name):
         raise HTTPException(status_code=400, detail="Invalid snapshot name")

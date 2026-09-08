@@ -1,9 +1,13 @@
+import { useAuth } from '../context/AuthContext';
+import { mediaSrc } from '../api/client';
 import { useState, useEffect } from 'react';
 import { apiFetch } from '../api/client';
 import { useInterval } from '../hooks/useInterval';
 import type { Camera } from '../types';
 
 export default function Cameras() {
+  const { session } = useAuth();
+  const token = session?.access_token;
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeHeatmaps, setActiveHeatmaps] = useState<Record<string, boolean>>({});
@@ -39,7 +43,7 @@ export default function Cameras() {
         <div className="camera-card-item" key={c.camera_id} style={{ display: 'flex', flexDirection: 'column' }}>
           <div className="camera-preview" style={{ position: 'relative' }}>
             <img
-              src={`/api/stream/${c.camera_id}/snapshot`}
+              src={mediaSrc(`/api/stream/${c.camera_id}/snapshot`, token)}
               alt={c.name}
               style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}
               onError={(e) => {
@@ -51,7 +55,7 @@ export default function Cameras() {
             />
             {activeHeatmaps[c.camera_id] && (
               <img
-                src={`/api/cameras/${c.camera_id}/heatmap`}
+                src={mediaSrc(`/api/cameras/${c.camera_id}/heatmap`, token)}
                 alt={`${c.name} Heatmap`}
                 style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', opacity: 0.8, pointerEvents: 'none' }}
               />

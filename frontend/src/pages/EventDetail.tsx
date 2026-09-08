@@ -1,3 +1,5 @@
+import { useAuth } from '../context/AuthContext';
+import { mediaSrc } from '../api/client';
 import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { apiFetch, formatEventType, formatTime, getRiskEmoji } from '../api/client';
@@ -5,6 +7,8 @@ import Card from '../components/ui/Card';
 import type { Event } from '../types';
 
 export default function EventDetail() {
+  const { session } = useAuth();
+  const token = session?.access_token;
   const { eventId } = useParams<{ eventId: string }>();
   const [event, setEvent] = useState<Event | null>(null);
   const [error, setError] = useState(false);
@@ -76,7 +80,7 @@ export default function EventDetail() {
         {event.evidence_path && (
           <Card title="Evidence" icon="fas fa-image" className="evidence-card">
             <img
-              src={`/snapshots/${event.evidence_path.replace(/\\\\/g, '/').split('/').pop()}`}
+              src={mediaSrc(`/snapshots/${event.evidence_path.replace(/\\\\/g, '/').split('/').pop()}`, token)}
               alt="Evidence"
               className="evidence-img"
             />

@@ -8,9 +8,13 @@ import AlertTrendChart from '../components/charts/AlertTrendChart';
 import AlertTypeChart from '../components/charts/AlertTypeChart';
 import ThreatScorePanel from '../components/dashboard/ThreatScorePanel';
 import HeatmapOverlay from '../components/camera/HeatmapOverlay';
+import { useAuth } from '../context/AuthContext';
+import { mediaSrc } from '../api/client';
 import type { DashboardSummary, Camera, Alert, Event, TimeseriesData, AlertStats } from '../types';
 
 export default function Dashboard() {
+  const { session } = useAuth();
+  const token = session?.access_token;
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [alerts, setAlerts] = useState<Alert[]>([]);
@@ -151,7 +155,7 @@ export default function Dashboard() {
             {selectedCamera ? (
               <>
                 <img
-                  src={`/api/stream/${selectedCamera}`}
+                  src={mediaSrc(`/api/stream/${selectedCamera}`, token)}
                   alt="Camera Feed"
                   className="video-feed"
                   onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}

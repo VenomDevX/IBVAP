@@ -6,7 +6,7 @@ Camera management and status endpoints.
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List
 
-from src.api.auth import require_auth, scoped_cameras
+from src.api.auth import require_auth, require_auth_media, scoped_cameras
 from src.database.db import get_database
 from src.database.repository import Repository
 
@@ -97,7 +97,7 @@ async def get_camera_status(camera_id: str, user: dict = Depends(require_auth)):
     raise HTTPException(status_code=404, detail="Camera pipeline not found")
 
 @router.get("/{camera_id}/heatmap")
-async def get_heatmap(camera_id: str, window: int = 300, user: dict = Depends(require_auth)):
+async def get_heatmap(camera_id: str, window: int = 300, user: dict = Depends(require_auth_media)):
     """Get live heatmap for a camera (returns PNG)."""
     from src.api.app import get_pipeline
     from fastapi.responses import Response

@@ -15,7 +15,7 @@ import time
 
 import jwt
 from jwt import PyJWKClient
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from loguru import logger
 from supabase import create_client, Client
@@ -190,6 +190,37 @@ def require_role(*roles: str):
 
 
 require_admin = require_role("admin")
+
+
+_media_security = HTTPBearer(auto_error=False)
+
+
+async def require_auth_media(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials = Depends(_media_security),
+) -> dict:
+    """Auth for <img>/<video> endpoints: bearer header OR ?token=<jwt>.
+
+    Browsers can't set Authorization on <img src>, so the MJPEG stream / snapshot
+    / heatmap endpoints accept the access token as a query param. (It lands in
+    access logs — acceptable for these read-only media routes; nginx.conf turns
+    logging off for them. Do not copy this pattern to data endpoints.)
+    """
+    token = credentials.credentials if credentials else request.query_params.get("token")
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    payload = _verify_token(token)
+    uid = payload.get("sub", "unknown")
+    profile = resolve_profile(uid)
+    return {
+        "token": token, "user_id": uid, "email": payload.get("email", ""),
+        "app_role": profile["role"], "allowed_areas": profile["allowed_areas"],
+        "role": profile["role"],
+    }
 
 
 def scoped_cameras(user: dict):

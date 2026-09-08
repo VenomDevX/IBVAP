@@ -1,9 +1,13 @@
+import { useAuth } from '../context/AuthContext';
+import { mediaSrc } from '../api/client';
 import { useState, useEffect } from 'react';
 import { apiFetch } from '../api/client';
 import { useInterval } from '../hooks/useInterval';
 import type { Camera, ThreatsData } from '../types';
 
 export default function MultiView() {
+  const { session } = useAuth();
+  const token = session?.access_token;
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [threats, setThreats] = useState<ThreatsData | null>(null);
   const [gridSize, setGridSize] = useState<4 | 9 | 16>(4); // 2x2, 3x3, 4x4
@@ -91,7 +95,7 @@ export default function MultiView() {
               {cam ? (
                 <>
                   <img
-                    src={`/api/stream/${cam.camera_id}`}
+                    src={mediaSrc(`/api/stream/${cam.camera_id}`, token)}
                     alt={cam.name}
                     style={{ width: '100%', height: '100%', objectFit: 'contain' }}
                     onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
