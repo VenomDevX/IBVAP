@@ -3,15 +3,14 @@ import cv2
 import glob
 from tqdm import tqdm
 
-# VIRAT object type mapping to our unified classes
-# Our Unified Classes:
-# 0: Person
-# 1: Car
-# 2: License Plate
+# VIRAT object type -> COARSE taxonomy ids (backend/ml/taxonomy.py)
+# 0: person   1: car
+# NOTE: legacy runs wrote Car as 1 then relied on fix_existing_labels.py to bump it.
+#       Coarse ids are final here; no second-pass remap.
 VIRAT_TO_UNIFIED = {
     "Person": 0,
     "Vehicle": 1,
-    "Car": 1
+    "Car": 1,
 }
 
 def parse_virat_types(types_file):

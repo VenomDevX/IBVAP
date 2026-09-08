@@ -92,3 +92,15 @@ supabase/.branches/
 # --- Misc ---
 *.log
 .agents/
+
+# --- Semgrep / tooling caches ---
+.semgrep/
+**/.semgrep/
+.mypy_cache/
+**/.mypy_cache/
+*.code-workspace
+
+# --- Raw dataset drops at repo root (never commit) ---
+/License Plate Recognition*/
+/*.yolov8/
+/*.v[0-9]*i.yolov8/

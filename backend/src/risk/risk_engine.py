@@ -43,6 +43,8 @@ class RiskEngine:
         self.behavioral_scores = config.get("behavioral_scores", {})
         self.identity_scores = config.get("identity_scores", {})
         self.vehicle_scores = config.get("vehicle_scores", {})
+        # Minimum behavioural risk implied by the detected object class itself
+        self.object_scores = config.get("object_scores", {})
 
     def calculate_risk(self, fused_event: FusedEvent) -> Tuple[float, str, List[str]]:
         """
@@ -63,7 +65,8 @@ class RiskEngine:
 
         # --- B: Behavioral Risk ---
         b_score, b_reasons = self._calculate_behavioral_risk(
-            fused_event.event_type, fused_event.contributing_factors
+            fused_event.event_type, fused_event.contributing_factors,
+            fused_event.object_type,
         )
         reasons.extend(b_reasons)
 
@@ -149,7 +152,8 @@ class RiskEngine:
         return score, reasons
 
     def _calculate_behavioral_risk(self, event_type: str,
-                                    factors: List[str]) -> Tuple[float, List[str]]:
+                                    factors: List[str],
+                                    object_type: str = "") -> Tuple[float, List[str]]:
         """Calculate behavioral component of risk."""
         score = 0.0
         reasons = []
@@ -179,6 +183,14 @@ class RiskEngine:
 
         if "Virtual fence crossed" in factors:
             reasons.append("Boundary violation detected")
+
+        # Object-class floor — a tank or aircraft near a monitored boundary is
+        # inherently higher-risk than a pedestrian doing the same thing.
+        obj_scores = self.object_scores or {}
+        obj_floor = obj_scores.get((object_type or "").lower())
+        if obj_floor:
+            score = max(score, float(obj_floor))
+            reasons.append(f"High-interest object class: {object_type.replace('_', ' ')}")
 
         if not reasons:
             reasons.append(f"Behavioral pattern: {event_type.replace('_', ' ')}")

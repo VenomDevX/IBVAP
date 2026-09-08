@@ -30,7 +30,7 @@ def convert_mot17_to_yolo(mot_path, output_path):
         with open(gt_file, "r") as f:
             for line in f:
                 parts = line.strip().split(",")
-                if len(parts) < 8: continue
+                if len(parts) < 9: continue
                 frame = int(parts[0])
                 class_id = int(parts[7])
                 vis = float(parts[8])

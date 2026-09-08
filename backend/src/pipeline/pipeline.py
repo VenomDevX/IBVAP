@@ -357,11 +357,19 @@ class IBVAPPipeline:
 
         # Initialize detector (shared across cameras)
         det_cfg = thresholds_config.get("detection", {})
+        weights_path = det_cfg.get("weights_path") or ""
+        use_custom = bool(weights_path) and os.path.exists(weights_path)
+        if weights_path and not use_custom:
+            logger.warning(
+                f"detection.weights_path set but not found ({weights_path}) - using stock model"
+            )
         self.detector = ObjectDetector(
-            model_path=det_cfg.get("model_variant", "yolov8n") + ".pt",
+            model_path=weights_path if use_custom
+            else det_cfg.get("model_variant", "yolov8n") + ".pt",
             confidence_threshold=det_cfg.get("confidence_threshold", 0.40),
-            target_classes=det_cfg.get("target_classes", [0, 2, 3, 5, 7]),
+            target_classes=det_cfg.get("target_classes") or [0, 2, 3, 5, 7],
             imgsz=det_cfg.get("imgsz", 640),
+            detect_all=use_custom,  # custom coarse model: emit all its classes
         )
 
         # Initialize zones

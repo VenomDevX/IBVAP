@@ -1379,125 +1379,124 @@ The recommended development order is:
 ```
 
 This keeps the project manageable and ensures that the team always has a working end-to-end product to demonstrate.
-1. 🚨 Intelligent Context-Aware Alarm System
 
-Instead of generating an alarm for every detection, IBVAP will fuse multiple surveillance events and determine their overall threat level.
+---
 
-For example:
+# 24. Key Innovations
 
-Person detected + restricted-zone entry + prolonged presence + movement toward boundary
+These are the differentiators that set IBVAP apart from "YOLO + a dashboard". All three are
+implemented in the backend today (see TRD §31 for status detail).
 
-will be treated as one high-risk incident, rather than four separate alerts.
+## 24.1 Context-Aware Intelligent Alarm
 
-The alarm system can have levels:
+Instead of one alarm per detection, IBVAP **fuses** the observations for a single tracked
+object into one incident and prioritises it.
 
-Risk	System Response
-🟢 Low	Log event
-🟡 Medium	Dashboard notification
-🟠 High	Prominent operator alert
-🔴 Critical	Immediate alarm + incident escalation
+> `Person detected + restricted-zone entry + prolonged presence + movement toward boundary`
+> → **one** high-risk incident, not four separate alerts.
 
-Innovation: Context-aware intelligent alarm generation and alert prioritization.
+**Canonical severity levels** (used by the code, the risk engine, and the dashboard):
 
-2. 🌙 Adaptive Night-Time Surveillance
+| Level | Score band | System response |
+|---|---|---|
+| 🟢 Low | 0–24 | Log event only |
+| 🟡 Medium | 25–49 | Dashboard notification |
+| 🟠 High | 50–74 | Prominent operator alert |
+| 🔴 Critical | 75–100 | Immediate alert + Email/SMS escalation |
 
-IBVAP will have a dedicated Night Awareness Mode that becomes more sensitive when surveillance conditions become difficult.
+> Note: §8 of this document uses an older `INFO / LOW / MEDIUM / HIGH` vocabulary for
+> alert-review urgency. The `Low / Medium / High / Critical` scale above is the one the
+> system actually emits; treat §8 as descriptive of *review urgency*, this table as
+> authoritative for *risk level*.
 
-At night, the system can combine:
+## 24.2 Adaptive Night-Time Surveillance
 
-low-light/illumination estimation
-person detection confidence
-tracking persistence
-movement trajectory
-restricted-zone information
-duration of presence
-time-of-day context
+A night/low-light context that reasons over combined signals rather than a blanket rule.
 
-Instead of simply saying:
+Instead of *"it is night → raise risk"*, the system evaluates:
+*"night + low brightness + unknown identity + restricted zone + persistent movement → elevated threat"*,
+combining low-light/illumination estimation, detection confidence, tracking persistence,
+trajectory, zone context, dwell time, and time-of-day. Temporal confirmation at night is
+used to suppress false alarms from shadows and sensor noise.
 
-“It is nighttime → increase risk.”
+## 24.3 Explainable Threat Assessment
 
-the system reasons:
+Every high-risk incident carries its reasoning, not just a label:
 
-“Nighttime + low visibility + unknown person + restricted zone + persistent movement → elevated threat.”
-
-It can also use temporal confirmation at night to reduce false alarms caused by shadows, noise, or temporary detection failures.
-
-Innovation: Adaptive context-aware surveillance for low-illumination environments.
-
-3. 🧠 Explainable AI-Based Threat Assessment
-
-The system should not behave like a black box that simply says:
-
-🚨 HIGH RISK
-
-It should explain why.
-
-Example:
-
-🚨 HIGH-RISK INCIDENT
-
-Risk Score: 86/100
+```text
+HIGH-RISK INCIDENT — Risk Score: 86/100
 
 Contributing Factors:
-✓ Unknown identity
-✓ Night-time operation
-✓ Restricted-zone entry
-✓ 48 seconds of loitering
-✓ Movement toward boundary
-✓ Abnormal trajectory
+  ✓ Unknown identity
+  ✓ Night-time operation
+  ✓ Restricted-zone entry
+  ✓ 48 seconds of loitering
+  ✓ Movement toward boundary
+  ✓ Abnormal trajectory
 
-Assessment:
-HIGH RISK
+Recommended Action: Immediate operator verification
+```
 
-Recommended Action:
-Immediate operator verification
+Produced by `risk_engine.get_explainable_summary()` and shown on the event-detail page.
 
-This makes every AI decision auditable and understandable to the security operator.
+---
 
-Innovation: Explainable, evidence-based threat assessment.
-Dataset                 | Purpose in IBVAP                                                                                    | Priority         | Link                                                                                                                |
-| ----------------------- | --------------------------------------------------------------------------------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------- |
-| *VIRAT Video Dataset* | Main *surveillance-video dataset* for people, vehicles, activities and event/activity recognition | 🥇 *MAIN*      | [VIRAT Official Dataset](https://www.crcv.ucf.edu/research/data-sets/virat/?utm_source=chatgpt.com)                 |
-| *UFPR-Planalto801*    | *Person detection, tracking and re-identification* in real-world fixed-camera surveillance        | 🥈 *HIGH*      | [UFPR-Planalto801 Official Dataset](https://web.inf.ufpr.br/vri/databases/ufpr-planalto801/?utm_source=chatgpt.com) |
-| *MOT17*               | *Multi-object pedestrian tracking* — maintaining IDs and trajectories across frames               | 🥉 *HIGH*      | [MOT17 Official Dataset](https://motchallenge.net/data/MOT17/?utm_source=chatgpt.com)                               |
-| *BDD100K*             | *Vehicle/person detection and tracking, especially outdoor road/vehicle scenes                   | ⭐ **SUPPORTING* | [BDD100K Official Dataset](https://bdd-data.berkeley.edu/?utm_source=chatgpt.com)    
-Advanced Feature Extraction & Event Snapshots
-You are asking for a transition from a basic object detector to a Multi-Modal AI Surveillance System.
+# 25. Multi-Modal Feature Extraction (Roadmap)
 
-To achieve high accuracy, clothing/color detection, license plate reading, and text descriptions, we cannot just use a single YOLO model. Instead, we need a cascaded AI pipeline.
+Moving from a plain box detector toward a multi-modal surveillance system. The technical
+design lives in **TRD §9A**; this is the product-level summary.
 
-Here is the proposed technical implementation plan to achieve exactly what you described:
+| Capability | Approach | Status |
+|---|---|---|
+| Fine-grained object class | YOLOv8 (91-class border/military taxonomy) → ResNet-50 stage-2 classifier on the crop | Trained, not yet in the live pipeline |
+| Attribute extraction (e.g. "white SUV", "red shirt") | Crop → colour histogram / lightweight attribute model | Dominant-colour extraction implemented; richer attributes pending |
+| Number-plate reading | Vehicle crop → plate detector → OCR, attached to the track | `pytesseract` helper with mock fallback; PaddleOCR/EasyOCR is the target |
+| Semantic description | Template generator combining class + colour + zone/event ("a white car loitering in a restricted zone") | Basic template implemented in the fusion engine |
+| Rich descriptions (optional) | Lightweight VLM (Moondream / Florence-2) over the alert snapshot | Not started — optional stretch |
+| Evidence snapshots | On high-risk event/alert, save the annotated frame; thumbnail on Events/Alerts pages, click for full-res | Implemented (with SHA-256 hashing) |
 
-Proposed Architecture Upgrades
-1. Higher Accuracy & Fine-Grained Features (Colors/Textures)
-YOLOv8 is great for drawing boxes around a "person" or "car", but it doesn't know what color the car is.
+Model-size caveat: the original plan named `yolov8m`; training currently uses `yolov8n`
+(6 GB VRAM). Benchmark a larger variant before the demo (TRD §9A.5).
 
-Model Upgrade: We will switch from yolov8n.pt (Nano) to yolov8m.pt (Medium) for a massive immediate boost in baseline detection accuracy.
-Secondary Feature Extractor: When YOLO detects a person or car, we will crop that box and pass it to a secondary lightweight model (like OSNet or a simple Color Histogram algorithm) to extract attributes like "Red Shirt" or "White SUV".
-2. Number Plate Reading (ANPR)
-ALPR Pipeline: When a car is detected, we will pass the car's cropped image to our ANPR module.
-We will integrate EasyOCR or Tesseract to automatically read the characters on the license plate and attach them to the vehicle's track data.
-3. AI Semantic Descriptions (Vision-Language)
-To generate descriptions like "A person in a red shirt loitering near the fence", we will use a template-based generator that combines the YOLO class, the extracted color, and the triggered Zone/Event.
-(Optional): If you want truly intelligent descriptions, we can integrate a lightweight open-source Vision-Language Model (like Moondream or Florence-2) to "look" at the snapshot and write a paragraph describing it.
-4. Capturing & Displaying Photos (Snapshots)
-Backend Storage: We will modify the CameraPipeline so that whenever a High-Risk Event or Alert triggers, it saves the current full video frame (with drawn boxes) to outputs/snapshots/{alert_id}.jpg.
-Frontend UI: We will update the Dashboard's Events and Alerts pages to display a thumbnail of this photo. Clicking it will show the full high-resolution image of the action.
+---
 
-## 7. Recent MVP Additions
+# 26. Delivered Beyond the Original MVP
 
-### 7.1. WOW Features
-* **Heatmap Overlay:** Live movement patterns rendered on the camera feed using grid-based motion accumulation over time.
-* **Threat Score Dashboard:** Unified 0-100 risk score generated dynamically for every tracked object based on its behavior, zone intersections, and identity context.
-* **Multi-Camera Grid:** A "control room" view displaying 4-9 simultaneous active streams in a grid view, leveraging WebSocket binary streaming or WebRTC for low-latency transmission.
+Features built after the first MVP definition. Marked P0 in §14; keep in mind this raises
+delivery scope above the original "smallest complete system".
 
-### 7.2. Core Missing Features
-* **PDF/CSV Reports:** An end-of-day summary endpoint that aggregates alerts and threats into a downloadable CSV/PDF export.
-* **Map View:** Geographical mapping of camera nodes using `react-leaflet`, plotting their latitude and longitude, with pulsating red markers for active alerts.
-* **Email/SMS Notifications:** Asynchronous background notification dispatch via Python `smtplib` and Twilio API (or mock equivalents if unconfigured).
+## 26.1 Operator "WOW" features
 
-### 7.3. Critical Security Additions
-* **Evidence Hashing:** Computing a SHA-256 hash immediately upon saving snapshot images to verify evidence integrity for legal proceedings.
-* **Session Timeout:** Automatic client-side logout triggered after 30 minutes of keyboard and mouse inactivity to prevent unauthorized dashboard access.
-* **Audit Log Page:** Complete tracking of user actions (e.g. reviewing alerts, changing configurations) with timestamp and IP address, accessible via a dedicated `/audit` dashboard page.
+- **Heatmap overlay** — grid-based motion accumulation over a rolling window, drawn on the feed.
+- **Live Threat-Score panel** — 0–100 score per active track with its contributing risk factors.
+- **Multi-camera grid** — 2×2 / 3×3 control-room view with threat highlighting per cell.
+
+## 26.2 Reporting & awareness
+
+- **PDF / CSV reports** — `/api/reports/daily` aggregates the last 24 h of alerts + live threats; frontend exports it.
+- **Map view** — camera nodes plotted by latitude/longitude (Leaflet), markers reflect live alert status.
+- **Email / SMS notifications** — background dispatch for Critical incidents via `smtplib` + Twilio, with mock fallback when unconfigured.
+
+## 26.3 Security & integrity
+
+- **Evidence hashing** — SHA-256 of every snapshot, stored with the event and alert.
+- **Client session timeout** — automatic logout after 30 min of inactivity.
+- **Audit log** — user actions (alert review, config change, login) with username, IP, timestamp; admin-only `/audit` page.
+- Plus: Supabase JWT auth + RBAC, rate limiting, security headers, input validation (see TRD §9.2 / §NFR-05).
+
+---
+
+# 27. Reference — Dataset Priorities
+
+Full dataset plan is in §11 and TRD §10. Quick reference for the evaluation/benchmark sets:
+
+| Dataset | Role | Priority |
+|---|---|---|
+| VIRAT | Main surveillance-video evaluation (people, vehicles, activities) | Primary |
+| UFPR-Planalto801 | Fixed-camera person detection / tracking / re-ID | High |
+| MOT17 | Multi-object pedestrian tracking benchmark (IDF1 / HOTA / MOTA) | High |
+| BDD100K | Outdoor vehicle/person generalisation | Supporting |
+
+> The **detector in training** uses a separate merged 91-class border/military dataset,
+> not these sets — see TRD §9A and §10. The sets above are for evaluation and the
+> person/vehicle generalisation baseline.
