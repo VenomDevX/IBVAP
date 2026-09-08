@@ -7,4 +7,4 @@ if (!supabaseAnonKey) {
   console.warn('VITE_SUPABASE_ANON_KEY is not set. Auth will not work.');
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const supabase = createClient(supabaseUrl, supabaseAnonKey || 'dummy_key_to_prevent_crash');

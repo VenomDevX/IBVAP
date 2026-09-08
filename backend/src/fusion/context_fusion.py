@@ -40,11 +40,10 @@ class FusedEvent:
     vehicle_context: dict = field(default_factory=dict)
 
     # Evidence
-    evidence_path: Optional[str] = None
-    snapshot_path: Optional[str] = None
-
-    # Duration
     duration: float = 0.0
+    evidence_path: Optional[str] = None
+    evidence_hash: Optional[str] = None
+    snapshot_path: Optional[str] = None
 
     def to_dict(self) -> dict:
         return {
@@ -177,7 +176,7 @@ class ContextFusion:
 
         self._event_counter += 1
         fused = FusedEvent(
-            event_id=f"EVT_{self._event_counter:06d}",
+            event_id=f"EVT_{int(now)}_{self._event_counter:04d}",
             camera_id=camera_id,
             track_id=track_id,
             timestamp=now,

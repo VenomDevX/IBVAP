@@ -44,6 +44,9 @@ class AlertEngine:
         self._rate_counter: Dict[str, list] = defaultdict(list)  # camera_id -> [timestamps]
         self._notification_callbacks: List[Callable] = []
 
+        from src.alerts.notifiers import NotificationManager
+        self.notification_manager = NotificationManager()
+
         # Ensure snapshots directory exists
         os.makedirs(self.snapshots_dir, exist_ok=True)
 
@@ -83,15 +86,16 @@ class AlertEngine:
 
         # --- Save evidence snapshot ---
         snapshot_path = None
+        snapshot_hash = None
         if frame is not None:
-            snapshot_path = self._save_snapshot(
+            snapshot_path, snapshot_hash = self._save_snapshot(
                 frame, fused_event.camera_id, fused_event.event_id
             )
 
         # --- Create alert ---
         self._alert_counter += 1
         alert = Alert(
-            alert_id=f"ALR_{self._alert_counter:06d}",
+            alert_id=f"ALR_{int(now)}_{self._alert_counter:04d}",
             camera_id=fused_event.camera_id,
             event_id=fused_event.event_id,
             track_id=fused_event.track_id,
@@ -102,6 +106,7 @@ class AlertEngine:
             object_type=fused_event.object_type,
             contributing_factors=fused_event.contributing_factors,
             snapshot_path=snapshot_path,
+            snapshot_hash=snapshot_hash,
         )
 
         # Store
@@ -115,6 +120,9 @@ class AlertEngine:
             f"Score={alert.risk_score:.0f} Camera={alert.camera_id}"
         )
 
+        if alert.risk_level == "critical":
+            self.notification_manager.notify_critical(alert.to_dict())
+
         # Notify callbacks
         for callback in self._notification_callbacks:
             try:
@@ -125,16 +133,22 @@ class AlertEngine:
         return alert
 
     def _save_snapshot(self, frame: np.ndarray, camera_id: str,
-                       event_id: str) -> Optional[str]:
-        """Save an evidence snapshot image."""
+                       event_id: str):
+        """Save an evidence snapshot image and compute its SHA-256 hash."""
+        import hashlib
         try:
             filename = f"{camera_id}_{event_id}_{int(time.time())}.jpg"
             filepath = os.path.join(self.snapshots_dir, filename)
             cv2.imwrite(filepath, frame)
-            return filepath
+            
+            # Compute SHA-256 hash for evidence hashing
+            with open(filepath, "rb") as f:
+                file_hash = hashlib.sha256(f.read()).hexdigest()
+                
+            return filepath, file_hash
         except Exception as e:
             logger.error(f"Failed to save snapshot: {e}")
-            return None
+            return None, None
 
     def mark_reviewed(self, alert_id: str, reviewed_by: str = "operator") -> bool:
         """Mark an alert as reviewed."""

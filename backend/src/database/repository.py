@@ -24,14 +24,23 @@ class Repository:
     # ======================== CAMERAS ========================
 
     def create_camera(self, camera_id: str, name: str, stream_url: str,
-                      camera_type: str = "general", location: str = "") -> CameraModel:
-        camera = CameraModel(
-            camera_id=camera_id, name=name, stream_url=stream_url,
-            camera_type=camera_type, location_label=location
+                      camera_type: str = "general", location_label: str = "",
+                      latitude: float = None, longitude: float = None) -> CameraModel:
+        """Create a new camera configuration."""
+        cam = CameraModel(
+            camera_id=camera_id,
+            name=name,
+            stream_url=stream_url,
+            camera_type=camera_type,
+            location_label=location_label,
+            latitude=latitude,
+            longitude=longitude,
+            status="offline",
+            enabled=True
         )
-        self.session.add(camera)
+        self.session.add(cam)
         self.session.commit()
-        return camera
+        return cam
 
     def get_camera(self, camera_id: str) -> Optional[CameraModel]:
         return self.session.query(CameraModel).filter_by(camera_id=camera_id).first()
@@ -63,6 +72,7 @@ class Repository:
             spatial_context=event_data.get("spatial_context", {}),
             temporal_context=event_data.get("temporal_context", {}),
             evidence_path=event_data.get("evidence_path"),
+            evidence_hash=event_data.get("evidence_hash"),
         )
         self.session.add(event)
         self.session.commit()

@@ -40,6 +40,11 @@ class Track:
     color: str = "Unknown"
     license_plate: str = "Unknown"
 
+    # Risk Assessment
+    risk_score: float = 0.0
+    risk_level: str = "low"
+    risk_factors: List[str] = field(default_factory=list)
+
     @property
     def centroid(self) -> Tuple[int, int]:
         """Current centroid position."""
@@ -128,6 +133,11 @@ class Track:
             "is_loitering": self.is_loitering,
             "has_crossed_fence": self.has_crossed_fence,
             "movement_direction": self.movement_direction,
+            "color": self.color,
+            "license_plate": self.license_plate,
+            "risk_score": round(self.risk_score, 1),
+            "risk_level": self.risk_level,
+            "risk_factors": self.risk_factors,
             "first_seen": self.first_seen,
             "last_seen": self.last_seen,
         }

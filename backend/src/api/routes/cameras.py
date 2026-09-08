@@ -25,6 +25,8 @@ async def list_cameras(user: dict = Depends(require_auth)):
             "camera_id": c.camera_id,
             "name": c.name,
             "location": c.location_label,
+            "latitude": c.latitude,
+            "longitude": c.longitude,
             "type": c.camera_type,
             "status": c.status,
             "enabled": c.enabled,
@@ -64,6 +66,8 @@ async def get_camera(camera_id: str, user: dict = Depends(require_auth)):
         "camera_id": camera.camera_id,
         "name": camera.name,
         "location": camera.location_label,
+        "latitude": camera.latitude,
+        "longitude": camera.longitude,
         "type": camera.camera_type,
         "status": camera.status,
         "enabled": camera.enabled,
@@ -90,3 +94,19 @@ async def get_camera_status(camera_id: str, user: dict = Depends(require_auth)):
         if p:
             return p.video_source.get_status_dict()
     raise HTTPException(status_code=404, detail="Camera pipeline not found")
+
+@router.get("/{camera_id}/heatmap")
+async def get_heatmap(camera_id: str, window: int = 300, user: dict = Depends(require_auth)):
+    """Get live heatmap for a camera (returns PNG)."""
+    from src.api.app import get_pipeline
+    from fastapi.responses import Response
+    import cv2
+    
+    pipeline = get_pipeline()
+    if pipeline:
+        p = pipeline.get_pipeline(camera_id)
+        if p and p.heatmap_tracker:
+            heatmap_rgba = p.heatmap_tracker.generate_heatmap(window_seconds=window)
+            _, img_encoded = cv2.imencode('.png', heatmap_rgba)
+            return Response(content=img_encoded.tobytes(), media_type="image/png")
+    raise HTTPException(status_code=404, detail="Camera pipeline or heatmap tracker not found")

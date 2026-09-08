@@ -11,7 +11,7 @@ from loguru import logger
 from src.database.models import Base
 
 # Default database path
-DEFAULT_DB_URL = "postgresql://postgres:postgres@127.0.0.1:54322/postgres"
+DEFAULT_DB_URL = "sqlite:///./ibvap.db"
 
 
 class Database:

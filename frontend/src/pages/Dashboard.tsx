@@ -6,6 +6,8 @@ import StatCard from '../components/ui/StatCard';
 import Card from '../components/ui/Card';
 import AlertTrendChart from '../components/charts/AlertTrendChart';
 import AlertTypeChart from '../components/charts/AlertTypeChart';
+import ThreatScorePanel from '../components/dashboard/ThreatScorePanel';
+import HeatmapOverlay from '../components/camera/HeatmapOverlay';
 import type { DashboardSummary, Camera, Alert, Event, TimeseriesData, AlertStats } from '../types';
 
 export default function Dashboard() {
@@ -16,7 +18,37 @@ export default function Dashboard() {
   const [timeseries, setTimeseries] = useState<TimeseriesData>({ labels: [], data: [] });
   const [byType, setByType] = useState<Record<string, number>>({});
   const [selectedCamera, setSelectedCamera] = useState('');
+  const [showHeatmap, setShowHeatmap] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
+
+  const handleExportCSV = async () => {
+    setExporting(true);
+    try {
+      const { fetchDailyReport, generateCSV } = await import('../api/reports');
+      const data = await fetchDailyReport();
+      generateCSV(data);
+    } catch (e) {
+      console.error(e);
+      alert('Export failed.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleExportPDF = async () => {
+    setExporting(true);
+    try {
+      const { fetchDailyReport, generatePDF } = await import('../api/reports');
+      const data = await fetchDailyReport();
+      generatePDF(data);
+    } catch (e) {
+      console.error(e);
+      alert('Export failed.');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const fetchData = useCallback(async () => {
     try {
@@ -55,8 +87,23 @@ export default function Dashboard() {
   useEffect(() => { fetchData(); }, [fetchData]);
   useInterval(fetchData, 5000);
 
+  if (loading || !summary) {
+    return <div className="loading"><i className="fas fa-spinner fa-spin" /> Loading Dashboard...</div>;
+  }
+
   return (
-    <>
+    <div className="dashboard">
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginBottom: '15px' }}>
+        <button className="btn btn-outline btn-sm" onClick={handleExportCSV} disabled={exporting}>
+          <i className="fas fa-file-csv" style={{ marginRight: '5px' }}></i>
+          CSV Report
+        </button>
+        <button className="btn btn-primary btn-sm" onClick={handleExportPDF} disabled={exporting}>
+          <i className="fas fa-file-pdf" style={{ marginRight: '5px' }}></i>
+          PDF Report
+        </button>
+      </div>
+
       {/* Summary Stats */}
       <div className="stats-grid">
         <StatCard icon="fas fa-video" iconClass="cameras" value={summary ? `${summary.online_cameras}/${summary.total_cameras}` : '0/0'} label="Cameras Online" loading={loading} />
@@ -75,27 +122,42 @@ export default function Dashboard() {
         </Card>
       </div>
 
+      {/* Threat Dashboard */}
+      <ThreatScorePanel />
+
       {/* Main Grid */}
       <div className="dashboard-grid">
         {/* Camera Feed */}
         <Card title="Live Feed" icon="fas fa-video" className="camera-card"
           headerRight={
-            <select className="select-small" value={selectedCamera} onChange={e => setSelectedCamera(e.target.value)}>
-              <option value="">Select Camera</option>
-              {cameras.map(c => (
-                <option key={c.camera_id} value={c.camera_id}>{c.name} ({c.camera_id})</option>
-              ))}
-            </select>
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+              <button 
+                className={`btn btn-sm ${showHeatmap ? 'btn-primary' : 'btn-outline'}`}
+                onClick={() => setShowHeatmap(!showHeatmap)}
+                title="Toggle Heatmap"
+              >
+                <i className="fas fa-fire"></i>
+              </button>
+              <select className="select-small" value={selectedCamera} onChange={e => setSelectedCamera(e.target.value)}>
+                <option value="">Select Camera</option>
+                {cameras.map(c => (
+                  <option key={c.camera_id} value={c.camera_id}>{c.name} ({c.camera_id})</option>
+                ))}
+              </select>
+            </div>
           }
         >
-          <div className="video-container">
+          <div className="video-container" style={{ position: 'relative' }}>
             {selectedCamera ? (
-              <img
-                src={`/api/stream/${selectedCamera}`}
-                alt="Camera Feed"
-                className="video-feed"
-                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-              />
+              <>
+                <img
+                  src={`/api/stream/${selectedCamera}`}
+                  alt="Camera Feed"
+                  className="video-feed"
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                />
+                <HeatmapOverlay cameraId={selectedCamera} isVisible={showHeatmap} windowMinutes={5} />
+              </>
             ) : (
               <div className="video-placeholder">
                 <i className="fas fa-video-slash" />
@@ -171,6 +233,6 @@ export default function Dashboard() {
           </div>
         </Card>
       </div>
-    </>
+    </div>
   );
 }

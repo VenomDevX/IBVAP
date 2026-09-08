@@ -47,17 +47,23 @@ def main():
     setup_logging()
 
     # Create required directories
-    for d in ["outputs/snapshots", "outputs/logs", "outputs/metrics",
-              "outputs/videos", "models/detection", "models/face",
-              "models/anpr", "models/risk", "data/custom"]:
+    output_base = os.getenv("IBVAP_OUTPUT_DIR", "./outputs")
+    model_base = os.getenv("IBVAP_MODEL_DIR", "./models")
+    data_base = os.getenv("IBVAP_DATA_DIR", "./data")
+
+    for d in [f"{output_base}/snapshots", f"{output_base}/logs", f"{output_base}/metrics",
+              f"{output_base}/videos", f"{model_base}/detection", f"{model_base}/face",
+              f"{model_base}/anpr", f"{model_base}/risk", f"{data_base}/custom"]:
         Path(d).mkdir(parents=True, exist_ok=True)
 
     # Banner
-    print("""
+    env_mode = os.getenv("IBVAP_ENV", "development").upper()
+    print(f"""
     ==========================================================
     |                                                        |
     |   IBVAP - Intelligent Border Video Analytics Platform  |
     |   AI-Based Surveillance using Existing CCTV            |
+    |   Mode: {env_mode:<45s}|
     |                                                        |
     ==========================================================
     """)

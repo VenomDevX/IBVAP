@@ -44,6 +44,7 @@ async def list_alerts(
             "object_type": a.object_type,
             "contributing_factors": a.contributing_factors,
             "snapshot_path": a.snapshot_path,
+            "snapshot_hash": a.snapshot_hash,
             "reviewed": a.reviewed,
             "reviewed_by": a.reviewed_by,
         }
@@ -87,6 +88,7 @@ async def get_alert(alert_id: str, user: dict = Depends(require_auth)):
         "object_type": alert.object_type,
         "contributing_factors": alert.contributing_factors,
         "snapshot_path": alert.snapshot_path,
+        "snapshot_hash": alert.snapshot_hash,
         "reviewed": alert.reviewed,
         "reviewed_by": alert.reviewed_by,
         "reviewed_at": alert.reviewed_at.isoformat() if alert.reviewed_at else None,

@@ -110,3 +110,41 @@ async def get_timeseries(user: dict = Depends(require_auth)):
         data.append(buckets[i])
 
     return {"labels": labels, "data": data}
+
+
+@router.get("/threats")
+async def get_threats(user: dict = Depends(require_auth)):
+    """Get active threats and risk scores across all cameras."""
+    from src.api.app import get_pipeline
+    pipeline = get_pipeline()
+    
+    if not pipeline:
+        return {"top_threats": [], "camera_distribution": {}}
+
+    all_tracks = []
+    distribution = {}
+
+    for cam_id, p in pipeline.camera_pipelines.items():
+        tracks = p.track_manager.get_active_tracks()
+        distribution[cam_id] = 0
+        
+        for tid, track in tracks.items():
+            if track.risk_score > 0:
+                distribution[cam_id] += 1
+                all_tracks.append({
+                    "track_id": f"{cam_id}-{tid}",
+                    "camera_id": cam_id,
+                    "object_type": track.object_type,
+                    "risk_score": round(track.risk_score, 1),
+                    "risk_level": track.risk_level,
+                    "risk_factors": track.risk_factors,
+                    "duration": round(track.duration, 1),
+                })
+
+    # Sort by risk score descending
+    all_tracks.sort(key=lambda x: x["risk_score"], reverse=True)
+
+    return {
+        "top_threats": all_tracks[:10],  # Top 10 current threats
+        "camera_distribution": distribution
+    }

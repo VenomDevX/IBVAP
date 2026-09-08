@@ -12,12 +12,15 @@
   "dependencies": {
     "@fortawesome/fontawesome-free": "^7.3.1",
     "@supabase/supabase-js": "^2.115.0",
+    "@types/leaflet": "^1.9.22",
     "apexcharts": "^7.1.0",
     "gridjs": "^6.2.0",
     "gridjs-react": "^6.1.1",
+    "leaflet": "^1.9.4",
     "react": "^19.2.8",
     "react-apexcharts": "^2.1.1",
     "react-dom": "^19.2.8",
+    "react-leaflet": "^5.0.0",
     "react-router-dom": "^7.18.3"
   },
   "devDependencies": {

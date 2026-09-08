@@ -11,9 +11,15 @@ import Zones from './pages/Zones';
 import Settings from './pages/Settings';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
+import MultiView from './pages/MultiView';
+import MapView from './pages/MapView';
+import AuditLog from './pages/AuditLog';
+import { useSessionTimeout } from './hooks/useSessionTimeout';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuth();
+  useSessionTimeout();
+
   if (!isAuthenticated) return <Navigate to="/login" replace />;
   return <>{children}</>;
 }
@@ -32,11 +38,14 @@ function AppRoutes() {
       >
         <Route path="/" element={<Dashboard />} />
         <Route path="/cameras" element={<Cameras />} />
+        <Route path="/multiview" element={<MultiView />} />
+        <Route path="/map" element={<MapView />} />
         <Route path="/alerts" element={<Alerts />} />
         <Route path="/events" element={<Events />} />
         <Route path="/events/:eventId" element={<EventDetail />} />
         <Route path="/zones" element={<Zones />} />
         <Route path="/settings" element={<Settings />} />
+        <Route path="/audit" element={<AuditLog />} />
       </Route>
     </Routes>
   );

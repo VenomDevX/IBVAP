@@ -22,6 +22,7 @@ class Alert:
     object_type: str
     contributing_factors: List[str] = field(default_factory=list)
     snapshot_path: Optional[str] = None
+    snapshot_hash: Optional[str] = None
     plate_result: Optional[str] = None
     identity_result: Optional[str] = None
     reviewed: bool = False
@@ -50,6 +51,7 @@ class Alert:
             "object_type": self.object_type,
             "contributing_factors": self.contributing_factors,
             "snapshot_path": self.snapshot_path,
+            "snapshot_hash": self.snapshot_hash,
             "plate_result": self.plate_result,
             "identity_result": self.identity_result,
             "reviewed": self.reviewed,

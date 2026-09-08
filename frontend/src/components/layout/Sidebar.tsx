@@ -36,6 +36,16 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
             </NavLink>
           </li>
           <li>
+            <NavLink to="/multiview" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+              <i className="fas fa-th-large" /><span>Multi-View</span>
+            </NavLink>
+          </li>
+          <li>
+            <NavLink to="/map" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+              <i className="fas fa-map-marked-alt" /><span>Map View</span>
+            </NavLink>
+          </li>
+          <li>
             <NavLink to="/alerts" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
               <i className="fas fa-bell" /><span>Alerts</span>
               <span className="badge" id="alert-badge" style={{ display: 'none' }}>0</span>
@@ -49,6 +59,11 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
           <li>
             <NavLink to="/zones" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
               <i className="fas fa-draw-polygon" /><span>Zones</span>
+            </NavLink>
+          </li>
+          <li>
+            <NavLink to="/audit" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+              <i className="fas fa-clipboard-list" /><span>Audit Logs</span>
             </NavLink>
           </li>
           <li>

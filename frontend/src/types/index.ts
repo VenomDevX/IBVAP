@@ -16,6 +16,8 @@ export interface Alert {
   risk_level: RiskLevel;
   risk_score: number;
   timestamp: string;
+  snapshot_path?: string;
+  snapshot_hash?: string;
   reviewed: boolean;
   reviewed_by?: string;
 }
@@ -46,6 +48,7 @@ export interface Event {
   spatial_context: SpatialContext;
   temporal_context: TemporalContext;
   evidence_path?: string;
+  evidence_hash?: string;
 }
 
 export interface Zone {
@@ -85,3 +88,18 @@ export interface TimeseriesData {
 }
 
 export type RiskLevel = 'low' | 'medium' | 'high' | 'critical';
+
+export interface Threat {
+  track_id: string;
+  camera_id: string;
+  object_type: string;
+  risk_score: number;
+  risk_level: RiskLevel;
+  risk_factors: string[];
+  duration: number;
+}
+
+export interface ThreatsData {
+  top_threats: Threat[];
+  camera_distribution: Record<string, number>;
+}

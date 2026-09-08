@@ -495,6 +495,70 @@ Advanced activity recognition should be treated as a later stage.
 
 ---
 
+## 7.11 Heatmap Analytics
+
+The system can overlay a visual heatmap on live video feeds showing movement density over a configured time window (e.g., last 5 minutes).
+
+This provides rapid intelligence on:
+- Most frequently traveled paths
+- Potential gathering spots
+- Areas of unusual congestion
+
+---
+
+## 7.12 Threat Score Dashboard (Explainable AI)
+
+Rather than simply alerting on raw detections, the system generates a live 0-100 Threat Score for actively tracked objects.
+
+This score fuses:
+- **Spatial factors:** Entering restricted/buffer zones, approaching fences
+- **Temporal factors:** Loitering duration, night-time conditions
+- **Behavioral factors:** Movement trajectory, crossing restricted boundaries
+- **Identity/Vehicle factors:** Unknown faces, specific vehicle types
+
+Each high-risk track must present explainable "Risk Factors" so operators understand exactly why the threat score is high.
+
+---
+
+## 7.13 Multi-Camera Grid View
+
+Operators can view multiple camera streams simultaneously in a unified grid interface.
+
+Supported configurations:
+- 2×2 (4 cameras)
+- 3×3 (9 cameras)
+- 4×4 (16 cameras)
+
+The grid cells will highlight visual indicators when the corresponding camera detects a live threat.
+
+---
+
+## 7.14 Global Map View
+
+A geographic visualization displaying the live location of all connected cameras.
+- Uses configured GPS coordinates (latitude/longitude) for each camera.
+- Color-coded map markers reflect live alert status (e.g., Red = Active Threat, Green = Secure).
+- Clicking markers reveals a summary of recent threats and camera details.
+
+---
+
+## 7.15 Automated Reporting
+
+The system allows operators to generate and download reports detailing security metrics over a specific time period.
+- **Formats:** PDF and CSV exports.
+- **Metrics included:** Total alerts, critical incidents, active threats, and threat distribution by camera and object type.
+
+---
+
+## 7.16 Critical Alert Notifications
+
+The system actively pushes high-priority information to relevant personnel when critical incidents occur.
+- **Supported Channels:** Email and SMS.
+- **Triggers:** Any incident reaching a "Critical" risk severity score.
+- **Rate Limiting:** Protects against notification spam during sustained events.
+
+---
+
 # 8. Event and Alert System
 
 A raw AI detection is not automatically an alert.
@@ -891,6 +955,9 @@ These are the main requirements the team should keep in mind.
 | FR-018 | Event review status | P0 |
 | FR-019 | Show alert details | P0 |
 | FR-020 | Show camera/system errors | P0 |
+| FR-021 | Overlay Heatmap Analytics | P0 |
+| FR-022 | Threat Score Dashboard | P0 |
+| FR-023 | Multi-Camera Grid View | P0 |
 
 **P0 = must have for the core prototype.**
 
@@ -915,6 +982,9 @@ The MVP should demonstrate one complete working flow.
 - [x] Event history
 - [x] Basic dashboard
 - [x] Basic authentication/roles
+- [x] Heatmap Analytics
+- [x] Threat Score Dashboard
+- [x] Multi-Camera Grid View
 
 ## MVP demo story
 
@@ -1414,3 +1484,20 @@ To generate descriptions like "A person in a red shirt loitering near the fence"
 4. Capturing & Displaying Photos (Snapshots)
 Backend Storage: We will modify the CameraPipeline so that whenever a High-Risk Event or Alert triggers, it saves the current full video frame (with drawn boxes) to outputs/snapshots/{alert_id}.jpg.
 Frontend UI: We will update the Dashboard's Events and Alerts pages to display a thumbnail of this photo. Clicking it will show the full high-resolution image of the action.
+
+## 7. Recent MVP Additions
+
+### 7.1. WOW Features
+* **Heatmap Overlay:** Live movement patterns rendered on the camera feed using grid-based motion accumulation over time.
+* **Threat Score Dashboard:** Unified 0-100 risk score generated dynamically for every tracked object based on its behavior, zone intersections, and identity context.
+* **Multi-Camera Grid:** A "control room" view displaying 4-9 simultaneous active streams in a grid view, leveraging WebSocket binary streaming or WebRTC for low-latency transmission.
+
+### 7.2. Core Missing Features
+* **PDF/CSV Reports:** An end-of-day summary endpoint that aggregates alerts and threats into a downloadable CSV/PDF export.
+* **Map View:** Geographical mapping of camera nodes using `react-leaflet`, plotting their latitude and longitude, with pulsating red markers for active alerts.
+* **Email/SMS Notifications:** Asynchronous background notification dispatch via Python `smtplib` and Twilio API (or mock equivalents if unconfigured).
+
+### 7.3. Critical Security Additions
+* **Evidence Hashing:** Computing a SHA-256 hash immediately upon saving snapshot images to verify evidence integrity for legal proceedings.
+* **Session Timeout:** Automatic client-side logout triggered after 30 minutes of keyboard and mouse inactivity to prevent unauthorized dashboard access.
+* **Audit Log Page:** Complete tracking of user actions (e.g. reviewing alerts, changing configurations) with timestamp and IP address, accessible via a dedicated `/audit` dashboard page.

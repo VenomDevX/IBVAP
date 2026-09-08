@@ -80,6 +80,11 @@ export default function EventDetail() {
               alt="Evidence"
               className="evidence-img"
             />
+            {event.evidence_hash && (
+              <div style={{ marginTop: '10px', fontSize: '0.85em', color: '#666', wordBreak: 'break-all' }}>
+                <strong>SHA-256 Hash:</strong> {event.evidence_hash}
+              </div>
+            )}
           </Card>
         )}
       </div>

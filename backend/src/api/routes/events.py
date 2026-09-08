@@ -40,6 +40,7 @@ async def list_events(
             "risk_level": e.risk_level,
             "contributing_factors": e.contributing_factors,
             "evidence_path": e.evidence_path,
+            "evidence_hash": e.evidence_hash,
         }
         for e in events
     ]
@@ -88,4 +89,5 @@ async def get_event(event_id: str, user: dict = Depends(require_auth)):
         "spatial_context": event.spatial_context,
         "temporal_context": event.temporal_context,
         "evidence_path": event.evidence_path,
+        "evidence_hash": event.evidence_hash,
     }

@@ -34,6 +34,7 @@ from src.database.repository import Repository
 from src.api.websocket import ws_manager
 from src.features.color_extractor import get_dominant_color
 from src.features.anpr import extract_license_plate
+from src.spatial.heatmap_tracker import HeatmapTracker
 
 
 class CameraPipeline:
@@ -47,6 +48,7 @@ class CameraPipeline:
         self.detector = detector  # Shared detector across cameras
         self.tracker = MultiObjectTracker()
         self.track_manager = TrackManager()
+        self.heatmap_tracker = HeatmapTracker()
         self.zone_manager = zone_manager
         self.fence_detector = fence_detector
         self.direction_analyzer = DirectionAnalyzer()
@@ -127,6 +129,7 @@ class CameraPipeline:
                 # 3. Track objects
                 active_tracks = self.tracker.update(detections)
                 self.track_manager.update_tracks(active_tracks)
+                self.heatmap_tracker.add_points(active_tracks)
                 self._stats["active_tracks"] = len(active_tracks)
 
                 # 4-9. Process each active track
@@ -276,6 +279,11 @@ class CameraPipeline:
 
         # 9. Risk scoring
         fused_event = self.risk_engine.score_fused_event(fused_event)
+        
+        # Attach latest risk to the track for live dashboard
+        track.risk_score = fused_event.risk_score
+        track.risk_level = fused_event.risk_level
+        track.risk_factors = fused_event.contributing_factors
 
         # Print risk summary for significant events
         if fused_event.risk_level in ("high", "critical"):
@@ -289,6 +297,7 @@ class CameraPipeline:
             self._stats["alerts_generated"] += 1
             if alert.snapshot_path:
                 fused_event.evidence_path = alert.snapshot_path
+                fused_event.evidence_hash = alert.snapshot_hash
 
             # Store to database
             try:
@@ -405,9 +414,20 @@ class IBVAPPipeline:
                 repo = Repository(session)
                 existing = repo.get_camera(camera_info.camera_id)
                 if not existing:
+                    # Mock locations for the map view based on camera ID
+                    lat, lng = 28.6139, 77.2090 # Default to New Delhi coordinates
+                    if camera_info.camera_id == "cam_north":
+                        lat, lng = 28.6150, 77.2100
+                    elif camera_info.camera_id == "cam_south":
+                        lat, lng = 28.6120, 77.2080
+
                     repo.create_camera(
-                        camera_info.camera_id, camera_info.name,
-                        camera_info.source, camera_info.camera_type
+                        camera_id=camera_info.camera_id, 
+                        name=camera_info.name,
+                        stream_url=camera_info.source, 
+                        camera_type=camera_info.camera_type,
+                        latitude=lat,
+                        longitude=lng
                     )
                 session.close()
             except Exception as e:

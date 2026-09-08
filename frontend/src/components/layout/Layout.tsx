@@ -7,10 +7,13 @@ import ToastContainer from '../toast/ToastContainer';
 const PAGE_TITLES: Record<string, string> = {
   '/': 'Command Dashboard',
   '/cameras': 'Camera Management',
+  '/multiview': 'Multi-Camera View',
+  '/map': 'Global Map View',
   '/alerts': 'Alert Center',
   '/events': 'Event History',
   '/zones': 'Virtual Zone Configuration',
   '/settings': 'System Settings',
+  '/audit': 'Audit Logs',
 };
 
 export default function Layout() {

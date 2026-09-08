@@ -12,15 +12,18 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from loguru import logger
 
-from src.api.routes import cameras, events, alerts, zones, tracks, statistics, stream
+from src.api.routes import cameras, events, alerts, zones, tracks, statistics, stream, reports, audit
 from src.api.auth import _verify_token
 from src.api.websocket import ws_manager
+from src.api.middleware.security import SecurityHeadersMiddleware, RequestLoggingMiddleware
+from src.api.middleware.input_validator import InputValidationMiddleware
 from src.pipeline.pipeline import IBVAPPipeline
 
 # Global pipeline reference
@@ -58,14 +61,35 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
+    
+    # Production mode disables interactive docs
+    is_production = os.getenv("IBVAP_ENV", "development").lower() == "production"
+    
     app = FastAPI(
         title="IBVAP — Intelligent Border Video Analytics Platform",
         description="AI-Based Video Analytics for Border Surveillance",
         version="2.0.0",
         lifespan=lifespan,
+        # Disable docs in production to prevent API exploration
+        docs_url=None if is_production else "/docs",
+        redoc_url=None if is_production else "/redoc",
+        openapi_url=None if is_production else "/openapi.json",
     )
 
-    # CORS — restrict to allowed frontend origins
+    # ======================== Security Middleware ========================
+    # Order matters: first added = outermost layer (runs first on request)
+
+    # 1. Trusted hosts — prevent host header injection attacks
+    trusted_hosts = os.getenv(
+        "TRUSTED_HOSTS",
+        "localhost,127.0.0.1,0.0.0.0"
+    ).split(",")
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=[h.strip() for h in trusted_hosts],
+    )
+
+    # 2. CORS — restrict to allowed frontend origins
     cors_origins = os.getenv(
         "CORS_ORIGINS",
         "http://localhost:3000,http://localhost:80,http://127.0.0.1:3000"
@@ -78,13 +102,22 @@ def create_app() -> FastAPI:
         allow_headers=["Authorization", "Content-Type"],
     )
 
-    # Rate limiting
+    # 3. Rate limiting
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
     app.add_middleware(SlowAPIMiddleware)
 
+    # 4. Security headers (XSS, clickjacking, MIME sniffing protection)
+    app.add_middleware(SecurityHeadersMiddleware)
+
+    # 5. Request logging with IP tracking and audit trail
+    app.add_middleware(RequestLoggingMiddleware)
+
+    # 6. Input validation (path traversal, injection, upload size)
+    app.add_middleware(InputValidationMiddleware)
+
     # Snapshots directory (for evidence images)
-    snapshots_dir = Path("./outputs/snapshots")
+    snapshots_dir = Path(os.getenv("IBVAP_SNAPSHOTS_DIR", "./outputs/snapshots"))
     snapshots_dir.mkdir(parents=True, exist_ok=True)
     app.mount("/snapshots", StaticFiles(directory=str(snapshots_dir)), name="snapshots")
 
@@ -96,6 +129,8 @@ def create_app() -> FastAPI:
     app.include_router(tracks.router, prefix="/api/tracks", tags=["Tracks"])
     app.include_router(statistics.router, prefix="/api/statistics", tags=["Statistics"])
     app.include_router(stream.router, prefix="/api/stream", tags=["Video Stream"])
+    app.include_router(reports.router, prefix="/api/reports", tags=["Reports"])
+    app.include_router(audit.router, prefix="/api/audit", tags=["Audit Logs"])
 
     # ======================== WebSocket ========================
     @app.websocket("/ws/alerts")
@@ -123,6 +158,11 @@ def create_app() -> FastAPI:
     async def health_check():
         return {"status": "ok", "service": "ibvap-backend"}
 
+    if is_production:
+        logger.info("Running in PRODUCTION mode — API docs disabled")
+    else:
+        logger.info("Running in DEVELOPMENT mode — API docs enabled at /docs")
+
     return app
 
 
@@ -130,4 +170,5 @@ def get_pipeline() -> IBVAPPipeline:
     """Get the global pipeline instance."""
     global pipeline
     return pipeline
+
 

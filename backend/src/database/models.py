@@ -23,6 +23,8 @@ class CameraModel(Base):
     stream_url = Column(String(500), nullable=False)
     camera_type = Column(String(50), default="general")
     status = Column(String(20), default="offline")
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
     enabled = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -67,6 +69,7 @@ class EventModel(Base):
     spatial_context = Column(JSON, default=dict)
     temporal_context = Column(JSON, default=dict)
     evidence_path = Column(String(500), nullable=True)
+    evidence_hash = Column(String(64), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
@@ -90,6 +93,7 @@ class AlertModel(Base):
     object_type = Column(String(50), default="")
     contributing_factors = Column(JSON, default=list)
     snapshot_path = Column(String(500), nullable=True)
+    snapshot_hash = Column(String(64), nullable=True)
     plate_result = Column(String(50), nullable=True)
     identity_result = Column(String(100), nullable=True)
     reviewed = Column(Boolean, default=False)
