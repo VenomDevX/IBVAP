@@ -7,10 +7,10 @@ export default defineConfig({
   server: {
     port: 3001,
     proxy: {
-      '/api': 'http://localhost:8001',
-      '/ws': { target: 'ws://localhost:8001', ws: true },
-      '/snapshots': 'http://localhost:8001',
-      '/static': 'http://localhost:8001',
+      '/api': 'http://localhost:8002',
+      '/ws': { target: 'ws://localhost:8002', ws: true },
+      '/snapshots': 'http://localhost:8002',
+      '/static': 'http://localhost:8002',
     },
   },
   build: {

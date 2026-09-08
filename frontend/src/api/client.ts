@@ -2,14 +2,24 @@ import { supabase } from './supabase';
 
 const API_BASE = '';
 
-export async function apiFetch(url: string, options: RequestInit = {}): Promise<Response> {
-  const { data: { session } } = await supabase.auth.getSession();
-  const token = session?.access_token;
-  
+async function doFetch(url: string, options: RequestInit, token?: string): Promise<Response> {
   const headers: Record<string, string> = { ...(options.headers as Record<string, string>) };
   if (token) headers['Authorization'] = `Bearer ${token}`;
+  return fetch(`${API_BASE}${url}`, { ...options, headers });
+}
 
-  const res = await fetch(`${API_BASE}${url}`, { ...options, headers });
+export async function apiFetch(url: string, options: RequestInit = {}): Promise<Response> {
+  let { data: { session } } = await supabase.auth.getSession();
+  let res = await doFetch(url, options, session?.access_token);
+
+  if (res.status === 401) {
+    // one refresh + retry before giving up (handles a just-expired token / clock skew)
+    const { data } = await supabase.auth.refreshSession();
+    if (data.session?.access_token) {
+      session = data.session;
+      res = await doFetch(url, options, session.access_token);
+    }
+  }
 
   if (res.status === 401) {
     await supabase.auth.signOut();

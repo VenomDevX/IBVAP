@@ -35,7 +35,8 @@ tables while the populated store has no row-level control at all. Two divergent 
 (`docker-compose` sets `DATABASE_URL` to Postgres; `python main.py` uses SQLite).
 Fix: pick one datastore, then real policies keyed on `auth.uid()` + `allowed_areas`.
 
-### C4 — Open self-registration -> stranger gets full operator access  **[FIXED]** (signup locked + seed_users.py)
+### C4 — Open self-registration -> stranger gets full operator access  **[FIXED]**
+`[auth] enable_signup = false` blocks the signup endpoint; the `/signup` page is dev-build-only; accounts are provisioned by `scripts/seed_users.py`. NOTE: `[auth.email] enable_signup` must stay `true` — the CLI otherwise disables ALL email login. Regression fixed 2026-09-08.
 `supabase/config.toml`: `enable_signup = true`, `enable_confirmations = false`, captcha commented
 out. `frontend/src/pages/Signup.tsx` synthesizes `<username>@ibvap.local` so no real mailbox is
 needed. No approval step, no domain allow-list, no `user_profiles` row created. An attacker
