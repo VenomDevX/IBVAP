@@ -2,6 +2,12 @@ import { supabase } from './supabase';
 
 const API_BASE = '';
 
+/** Append the access token as a query param for <img>/<video> src (can't send a header). */
+export function mediaSrc(path: string, token?: string | null): string {
+  if (!token) return path;
+  return path + (path.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token);
+}
+
 async function doFetch(url: string, options: RequestInit, token?: string): Promise<Response> {
   const headers: Record<string, string> = { ...(options.headers as Record<string, string>) };
   if (token) headers['Authorization'] = `Bearer ${token}`;

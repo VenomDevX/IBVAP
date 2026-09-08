@@ -7,7 +7,7 @@ const TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 export function useSessionTimeout() {
   const { isAuthenticated, logout } = useAuth();
   const navigate = useNavigate();
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const resetTimeout = () => {
     if (timeoutRef.current) {

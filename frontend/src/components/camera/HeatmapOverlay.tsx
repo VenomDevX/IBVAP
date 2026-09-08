@@ -1,5 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useInterval } from '../../hooks/useInterval';
+import { useAuth } from '../../context/AuthContext';
+import { mediaSrc } from '../../api/client';
 
 interface HeatmapOverlayProps {
   cameraId: string;
@@ -9,6 +11,7 @@ interface HeatmapOverlayProps {
 
 export default function HeatmapOverlay({ cameraId, isVisible, windowMinutes = 5 }: HeatmapOverlayProps) {
   const [timestamp, setTimestamp] = useState(Date.now());
+  const { session } = useAuth();
 
   // Refresh heatmap every 5 seconds when visible
   useInterval(() => {
@@ -21,9 +24,7 @@ export default function HeatmapOverlay({ cameraId, isVisible, windowMinutes = 5 
 
   const windowSeconds = windowMinutes * 60;
   
-  // Use JWT token if authentication is required for media (usually cookies handle it, but just in case)
-  const token = localStorage.getItem('ibvap_token');
-  const authQuery = token ? `&token=${token}` : '';
+  const token = session?.access_token;
 
   return (
     <div className="heatmap-container" style={{
@@ -38,7 +39,7 @@ export default function HeatmapOverlay({ cameraId, isVisible, windowMinutes = 5 
       mixBlendMode: 'screen'
     }}>
       <img 
-        src={`/api/cameras/${cameraId}/heatmap?window=${windowSeconds}&t=${timestamp}${authQuery}`}
+        src={mediaSrc(`/api/cameras/${cameraId}/heatmap?window=${windowSeconds}&t=${timestamp}`, token)}
         alt="Heatmap"
         style={{
           width: '100%',
