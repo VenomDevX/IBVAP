@@ -4,7 +4,7 @@ SQLite database connection and schema initialization.
 """
 
 import os
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, Session
 from loguru import logger
 
@@ -19,12 +19,22 @@ class Database:
 
     def __init__(self, db_url: str = None):
         self.db_url = db_url or os.getenv("DATABASE_URL", DEFAULT_DB_URL)
-        connect_args = {"check_same_thread": False} if self.db_url.startswith("sqlite") else {}
+        is_sqlite = self.db_url.startswith("sqlite")
+        connect_args = {"check_same_thread": False, "timeout": 5} if is_sqlite else {}
         self.engine = create_engine(
             self.db_url,
             connect_args=connect_args,
             echo=False,
+            hide_parameters=True,
         )
+        if is_sqlite:
+            @event.listens_for(self.engine, "connect")
+            def _sqlite_pragmas(dbapi_conn, _rec):
+                cur = dbapi_conn.cursor()
+                cur.execute("PRAGMA journal_mode=WAL")
+                cur.execute("PRAGMA busy_timeout=5000")
+                cur.execute("PRAGMA synchronous=NORMAL")
+                cur.close()
         self.SessionLocal = sessionmaker(
             autocommit=False, autoflush=False, bind=self.engine
         )

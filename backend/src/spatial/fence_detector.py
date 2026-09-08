@@ -49,7 +49,8 @@ class FenceDetector:
     def __init__(self):
         self._fences: Dict[str, FenceLine] = {}
         self._crossing_history: Dict[str, set] = {}  # fence_id -> set of track_ids that crossed
-        self._recent_crossings: List[FenceCrossingEvent] = []
+        from collections import deque
+        self._recent_crossings = deque(maxlen=500)
 
     def load_from_config(self, config: dict):
         """Load fences from YAML config."""

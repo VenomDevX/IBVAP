@@ -6,7 +6,7 @@ Camera management and status endpoints.
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List
 
-from src.api.auth import require_auth
+from src.api.auth import require_auth, scoped_cameras
 from src.database.db import get_database
 from src.database.repository import Repository
 
@@ -19,7 +19,8 @@ async def list_cameras(user: dict = Depends(require_auth)):
     db = get_database()
     session = db.get_session()
     repo = Repository(session)
-    cameras = repo.get_all_cameras()
+    allowed = scoped_cameras(user)
+    cameras = [c for c in repo.get_all_cameras() if allowed is None or c.camera_id in allowed]
     result = [
         {
             "camera_id": c.camera_id,

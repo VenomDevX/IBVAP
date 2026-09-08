@@ -4,6 +4,7 @@ Combines detection, tracking, spatial, and temporal signals to classify behavior
 """
 
 import time
+from collections import deque
 from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 from enum import Enum
@@ -58,7 +59,7 @@ class BehaviorEngine:
 
     def __init__(self):
         self._event_counter: int = 0
-        self._recent_events: List[BehaviorEvent] = []
+        self._recent_events = deque(maxlen=2000)
         # Cooldown: (track_id, behavior_type) -> last_event_time
         self._cooldowns: Dict[tuple, float] = {}
         self._cooldown_seconds: float = 30.0
@@ -195,6 +196,10 @@ class BehaviorEngine:
         """Create a behavior event with cooldown check."""
         now = time.time()
         key = (track.track_id, behavior_type.value)
+
+        if len(self._cooldowns) > 512:
+            ccut = now - self._cooldown_seconds * 4
+            self._cooldowns = {k: t for k, t in self._cooldowns.items() if t > ccut}
 
         # Cooldown check
         if not force and key in self._cooldowns:

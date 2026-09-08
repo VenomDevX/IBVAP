@@ -83,8 +83,10 @@ class Repository:
 
     def get_events(self, camera_id: str = None, event_type: str = None,
                    risk_level: str = None, limit: int = 100,
-                   offset: int = 0) -> List[EventModel]:
+                   offset: int = 0, allowed_cameras=None) -> List[EventModel]:
         query = self.session.query(EventModel)
+        if allowed_cameras is not None:
+            query = query.filter(EventModel.camera_id.in_(allowed_cameras or ["__none__"]))
         if camera_id:
             query = query.filter_by(camera_id=camera_id)
         if event_type:
@@ -93,8 +95,10 @@ class Repository:
             query = query.filter_by(risk_level=risk_level)
         return query.order_by(desc(EventModel.timestamp)).offset(offset).limit(limit).all()
 
-    def get_event_count(self, camera_id: str = None) -> int:
+    def get_event_count(self, camera_id: str = None, allowed_cameras=None) -> int:
         query = self.session.query(EventModel)
+        if allowed_cameras is not None:
+            query = query.filter(EventModel.camera_id.in_(allowed_cameras or ["__none__"]))
         if camera_id:
             query = query.filter_by(camera_id=camera_id)
         return query.count()
@@ -114,6 +118,7 @@ class Repository:
             object_type=alert_data.get("object_type", ""),
             contributing_factors=alert_data.get("contributing_factors", []),
             snapshot_path=alert_data.get("snapshot_path"),
+            snapshot_hash=alert_data.get("snapshot_hash"),
             plate_result=alert_data.get("plate_result"),
             identity_result=alert_data.get("identity_result"),
         )
@@ -125,8 +130,10 @@ class Repository:
         return self.session.query(AlertModel).filter_by(alert_id=alert_id).first()
 
     def get_alerts(self, camera_id: str = None, risk_level: str = None,
-                   reviewed: bool = None, limit: int = 100) -> List[AlertModel]:
+                   reviewed: bool = None, limit: int = 100, allowed_cameras=None) -> List[AlertModel]:
         query = self.session.query(AlertModel)
+        if allowed_cameras is not None:
+            query = query.filter(AlertModel.camera_id.in_(allowed_cameras or ["__none__"]))
         if camera_id:
             query = query.filter_by(camera_id=camera_id)
         if risk_level:

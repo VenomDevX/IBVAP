@@ -74,7 +74,8 @@ async def create_zone(zone: ZoneCreate, user: dict = Depends(require_admin)):
     repo = Repository(session)
 
     repo.create_zone(zone.dict())
-    repo.create_audit_log("create_zone", user["username"],
+    actor = user.get("email") or user.get("user_id") or "unknown"
+    repo.create_audit_log("create_zone", actor,
                           {"zone_id": zone.zone_id, "camera_id": zone.camera_id})
     session.close()
 
@@ -104,7 +105,8 @@ async def delete_zone(zone_id: str, user: dict = Depends(require_admin)):
     session = db.get_session()
     repo = Repository(session)
     success = repo.delete_zone(zone_id)
-    repo.create_audit_log("delete_zone", user["username"], {"zone_id": zone_id})
+    actor = user.get("email") or user.get("user_id") or "unknown"
+    repo.create_audit_log("delete_zone", actor, {"zone_id": zone_id})
     session.close()
 
     from src.api.app import get_pipeline

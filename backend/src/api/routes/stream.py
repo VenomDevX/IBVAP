@@ -3,49 +3,54 @@ IBVAP — Video Stream Routes
 MJPEG video stream and frame capture endpoints.
 """
 
+import asyncio
+
 import cv2
-import time
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse, Response
 
 from src.api.auth import require_auth
 
 router = APIRouter()
 
+# ~1 hour hard cap so a forgotten tab cannot pin a connection forever
+_MAX_FRAMES = 60 * 60 * 30
 
-def generate_mjpeg(camera_id: str):
-    """Generator that yields MJPEG frames for streaming."""
+
+async def generate_mjpeg(camera_id: str, request: Request):
+    """Async generator that yields MJPEG frames until the client disconnects."""
     from src.api.app import get_pipeline
     pipeline = get_pipeline()
-
     if not pipeline:
         return
-
     cam_pipeline = pipeline.get_pipeline(camera_id)
     if not cam_pipeline:
         return
 
-    while True:
+    frames = 0
+    while frames < _MAX_FRAMES:
+        if await request.is_disconnected():
+            break
+
         frame = cam_pipeline.get_latest_annotated_frame()
         if frame is None:
             frame = cam_pipeline.get_latest_frame()
 
         if frame is not None:
-            _, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
-            yield (
-                b"--frame\r\n"
-                b"Content-Type: image/jpeg\r\n\r\n" +
-                buffer.tobytes() +
-                b"\r\n"
-            )
+            ok, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+            if ok:
+                yield (
+                    b"--frame\r\n"
+                    b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
+                )
+                frames += 1
+            await asyncio.sleep(0.033)  # ~30 FPS cap
         else:
-            time.sleep(0.1)
-
-        time.sleep(0.033)  # ~30 FPS cap
+            await asyncio.sleep(0.1)
 
 
 @router.get("/{camera_id}")
-async def video_stream(camera_id: str, _user=Depends(require_auth)):
+async def video_stream(camera_id: str, request: Request, _user=Depends(require_auth)):
     """Get MJPEG video stream for a camera."""
     from src.api.app import get_pipeline
     pipeline = get_pipeline()
@@ -54,7 +59,7 @@ async def video_stream(camera_id: str, _user=Depends(require_auth)):
         raise HTTPException(status_code=404, detail="Camera not found")
 
     return StreamingResponse(
-        generate_mjpeg(camera_id),
+        generate_mjpeg(camera_id, request),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )
 

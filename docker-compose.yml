@@ -1,32 +1,61 @@
 # =============================================================================
-# IBVAP — Docker Compose (Development)
-# Lightweight stack: Backend API + Frontend UI
-# Database & Auth handled by Supabase CLI (npx supabase start)
+# IBVAP — Docker Compose
+# Backend API + Frontend UI. Auth via Supabase CLI (npx supabase start).
+# Runtime datastore is SQLite (single source of truth) — see docs/IBVAP_TRD.md §17.
+# For TLS, use:  docker compose -f docker-compose.yml -f docker-compose.tls.yml up
 # =============================================================================
 
 services:
-  # Python FastAPI Backend (AI Microservice)
   backend:
     build: ./backend
     container_name: ibvap_backend
     restart: unless-stopped
-    ports:
-      - "8000:8000"
+    # not published to the host — nginx is the only entry point
+    expose:
+      - "8000"
+    env_file:
+      - ./backend/.env
+    environment:
+      - IBVAP_ENV=production
+      - IBVAP_CONFIG_DIR=/app/configs
+      - DATABASE_URL=sqlite:////app/data/ibvap.db
     volumes:
       - ./outputs:/app/outputs
       - ./backend/configs:/app/configs
-    environment:
-      - DATABASE_URL=postgresql://postgres:postgres@host.docker.internal:54322/postgres
-      - IBVAP_CONFIG_DIR=/app/configs
+      - ibvap_db:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health').status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          memory: 4g
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
-  # React Frontend (Nginx)
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:?set VITE_SUPABASE_URL in a .env next to docker-compose.yml}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:?set VITE_SUPABASE_ANON_KEY}
     container_name: ibvap_frontend
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "80:8080"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  ibvap_db:

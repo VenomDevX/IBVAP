@@ -1,0 +1,42 @@
+"""
+IBVAP — Evidence Snapshot Routes
+Authenticated, path-confined access to evidence images.
+
+Replaces the old unauthenticated `StaticFiles` mount at /snapshots — those files
+are annotated frames of real people/vehicles/plates from surveillance cameras and
+must not be world-readable or cacheable by intermediaries.
+"""
+
+import os
+import re
+
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
+
+from src.api.auth import require_auth
+
+router = APIRouter()
+
+_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+\.(jpg|jpeg|png)$", re.IGNORECASE)
+
+
+def _snapshots_dir() -> str:
+    return os.path.realpath(os.getenv("IBVAP_SNAPSHOTS_DIR", "./outputs/snapshots"))
+
+
+@router.get("/{name}")
+async def get_snapshot(name: str, _user: dict = Depends(require_auth)):
+    """Serve one evidence image by filename (no traversal, no listing)."""
+    if not _NAME_RE.match(name):
+        raise HTTPException(status_code=400, detail="Invalid snapshot name")
+
+    base = _snapshots_dir()
+    target = os.path.realpath(os.path.join(base, name))
+    if os.path.commonpath([base, target]) != base or not os.path.isfile(target):
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+
+    return FileResponse(
+        target,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "private, no-store"},
+    )

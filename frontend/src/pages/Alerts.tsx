@@ -63,11 +63,7 @@ export default function Alerts() {
     // Expose review function globally for gridjs html buttons
     (window as unknown as Record<string, unknown>).__reviewAlert = async (alertId: string) => {
       try {
-        await apiFetch(`/api/alerts/${alertId}/review`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ reviewed_by: localStorage.getItem('ibvap_user') || 'operator' }),
-        });
+        await apiFetch(`/api/alerts/${alertId}/review`, { method: 'POST' });
         loadAlerts();
       } catch (err) {
         console.error('Review error:', err);

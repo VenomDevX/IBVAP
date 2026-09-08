@@ -1,0 +1,13 @@
+**/venv/
+**/.venv/
+**/node_modules/
+**/__pycache__/
+**/*.db
+**/*.pt
+**/outputs/
+**/data/
+**/runs/
+**/.env
+**/.env.*
+!**/.env.example
+.git/
