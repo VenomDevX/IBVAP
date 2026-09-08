@@ -4,13 +4,17 @@
 
 detection:
   confidence_threshold: 0.40
-  nms_threshold: 0.45
-  # Classes to detect (COCO class IDs)
-  # 0=person, 1=bicycle, 2=car, 3=motorcycle, 5=bus, 7=truck
+  nms_threshold: 0.45            # NOTE: currently read by ObjectDetector default only
+  # Custom coarse detector weights (backend/ml/taxonomy.py, 13 classes).
+  # When set and the file exists, the pipeline loads it and emits ALL its classes
+  # (detect_all=True) and target_classes below is ignored. Leave "" for the stock model.
+  weights_path: ""
+  # target_classes only applies to the STOCK model (COCO ids):
+  # 0=person, 2=car, 3=motorcycle, 5=bus, 7=truck
   target_classes: [0, 2, 3, 5, 7]
-  # Model variant: yolov8n, yolov8s, yolov8m
+  # Stock model variant if weights_path is empty: yolov8n / yolov8s / yolo11s
   model_variant: "yolov8n"
-  # Input size
+  # Input size (train and infer at the same size; coarse model trained at 640)
   imgsz: 640
 
 tracking:

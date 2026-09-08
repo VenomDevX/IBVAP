@@ -1,67 +1,96 @@
+"""
+train_yolo.py — coarse detector training (IBVAP)
+===============================================
+Trains the ~13-class coarse detector (see backend/ml/taxonomy.py) on the
+leak-free, clip-aware split (configs/dataset_coarse.yaml).
+
+Tuned for a ~6 GB RTX 40-series:  yolo11s @ 640, auto batch, disk cache, AMP.
+Run  `python -m ml.verify_dataset --data configs/dataset_coarse.yaml`  first.
+
+Usage:
+  python scripts/train_yolo.py                                  # full run, defaults
+  python scripts/train_yolo.py --epochs 3                       # smoke test
+  python scripts/train_yolo.py --model yolov8s.pt               # if ultralytics < 8.3
+  python scripts/train_yolo.py --resume --model outputs/training/ibvap_coarse/weights/last.pt
+"""
+
 import argparse
 import os
 
-# Fix cuDNN stream mismatch error on RTX 40-series
-os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+# cuDNN STREAM_MISMATCH workaround for RTX 40-series
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
 from ultralytics import YOLO
 
-def train_model(data_yaml, epochs=100, imgsz=480, batch=2, model_name="yolov8n.pt", resume=False):
-    """
-    Train a YOLOv8 model for custom object detection.
-    Supports resuming from a checkpoint with --resume flag.
-    """
-    data_yaml = os.path.abspath(data_yaml)
-    model_name = os.path.abspath(model_name) if os.path.exists(model_name) else model_name
+DEFAULT_DATA = "configs/dataset_coarse.yaml"
+RUN_NAME = "ibvap_coarse"
 
-    print(f"Loading YOLO model: {model_name}")
-    model = YOLO(model_name)
 
-    if resume:
-        print(f"RESUMING training from checkpoint: {model_name}")
-        # When resuming, YOLO reads all settings from the checkpoint
-        results = model.train(resume=True)
-    else:
-        print(f"Starting NEW training using dataset config: {data_yaml}")
-        print(f"Epochs: {epochs} | Image Size: {imgsz} | Batch: {batch}")
-        results = model.train(
-            data=data_yaml,
-            epochs=epochs,
-            imgsz=imgsz,
-            batch=batch,
-            device=0,
-            workers=2,
-            deterministic=False,  # Fix cuDNN STREAM_MISMATCH error
-            project="outputs/training",
-            name="ibvap_custom_model",
-            exist_ok=True
+def train(args):
+    data_yaml = os.path.abspath(args.data)
+    model_name = os.path.abspath(args.model) if os.path.exists(args.model) else args.model
+
+    print(f"Loading model: {model_name}")
+    try:
+        model = YOLO(model_name)
+    except Exception as e:
+        raise SystemExit(
+            f"Could not load '{model_name}': {e}\n"
+            f"If this is a yolo11 name on old ultralytics, run  pip install -U ultralytics  "
+            f"or pass  --model yolov8s.pt"
         )
 
-    print("Training complete!")
-    print("Best weights: outputs/training/ibvap_custom_model/weights/best.pt")
-    print("Last weights: outputs/training/ibvap_custom_model/weights/last.pt")
+    if args.resume:
+        print(f"RESUMING from {model_name}")
+        model.train(resume=True)
+        return
+
+    if not os.path.exists(data_yaml):
+        raise SystemExit(f"data config not found: {data_yaml} "
+                         f"(run scripts/make_clean_split.py first)")
+
+    print(f"data={data_yaml}  epochs={args.epochs}  imgsz={args.imgsz}  batch={args.batch}")
+    model.train(
+        data=data_yaml,
+        epochs=args.epochs,
+        imgsz=args.imgsz,
+        batch=args.batch,            # -1 = auto-fit VRAM
+        patience=args.patience,
+        device=0,
+        workers=args.workers,
+        cache=args.cache,            # 'disk' — F: drive is slow; big wall-clock win
+        cos_lr=True,
+        close_mosaic=15,
+        # augmentation — copy_paste/mixup specifically lift the rare military classes
+        mixup=0.10,
+        copy_paste=0.15,
+        degrees=5.0,
+        scale=0.5,
+        deterministic=False,         # cuDNN STREAM_MISMATCH workaround
+        project="outputs/training",
+        name=RUN_NAME,
+        exist_ok=True,
+        plots=True,
+    )
+    print("\nDone.")
+    print(f"  best: outputs/training/{RUN_NAME}/weights/best.pt")
+    print(f"  args: outputs/training/{RUN_NAME}/args.yaml")
+    print(f"\nEvaluate:  python -m ml.eval_detector "
+          f"--weights outputs/training/{RUN_NAME}/weights/best.pt")
+
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train YOLOv8 for IBVAP")
-    parser.add_argument("--data", type=str, default="configs/dataset.yaml", help="Path to data.yaml")
-    parser.add_argument("--epochs", type=int, default=100, help="Number of training epochs")
-    parser.add_argument("--batch", type=int, default=2, help="Batch size (2 for 6GB VRAM)")
-    parser.add_argument("--imgsz", type=int, default=480, help="Image size (480 for 6GB VRAM)")
-    parser.add_argument("--model", type=str, default="yolov8n.pt", help="Pretrained model or checkpoint path")
-    parser.add_argument("--resume", action="store_true", help="Resume training from last.pt checkpoint")
-
-    args = parser.parse_args()
-
-    if args.resume:
-        # For resume, model must be the last.pt checkpoint
-        last_pt = os.path.abspath(args.model)
-        if not os.path.exists(last_pt):
-            print(f"Error: Checkpoint not found at {last_pt}")
-            exit(1)
-        train_model(args.data, model_name=last_pt, resume=True)
-    else:
-        data_path = os.path.abspath(args.data)
-        if not os.path.exists(data_path):
-            print(f"Error: Dataset config not found at {data_path}")
-            exit(1)
-        train_model(data_path, args.epochs, args.imgsz, args.batch, args.model)
+    p = argparse.ArgumentParser(description="Train the IBVAP coarse detector")
+    p.add_argument("--data", default=DEFAULT_DATA)
+    p.add_argument("--model", default="yolo11s.pt", help="pretrained name or a checkpoint path")
+    p.add_argument("--epochs", type=int, default=150)
+    p.add_argument("--imgsz", type=int, default=640)
+    p.add_argument("--batch", type=int, default=-1, help="-1 = auto-fit VRAM")
+    p.add_argument("--patience", type=int, default=40)
+    p.add_argument("--workers", type=int, default=4)
+    p.add_argument("--cache", default="disk", choices=["disk", "ram", "False"])
+    p.add_argument("--resume", action="store_true")
+    args = p.parse_args()
+    if args.cache == "False":
+        args.cache = False
+    train(args)

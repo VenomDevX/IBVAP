@@ -273,7 +273,7 @@ def main():
     print(f"Using device: {device}")
     if device.type == "cuda":
         print(f"GPU: {torch.cuda.get_device_name(0)}")
-        print(f"VRAM: {torch.cuda.get_device_properties(0).total_mem / 1024**3:.1f} GB")
+        print(f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
     
     # Step 1: Prepare dataset
     classes = prepare_dataset(src_dir, prepared_dir,
@@ -353,7 +353,7 @@ def main():
     
     # Step 5: Training
     print(f"\n{'='*60}")
-    print(f"Training ResNet-50 Classifier")
+    print("Training ResNet-50 Classifier")
     print(f"Classes: {num_classes} | Epochs: {args.epochs} | Batch: {args.batch}")
     print(f"Image Size: {args.imgsz} | LR: {args.lr} | Frozen: {args.freeze}")
     print(f"{'='*60}\n")
@@ -399,7 +399,7 @@ def main():
             print(f"  ★ New best model! Val Acc: {val_acc:.1f}%\n")
     
     print(f"\n{'='*60}")
-    print(f"Training complete!")
+    print("Training complete!")
     print(f"Best Validation Accuracy: {best_acc:.1f}%")
     print(f"Best weights: {os.path.join(output_dir, 'best.pt')}")
     print(f"Class mapping: {mapping_path}")

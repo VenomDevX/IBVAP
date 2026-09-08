@@ -4,6 +4,7 @@ Wrapper around Ultralytics YOLO for person/vehicle detection.
 """
 
 import time
+from collections import deque
 from typing import List, Optional, Dict
 from pathlib import Path
 
@@ -20,7 +21,7 @@ except ImportError:
 from src.detection.detection_result import DetectionResult, FrameDetections
 
 
-# COCO class names for the classes we care about
+# COCO class names for the classes we care about (stock yolov8n fallback)
 COCO_TARGET_CLASSES: Dict[int, str] = {
     0: "person",
     1: "bicycle",
@@ -30,11 +31,21 @@ COCO_TARGET_CLASSES: Dict[int, str] = {
     7: "truck",
 }
 
+try:
+    from ml.taxonomy import normalize as _normalize_class
+except Exception:  # ml package not importable (e.g. isolated tests)
+    def _normalize_class(name: str) -> str:  # type: ignore
+        return (name or "unknown").strip().lower().replace(" ", "_")
+
 
 class ObjectDetector:
     """
-    YOLOv8-based object detector.
+    YOLO-based object detector.
     Detects people, vehicles, and other configurable object classes.
+
+    With a stock model it filters to COCO person/vehicle ids. With a custom
+    coarse model (weights_path set + detect_all=True) it reads the model's own
+    `names` map and emits every class, normalised to the pipeline vocabulary.
     """
 
     def __init__(
@@ -45,17 +56,23 @@ class ObjectDetector:
         target_classes: Optional[List[int]] = None,
         device: str = "auto",
         imgsz: int = 640,
+        detect_all: bool = False,
     ):
         self.confidence_threshold = confidence_threshold
         self.nms_threshold = nms_threshold
         self.target_classes = target_classes or [0, 2, 3, 5, 7]
+        self.detect_all = detect_all
         self.imgsz = imgsz
         self._model = None
         self._device = device
         self._model_path = model_path
+        # id -> canonical class name; populated from the model after load
+        self._id2name: Dict[int, str] = {
+            k: _normalize_class(v) for k, v in COCO_TARGET_CLASSES.items()
+        }
 
         # Performance tracking
-        self._inference_times: list = []
+        self._inference_times = deque(maxlen=200)
         self._total_detections: int = 0
 
         self._load_model()
@@ -75,7 +92,17 @@ class ObjectDetector:
                 import torch
                 self._device = "cuda" if torch.cuda.is_available() else "cpu"
 
-            logger.success(f"Detection model loaded on {self._device}")
+            # Prefer the model's own class names (custom coarse model)
+            model_names = getattr(self._model, "names", None)
+            if model_names:
+                self._id2name = {
+                    int(k): _normalize_class(v) for k, v in dict(model_names).items()
+                }
+
+            logger.success(
+                f"Detection model loaded on {self._device} "
+                f"({len(self._id2name)} classes, detect_all={self.detect_all})"
+            )
 
         except Exception as e:
             logger.error(f"Failed to load detection model: {e}")
@@ -115,7 +142,7 @@ class ObjectDetector:
                 iou=self.nms_threshold,
                 imgsz=self.imgsz,
                 device=self._device,
-                classes=self.target_classes,
+                classes=None if self.detect_all else self.target_classes,
                 verbose=False,
             )
 
@@ -133,7 +160,7 @@ class ObjectDetector:
                         conf = float(box.conf[0].cpu().numpy())
                         cls_id = int(box.cls[0].cpu().numpy())
 
-                        class_name = COCO_TARGET_CLASSES.get(cls_id, f"class_{cls_id}")
+                        class_name = self._id2name.get(cls_id, f"class_{cls_id}")
 
                         detection = DetectionResult(
                             bbox=(int(x1), int(y1), int(x2), int(y2)),
@@ -159,8 +186,7 @@ class ObjectDetector:
         """Get average inference time in milliseconds."""
         if not self._inference_times:
             return 0.0
-        # Keep last 100 measurements
-        recent = self._inference_times[-100:]
+        recent = list(self._inference_times)[-100:]
         return (sum(recent) / len(recent)) * 1000
 
     def get_fps(self) -> float:
