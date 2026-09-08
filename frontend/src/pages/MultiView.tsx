@@ -86,7 +86,7 @@ export default function MultiView() {
                 borderRadius: '8px',
                 overflow: 'hidden',
                 position: 'relative',
-                border: camThreatCount > 0 ? '2px solid var(--danger)' : '1px solid var(--border)',
+                border: camThreatCount > 0 ? '2px solid var(--danger)' : '1px solid var(--border-color)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center'
