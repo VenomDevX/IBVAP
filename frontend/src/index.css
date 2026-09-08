@@ -195,6 +195,38 @@ a:hover { color: var(--accent-secondary); }
 .camera-status-meta { display: flex; align-items: center; gap: 8px; }
 .dashboard-actions .btn i { margin-right: 5px; }
 .dashboard-grid { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: auto auto; gap: 16px; }
+
+/* --- Live Threat Assessment --- */
+.threat-list { display: flex; flex-direction: column; gap: 12px; }
+.threat-item {
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-card-hover);
+  border-left: 3px solid var(--border-color);
+}
+.threat-item.risk-critical { border-left-color: var(--critical); }
+.threat-item.risk-high     { border-left-color: var(--danger); }
+.threat-item.risk-medium   { border-left-color: var(--warning); }
+.threat-item.risk-low      { border-left-color: var(--success); }
+.threat-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.threat-id { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.threat-emoji { font-size: 1.25rem; line-height: 1; }
+.threat-obj { text-transform: capitalize; font-size: 0.95rem; font-weight: 600; }
+.threat-cam { font-size: 0.7rem; letter-spacing: 0.04em; color: var(--text-muted); background: var(--bg-input); border: 1px solid var(--border-color); padding: 2px 6px; border-radius: var(--radius-sm); }
+.threat-gauge { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.threat-gauge-track { width: 100px; height: 6px; border-radius: 3px; background: var(--border-color); overflow: hidden; }
+.threat-gauge-fill { height: 100%; transition: width 0.5s ease-out; }
+.threat-score { font-weight: 700; font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+.threat-gauge-fill.sev-low    { background: var(--success); }
+.threat-gauge-fill.sev-medium { background: var(--warning); }
+.threat-gauge-fill.sev-high   { background: var(--danger); }
+.threat-score.sev-low    { color: var(--success); }
+.threat-score.sev-medium { color: var(--warning); }
+.threat-score.sev-high   { color: var(--danger); }
+.threat-factors { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.threat-factor { font-size: 0.75rem; padding: 3px 7px; border-radius: var(--radius-sm); background: var(--bg-card); border: 1px solid var(--border-color); color: var(--text-secondary); }
+.threat-factor i { margin-right: 4px; color: var(--warning); font-size: 0.65rem; }
+
 .camera-card { grid-row: span 1; }
 .alerts-card { grid-row: span 1; }
 
