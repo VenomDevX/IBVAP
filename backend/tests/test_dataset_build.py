@@ -21,6 +21,10 @@ from ml.dataset_build.index import (  # noqa: E402
     walk_images,
     write_index,
 )
+from ml.dataset_build.rebalance import (  # noqa: E402
+    RARE_CLASS_IDS,
+    select_detector_images,
+)
 from ml.grouping import family, group_key, stable_bucket  # noqa: E402
 
 
@@ -280,3 +284,86 @@ def test_dedup_removed_entries_point_at_a_survivor():
     kept, removed = dedup(recs)
     survivors = {r.path for r in kept}
     assert all(keeper in survivors for _, keeper, _ in removed)
+
+
+# ──────────────────────────────────────────────────────────────
+# Stage 3 — detector rebalance
+# ──────────────────────────────────────────────────────────────
+
+
+def _d(path, w=640, h=640):
+    return ImageRecord(path=path, source="detector", rel=path, width=w, height=h,
+                       size=w * h, md5=path, dhash=0)
+
+
+def test_rare_class_ids_match_the_scarce_classes():
+    # military_ground_vehicle 7, bus 2, helicopter 9, motorcycle 4,
+    # truck 3, bicycle 5, drone_uav 10, animal 12
+    assert RARE_CLASS_IDS == frozenset({7, 2, 9, 4, 3, 5, 10, 12})
+
+
+def test_every_rare_image_is_kept_even_when_over_target():
+    recs = [_d(f"rare{i}.jpg") for i in range(100)]
+    labels = {r.path: [7] for r in recs}
+    sel, stats = select_detector_images(recs, labels, target=10, background_frac=0.0)
+    assert len(sel) == 100, "rare-class images must never be dropped"
+    assert stats["n_rare_kept"] == 100
+
+
+def test_person_only_images_are_subsampled_but_rare_survives():
+    rare = [_d("rare.jpg")]
+    person = [_d(f"p{i}.jpg") for i in range(1000)]
+    labels = {"rare.jpg": [7]}
+    labels.update({r.path: [0] for r in person})
+    sel, _ = select_detector_images(rare + person, labels, target=101,
+                                    background_frac=0.0)
+    assert len(sel) == 101
+    assert "rare.jpg" in {r.path for r in sel}
+
+
+def test_common_selection_prefers_images_with_more_boxes():
+    many = _d("many.jpg")
+    few = _d("few.jpg")
+    labels = {"many.jpg": [0, 0, 0, 1], "few.jpg": [0]}
+    sel, _ = select_detector_images([few, many], labels, target=1,
+                                    background_frac=0.0)
+    assert [r.path for r in sel] == ["many.jpg"]
+
+
+def test_backgrounds_capped_at_fraction_of_final_set():
+    common = [_d(f"c{i}.jpg") for i in range(95)]
+    empty = [_d(f"e{i}.jpg") for i in range(500)]
+    labels = {r.path: [0] for r in common}
+    labels.update({r.path: [] for r in empty})
+    sel, stats = select_detector_images(common + empty, labels, target=95,
+                                        background_frac=0.05)
+    n_empty = sum(1 for r in sel if not labels[r.path])
+    assert n_empty > 0, "some background is wanted, just not 14.7%"
+    assert stats["background_pct"] <= 5.5
+    assert n_empty == stats["n_background_kept"]
+
+
+def test_unlabelled_images_are_dropped_not_treated_as_background():
+    good = _d("good.jpg")
+    lost = _d("lost.jpg")   # no label FILE — annotation lost, not a background
+    labels = {"good.jpg": [0], "lost.jpg": []}
+    sel, stats = select_detector_images([good, lost], labels, target=10,
+                                        background_frac=0.5,
+                                        labelled={"good.jpg"})
+    assert [r.path for r in sel] == ["good.jpg"]
+    assert stats["n_dropped_unlabelled"] == 1
+
+
+def test_selection_is_deterministic_regardless_of_order():
+    recs = [_d(f"p{i}.jpg") for i in range(200)]
+    labels = {r.path: [0] for r in recs}
+    a, _ = select_detector_images(recs, labels, target=50, seed=42)
+    b, _ = select_detector_images(list(reversed(recs)), labels, target=50, seed=42)
+    assert {r.path for r in a} == {r.path for r in b}
+
+
+def test_stats_reports_per_class_box_counts():
+    recs = [_d("a.jpg"), _d("b.jpg")]
+    labels = {"a.jpg": [0, 0, 7], "b.jpg": [2]}
+    _, stats = select_detector_images(recs, labels, target=10, background_frac=0.0)
+    assert stats["boxes_per_class"] == {0: 2, 2: 1, 7: 1}
