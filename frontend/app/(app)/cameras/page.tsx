@@ -21,9 +21,10 @@ export default function CamerasPage() {
     try {
       const res = await apiFetch('/api/cameras');
       setCameras(await res.json());
-      setLoading(false);
     } catch (err) {
       console.error('Failed to load cameras:', err);
+    } finally {
+      setLoading(false);
     }
   };
 

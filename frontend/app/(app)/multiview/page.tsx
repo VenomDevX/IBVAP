@@ -35,9 +35,10 @@ export default function MultiViewPage() {
       ]);
       setCameras(await camRes.json());
       setThreats(await threatRes.json());
-      setLoading(false);
     } catch (err) {
       console.error('Failed to load multiview data:', err);
+    } finally {
+      setLoading(false);
     }
   };
 
