@@ -4,7 +4,8 @@ check_auth.py — end-to-end auth diagnostic.
 Walks every layer between the browser and an authenticated /api call and prints
 a checklist with the fix for each failure.
 
-  python scripts/check_auth.py --email admin@ibvap.local --password admin123
+  python scripts/check_auth.py --email admin@ibvap.local --password '<pw>'
+  # or set IBVAP_ADMIN_PASSWORD in backend/.env and omit --password
 """
 
 import argparse
@@ -52,9 +53,13 @@ def http(method, url, headers=None, body=None, timeout=8):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--email", default="admin@ibvap.local")
-    ap.add_argument("--password", default="admin123")
+    ap.add_argument("--password", default=os.getenv("IBVAP_ADMIN_PASSWORD"),
+                    help="admin password (or set IBVAP_ADMIN_PASSWORD)")
     ap.add_argument("--backend", default=f"http://127.0.0.1:{os.getenv('IBVAP_PORT', '8000')}")
     args = ap.parse_args()
+
+    if not args.password:
+        sys.exit("no password: pass --password '<pw>' or set IBVAP_ADMIN_PASSWORD in backend/.env")
 
     sb_url = (os.getenv("SUPABASE_URL") or "http://127.0.0.1:54321").rstrip("/")
     anon = os.getenv("SUPABASE_KEY", "")

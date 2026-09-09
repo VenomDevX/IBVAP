@@ -3,10 +3,12 @@ IBVAP — Camera API Routes
 Camera management and status endpoints.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
-from typing import List
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import Response
 
 from src.api.auth import require_auth, require_auth_media, scoped_cameras
+from src.api.middleware.input_validator import sanitize_camera_id
 from src.database.db import get_database
 from src.database.repository import Repository
 
@@ -54,6 +56,7 @@ async def list_cameras(user: dict = Depends(require_auth)):
 @router.get("/{camera_id}")
 async def get_camera(camera_id: str, user: dict = Depends(require_auth)):
     """Get a specific camera's details and live status."""
+    camera_id = sanitize_camera_id(camera_id)
     db = get_database()
     session = db.get_session()
     repo = Repository(session)
@@ -88,6 +91,7 @@ async def get_camera(camera_id: str, user: dict = Depends(require_auth)):
 @router.get("/{camera_id}/status")
 async def get_camera_status(camera_id: str, user: dict = Depends(require_auth)):
     """Get camera connection status."""
+    camera_id = sanitize_camera_id(camera_id)
     from src.api.app import get_pipeline
     pipeline = get_pipeline()
     if pipeline:
@@ -96,18 +100,27 @@ async def get_camera_status(camera_id: str, user: dict = Depends(require_auth)):
             return p.video_source.get_status_dict()
     raise HTTPException(status_code=404, detail="Camera pipeline not found")
 
+
 @router.get("/{camera_id}/heatmap")
-async def get_heatmap(camera_id: str, window: int = 300, user: dict = Depends(require_auth_media)):
-    """Get live heatmap for a camera (returns PNG)."""
-    from src.api.app import get_pipeline
-    from fastapi.responses import Response
+async def get_heatmap(
+    camera_id: str,
+    window: int = Query(300, ge=10, le=3600),
+    user: dict = Depends(require_auth_media),
+):
+    """Live heatmap PNG for a camera. The image is composited off the event loop."""
+    camera_id = sanitize_camera_id(camera_id)
     import cv2
-    
+
+    from src.api.app import get_pipeline
+
     pipeline = get_pipeline()
     if pipeline:
         p = pipeline.get_pipeline(camera_id)
         if p and p.heatmap_tracker:
-            heatmap_rgba = p.heatmap_tracker.generate_heatmap(window_seconds=window)
-            _, img_encoded = cv2.imencode('.png', heatmap_rgba)
-            return Response(content=img_encoded.tobytes(), media_type="image/png")
+            heatmap_rgba = await run_in_threadpool(
+                p.heatmap_tracker.generate_heatmap, window_seconds=window
+            )
+            ok, img_encoded = await run_in_threadpool(cv2.imencode, ".png", heatmap_rgba)
+            if ok:
+                return Response(content=img_encoded.tobytes(), media_type="image/png")
     raise HTTPException(status_code=404, detail="Camera pipeline or heatmap tracker not found")

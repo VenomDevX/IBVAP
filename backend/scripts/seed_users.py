@@ -9,15 +9,17 @@ Run `npx supabase migration up` first so `user_profiles` exists.
 
 Usage:
   python scripts/seed_users.py --defaults
-      # admin@ibvap.local / operator@ibvap.local, passwords from
-      # IBVAP_ADMIN_PASSWORD / IBVAP_OPERATOR_PASSWORD (default admin123 / operator123)
+      # admin@ibvap.local / operator@ibvap.local
+      # Passwords come from IBVAP_ADMIN_PASSWORD / IBVAP_OPERATOR_PASSWORD.
+      # If those are unset a strong random password is generated and printed ONCE.
 
-  python scripts/seed_users.py --email admin@ibvap.local --password 'admin123' --role admin
-  python scripts/seed_users.py --email guard@ibvap.local --password 'x' --role operator --areas CAM_STREET,CAM_PEOPLE
+  python scripts/seed_users.py --email admin@ibvap.local --password '<pw>' --role admin
+  python scripts/seed_users.py --email guard@ibvap.local --password '<pw>' --role operator --areas CAM_STREET,CAM_PEOPLE
 """
 
 import argparse
 import os
+import secrets
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -35,8 +37,15 @@ from supabase import create_client
 ROLES = ("admin", "supervisor", "operator", "auditor")
 
 
+def _password(env_var: str) -> tuple[str, bool]:
+    """Return (password, was_generated)."""
+    val = os.getenv(env_var)
+    if val:
+        return val, False
+    return secrets.token_urlsafe(15), True
+
+
 def seed_one(sb, email, password, role, areas, full_name):
-    # find existing
     user_id = None
     try:
         users = sb.auth.admin.list_users()
@@ -85,12 +94,14 @@ def main():
     areas = [a.strip() for a in args.areas.split(",") if a.strip()]
 
     if args.defaults:
-        admin_pw = os.getenv("IBVAP_ADMIN_PASSWORD") or "admin123"
-        op_pw = os.getenv("IBVAP_OPERATOR_PASSWORD") or "operator123"
+        admin_pw, admin_gen = _password("IBVAP_ADMIN_PASSWORD")
+        op_pw, op_gen = _password("IBVAP_OPERATOR_PASSWORD")
         print("Seeding default accounts:")
         seed_one(sb, "admin@ibvap.local", admin_pw, "admin", [], "Administrator")
         seed_one(sb, "operator@ibvap.local", op_pw, "operator", [], "Operator")
-        print(f"\nLogin: username 'admin'  password '{admin_pw}'  (or 'operator' / '{op_pw}')")
+        print("\n--- credentials (store these now; not shown again) ---")
+        print(f"  admin@ibvap.local    {'(generated) ' + admin_pw if admin_gen else '(from IBVAP_ADMIN_PASSWORD)'}")
+        print(f"  operator@ibvap.local {'(generated) ' + op_pw if op_gen else '(from IBVAP_OPERATOR_PASSWORD)'}")
         return
 
     if not args.email or not args.password:

@@ -6,10 +6,11 @@ MJPEG video stream and frame capture endpoints.
 import asyncio
 
 import cv2
-from fastapi import APIRouter, HTTPException, Depends, Request
-from fastapi.responses import StreamingResponse, Response
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import Response, StreamingResponse
 
 from src.api.auth import require_auth_media
+from src.api.middleware.input_validator import sanitize_camera_id
 
 router = APIRouter()
 
@@ -52,6 +53,7 @@ async def generate_mjpeg(camera_id: str, request: Request):
 @router.get("/{camera_id}")
 async def video_stream(camera_id: str, request: Request, _user=Depends(require_auth_media)):
     """Get MJPEG video stream for a camera."""
+    camera_id = sanitize_camera_id(camera_id)
     from src.api.app import get_pipeline
     pipeline = get_pipeline()
 
@@ -67,6 +69,7 @@ async def video_stream(camera_id: str, request: Request, _user=Depends(require_a
 @router.get("/{camera_id}/snapshot")
 async def get_snapshot(camera_id: str, _user=Depends(require_auth_media)):
     """Get a single snapshot frame from a camera."""
+    camera_id = sanitize_camera_id(camera_id)
     from src.api.app import get_pipeline
     pipeline = get_pipeline()
 
