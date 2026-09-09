@@ -84,6 +84,35 @@ def leaf_of(rel: str) -> str | None:
     return parts[-2]
 
 
+def specificity(rec) -> int:
+    """Dedup tie-break priority: higher wins. Specific label beats aggregate.
+
+    The aggregate folders are byte-identical copies of their children in this
+    corpus (Two_Wheeler IS Bicycle+Motorcycle image-for-image; Animal IS
+    Dog+Bird+Cat+Horse+Sheep+Cow). When dedup meets that pair it must keep the
+    copy that carries the specific label, or the fine class is annihilated and
+    only the useless aggregate survives.
+    """
+    leaf = leaf_of(rec.rel)
+    if leaf is None:
+        return 0
+    return 0 if leaf in AGGREGATE_MAP else 1
+
+
+def dedup_group(rec) -> str:
+    """Near-dedup grouping key: the class this crop will end up in.
+
+    Resolves aggregates first so Two_Wheeler/x.jpg and Vehicles/Bicycle/y.jpg
+    are not treated as one class before the plan is built.
+    """
+    leaf = leaf_of(rec.rel)
+    if leaf is None:
+        return "<root>"
+    if leaf in AGGREGATE_MAP:
+        return AGGREGATE_MAP[leaf] or "<dropped>"
+    return canonical_class_name(leaf) or f"<unknown:{leaf}>"
+
+
 @dataclass
 class ClassPlan:
     assignments: dict[str, str] = field(default_factory=dict)  # path -> class

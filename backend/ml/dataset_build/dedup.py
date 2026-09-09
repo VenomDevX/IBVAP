@@ -18,6 +18,7 @@ linear in practice.
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Callable
 
 from ml.dataset_build.index import ImageRecord
 
@@ -30,40 +31,34 @@ def hamming(a: int, b: int) -> int:
     return (a ^ b).bit_count()
 
 
-def _rank(r: ImageRecord) -> tuple:
+def _make_rank(priority: Callable[[ImageRecord], int]):
     """Preference for the surviving representative of a duplicate group.
 
-    Largest pixel area first, then largest file, then path for a stable
-    tiebreak so the result does not depend on input ordering.
+    Caller priority FIRST (higher wins), then largest pixel area, then largest
+    file, then path for a stable tiebreak independent of input ordering.
+
+    Priority is not decoration. In this corpus the aggregate folders are
+    byte-identical copies of their children — Two_Wheeler IS Bicycle+Motorcycle,
+    Animal IS Dog+Bird+Cat+Horse+Sheep+Cow, to the image. Ranking on path alone
+    let "Animal/x.jpg" beat "Animals/Dog/x.jpg" and "Two_Wheeler/" beat
+    "Vehicles/Bicycle/" purely on alphabetical order, keeping the unlabelled
+    aggregate copy and destroying the specifically-labelled one. That silently
+    zeroed Bicycle, Motorcycle, Dog, Cat, Cow, Horse, Bird and Sheep.
     """
-    return (-(r.width * r.height), -r.size, r.path)
+
+    def _rank(r: ImageRecord) -> tuple:
+        return (-priority(r), -(r.width * r.height), -r.size, r.path)
+
+    return _rank
 
 
-def dedup(
-    records: list[ImageRecord], max_distance: int = 3
+def _near_pass(
+    survivors: list[ImageRecord], max_distance: int
 ) -> tuple[list[ImageRecord], list[tuple[str, str, str]]]:
-    """Return (kept, removed) where removed is (dropped_path, kept_path, reason)."""
-    removed: list[tuple[str, str, str]] = []
-
-    # ---- pass 1: exact, by md5 ----
-    by_md5: dict[str, list[ImageRecord]] = defaultdict(list)
-    for r in records:
-        by_md5[r.md5].append(r)
-    survivors: list[ImageRecord] = []
-    for group in by_md5.values():
-        group.sort(key=_rank)
-        survivors.append(group[0])
-        for dup in group[1:]:
-            removed.append((dup.path, group[0].path, "exact"))
-
-    if max_distance <= 0:
-        survivors.sort(key=_rank)
-        return survivors, removed
-
-    # ---- pass 2: near, by multi-index hashing on dHash ----
-    survivors.sort(key=_rank)  # best representatives get indexed first
+    """Multi-index-hashing near-duplicate pass over one already-ranked group."""
     band_index: list[dict[int, list[int]]] = [defaultdict(list) for _ in range(BANDS)]
     kept: list[ImageRecord] = []
+    removed: list[tuple[str, str, str]] = []
 
     for r in survivors:
         bands = [(r.dhash >> (i * BAND_BITS)) & BAND_MASK for i in range(BANDS)]
@@ -87,4 +82,84 @@ def dedup(
         for i, b in enumerate(bands):
             band_index[i][b].append(pos)
 
+    return kept, removed
+
+
+def dedup(
+    records: list[ImageRecord],
+    max_distance: int = 3,
+    priority: Callable[[ImageRecord], int] | None = None,
+    group_by: Callable[[ImageRecord], str] | None = None,
+    conflict_key: Callable[[ImageRecord], str] | None = None,
+) -> tuple[list[ImageRecord], list[tuple[str, str, str]]]:
+    """Return (kept, removed) where removed is (dropped_path, kept_path, reason).
+
+    priority — higher-scoring records win duplicate ties. Use it to keep the
+    more informative copy (a specific class over an aggregate, a rare-class
+    detector image over a person-only one).
+
+    group_by — when given, the NEAR pass only compares records sharing a key.
+    For classifier crops pass the resolved class: a near-duplicate within one
+    class is redundancy worth removing, but two visually similar images in
+    DIFFERENT classes are two different labels, and dropping one destroys the
+    very distinction the classifier exists to learn. The exact (md5) pass stays
+    global — byte-identical files really are one file, whatever folder they sit
+    in — and `priority` decides which copy survives.
+
+    conflict_key — when given, an exact-duplicate group whose top-priority
+    members disagree on this key is DROPPED ENTIRELY (reason 'conflict')
+    rather than resolved arbitrarily. Use the class: identical bytes under two
+    different labels mean at least one label is wrong.
+    """
+    prio = priority or (lambda _r: 0)
+    _rank = _make_rank(prio)
+    removed: list[tuple[str, str, str]] = []
+
+    # ---- pass 1: exact, by md5 (always global) ----
+    by_md5: dict[str, list[ImageRecord]] = defaultdict(list)
+    for r in records:
+        by_md5[r.md5].append(r)
+    survivors: list[ImageRecord] = []
+    for group in by_md5.values():
+        group.sort(key=_rank)
+
+        # Byte-identical files carrying DIFFERENT class labels are not
+        # duplicates, they are corrupt data. This corpus has 3,090 of them:
+        # every Forklift image is also filed as Car, every Bus image is also
+        # filed as Car. Whichever copy survives would be decided by alphabetical
+        # order — a coin flip that can teach the classifier a forklift is a car.
+        # Aggregates are exempt: they lose on priority before we get here, so a
+        # child-vs-aggregate pair is a duplicate, not a conflict.
+        if conflict_key is not None:
+            top = prio(group[0])
+            contenders = {conflict_key(r) for r in group if prio(r) == top}
+            if len(contenders) > 1:
+                for r in group:
+                    removed.append((r.path, "", "conflict"))
+                continue
+
+        survivors.append(group[0])
+        for dup in group[1:]:
+            removed.append((dup.path, group[0].path, "exact"))
+
+    survivors.sort(key=_rank)  # best representatives get indexed first
+    if max_distance <= 0:
+        return survivors, removed
+
+    # ---- pass 2: near, per group ----
+    if group_by is None:
+        kept, near_removed = _near_pass(survivors, max_distance)
+        removed.extend(near_removed)
+        return kept, removed
+
+    buckets: dict[str, list[ImageRecord]] = defaultdict(list)
+    for r in survivors:
+        buckets[group_by(r)].append(r)
+
+    kept = []
+    for key in sorted(buckets):
+        k, near_removed = _near_pass(buckets[key], max_distance)
+        kept.extend(k)
+        removed.extend(near_removed)
+    kept.sort(key=_rank)
     return kept, removed
