@@ -1,28 +1,27 @@
 """
 add_class_dataset.py — merge an external YOLO dataset into the coarse detector set
 ================================================================================
-Generalises scripts/add_plates.py to any coarse class. Use it to top up the
-starved aerial / military classes (drone_uav, helicopter, aircraft,
-military_ground_vehicle) with dedicated datasets (VisDrone, xView, a Roboflow
-"military aircraft" set, ...).
+Generalises scripts/add_plates.py. Use it to top up the starved aerial / military
+classes (drone_uav, helicopter, aircraft, military_ground_vehicle) from dedicated
+datasets.
 
-What it does:
-  1. reads a Roboflow-style YOLOv8 dataset:  <src>/{train,valid,test}/images + labels
-     (also tolerates a flat  <src>/images + <src>/labels)
-  2. (optional) keeps only boxes whose SOURCE class id is in --src-classes
-  3. (optional) subsamples to --limit images (whole aug-groups kept together)
-  4. hard-links images as  <prefix>_<name>.jpg  into <dst>/images/{train,valid}
-  5. rewrites EVERY kept box to the target coarse class id
-  6. keeps empty label files as background negatives
+Class mapping — pick ONE:
+  --class NAME            every kept box  -> that coarse class
+  --map "0:aircraft,3:military_ground_vehicle,..."   per-source-id -> coarse class
+  --taxonomy             read <src>/data.yaml `names:` and map each name through
+                        ml.taxonomy (FINE_NAMES -> FINE_TO_COARSE). Unmapped names
+                        are skipped. Perfect for the 73-class "Border Defence" set.
+
+Also:
+  --src-classes 0,2      keep only these SOURCE ids (before mapping); with --class
+  --limit N              cap images added (whole aug-groups kept together)
+  --prefix TAG           filename prefix (default: --class name, else 'ext')
+  polygon labels (class + N*x,y) are collapsed to their bounding box automatically
 
 Usage (from backend/):
-  # a single-class drone dataset -> everything becomes drone_uav
-  python scripts/add_class_dataset.py --src "F:/datasets/drone.v2i.yolov8" --class drone_uav --limit 6000
-
-  # VisDrone-style multi-class set: keep only its 'car'(id 3) + 'van'(id 4) as ... nothing here;
-  # for aircraft keep only the source ids that are planes:
-  python scripts/add_class_dataset.py --src "F:/datasets/military-aircraft" --class aircraft \
-         --src-classes 0,1,2,5 --limit 8000
+  python scripts/add_class_dataset.py --src "J:/Data set/Border Defence.v1i.yolov8" --taxonomy --prefix borderdef --limit 12000
+  python scripts/add_class_dataset.py --src "J:/Data set/Militry field object detection.yolov8 (1)" --map "0:aircraft,2:aircraft,3:military_ground_vehicle" --prefix milfield
+  python scripts/add_class_dataset.py --src "J:/Data set/drone detection.v2i.yolov8" --class drone_uav --src-classes 0 --prefix drone --limit 5000
 
 Then:
   python scripts/make_clean_split.py --src data/detector_yolo
@@ -31,19 +30,24 @@ Then:
 
 import os
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # backend/ on path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import argparse
 import glob
 import re
 import shutil
 from collections import defaultdict
 
-from ml.taxonomy import COARSE_ID
+from ml.taxonomy import COARSE_ID, FINE_NAMES, FINE_TO_COARSE
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BACKEND = os.path.dirname(HERE)
 IMG_EXTS = (".jpg", ".jpeg", ".png")
 RF_HASH = re.compile(r"\.rf\.[0-9a-fA-F]{6,}\.(?:jpg|jpeg|png|bmp|webp)$", re.I)
+
+# name (lowercased) -> coarse id, from the old fine taxonomy
+_FINE_NAME_TO_COARSE = {
+    FINE_NAMES[fid].lower(): FINE_TO_COARSE[fid] for fid in FINE_NAMES
+}
 
 
 def source_key(filename: str) -> str:
@@ -107,6 +111,42 @@ def link_or_copy(src: str, dst: str) -> None:
         shutil.copy2(src, dst)
 
 
+def to_box(parts: list[str]):
+    """(sid, x, y, w, h) from a YOLO box (5 tok) OR a polygon (class + N*x,y). None if unparseable."""
+    try:
+        sid = int(float(parts[0]))
+        vals = [float(v) for v in parts[1:]]
+    except ValueError:
+        return None
+    if len(vals) == 4:
+        x, y, w, h = vals
+    elif len(vals) >= 6 and len(vals) % 2 == 0:
+        xs = vals[0::2]
+        ys = vals[1::2]
+        x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
+        x, y, w, h = (x0 + x1) / 2, (y0 + y1) / 2, x1 - x0, y1 - y0
+    else:
+        return None
+    x = min(1.0, max(0.0, x)); y = min(1.0, max(0.0, y))
+    w = min(1.0, max(0.0, w)); h = min(1.0, max(0.0, h))
+    if w <= 0 or h <= 0:
+        return None
+    return sid, x, y, w, h
+
+
+def load_src_names(src: str) -> dict[int, str]:
+    for cand in ("data.yaml", "data.yml"):
+        p = os.path.join(src, cand)
+        if os.path.isfile(p):
+            import yaml
+            names = yaml.safe_load(open(p, encoding="utf-8")).get("names")
+            if isinstance(names, dict):
+                return {int(k): str(v) for k, v in names.items()}
+            if isinstance(names, list):
+                return {i: str(v) for i, v in enumerate(names)}
+    raise SystemExit(f"--taxonomy needs {src}/data.yaml with a names: block")
+
+
 def purge_old(dst_root: str, prefix: str):
     removed = 0
     for split in ("train", "valid"):
@@ -122,31 +162,64 @@ def purge_old(dst_root: str, prefix: str):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--src", required=True, help="Roboflow-style YOLOv8 dataset root")
-    ap.add_argument("--class", dest="cls", required=True,
-                    help=f"target coarse class — one of: {', '.join(COARSE_ID)}")
+    ap.add_argument("--src", required=True)
+    ap.add_argument("--class", dest="cls", default="", help=f"one of: {', '.join(COARSE_ID)}")
+    ap.add_argument("--map", default="", help='"srcid:coarse,srcid:coarse,..."')
+    ap.add_argument("--taxonomy", action="store_true", help="map via <src>/data.yaml names -> ml.taxonomy")
     ap.add_argument("--dst", default=os.path.join(BACKEND, "data", "detector_yolo"))
-    ap.add_argument("--src-classes", default="",
-                    help="comma list of SOURCE class ids to keep (default: keep all)")
-    ap.add_argument("--limit", type=int, default=0, help="cap images added; 0 = all")
-    ap.add_argument("--prefix", default="", help="filename prefix (default: the class name)")
-    ap.add_argument("--purge-old", action="store_true", help="remove a previous merge with this prefix")
+    ap.add_argument("--src-classes", default="", help="keep only these source ids (with --class)")
+    ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--prefix", default="")
+    ap.add_argument("--purge-old", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
-
-    if args.cls not in COARSE_ID:
-        raise SystemExit(f"--class must be one of: {', '.join(COARSE_ID)}")
-    target_id = COARSE_ID[args.cls]
-    prefix = args.prefix or args.cls
-    keep = {int(x) for x in args.src_classes.split(",") if x.strip() != ""} if args.src_classes else None
 
     src = os.path.abspath(args.src)
     dst_root = os.path.abspath(args.dst)
     if not os.path.isdir(src):
         raise SystemExit(f"--src not found: {src}")
-    print(f"merge  {src}\n    ->  {dst_root}   (class '{args.cls}' = id {target_id}, prefix '{prefix}')")
-    if keep is not None:
-        print(f"    keeping only source class ids: {sorted(keep)}")
+
+    modes = sum(bool(x) for x in (args.cls, args.map, args.taxonomy))
+    if modes != 1:
+        raise SystemExit("pick exactly one of --class / --map / --taxonomy")
+
+    # build  src_id -> target coarse id
+    id_map: dict[int, int] = {}
+    single_id = None
+    keep = {int(x) for x in args.src_classes.split(",") if x.strip()} if args.src_classes else None
+    if args.cls:
+        if args.cls not in COARSE_ID:
+            raise SystemExit(f"--class must be one of: {', '.join(COARSE_ID)}")
+        single_id = COARSE_ID[args.cls]
+        default_prefix = args.cls
+    elif args.map:
+        for pair in args.map.split(","):
+            sid, cname = pair.split(":")
+            cname = cname.strip()
+            if cname not in COARSE_ID:
+                raise SystemExit(f"unknown coarse class in --map: {cname}")
+            id_map[int(sid)] = COARSE_ID[cname]
+        default_prefix = "ext"
+    else:  # taxonomy
+        src_names = load_src_names(src)
+        unmapped = []
+        for sid, nm in src_names.items():
+            key = nm.strip().lower()
+            if key in _FINE_NAME_TO_COARSE:
+                id_map[sid] = _FINE_NAME_TO_COARSE[key]
+            else:
+                unmapped.append(nm)
+        if unmapped:
+            print(f"  taxonomy: {len(unmapped)} source names not in taxonomy, skipped: {unmapped[:10]}")
+        default_prefix = "ext"
+
+    prefix = args.prefix or default_prefix
+    print(f"merge  {src}\n    ->  {dst_root}   (prefix '{prefix}')")
+    if id_map:
+        from collections import Counter
+        tgt = Counter(id_map.values())
+        from ml.taxonomy import COARSE_NAMES
+        print("    mapping -> " + ", ".join(f"{COARSE_NAMES[c]}:{n}src" for c, n in tgt.items()))
 
     if args.purge_old and not args.dry_run:
         purge_old(dst_root, prefix)
@@ -158,6 +231,7 @@ def main():
     print(f"images: {total:,} available -> {len(pairs):,} selected")
 
     n_img = n_box = n_nolabel = n_empty = 0
+    per_class: dict[int, int] = defaultdict(int)
     for img_path, out_split in pairs:
         fn = os.path.basename(img_path)
         out_img = os.path.join(dst_root, "images", out_split, f"{prefix}_{fn}")
@@ -185,20 +259,30 @@ def main():
                 p = line.split()
                 if len(p) < 5:
                     continue
-                try:
-                    sid = int(float(p[0]))
-                except ValueError:
+                box = to_box(p)
+                if box is None:
                     continue
-                if keep is not None and sid not in keep:
-                    continue
-                fout.write(f"{target_id} " + " ".join(p[1:5]) + "\n")
+                sid, x, y, w, h = box
+                if single_id is not None:
+                    if keep is not None and sid not in keep:
+                        continue
+                    tid = single_id
+                else:
+                    if sid not in id_map:
+                        continue
+                    tid = id_map[sid]
+                fout.write(f"{tid} {x:.6f} {y:.6f} {w:.6f} {h:.6f}\n")
+                per_class[tid] += 1
                 kept += 1
         n_box += kept
         n_empty += (kept == 0)
 
+    from ml.taxonomy import COARSE_NAMES
     print(f"\n{'DRY RUN — ' if args.dry_run else ''}summary:")
     print(f"  images written        : {n_img:,}")
-    print(f"  {args.cls} boxes        : {n_box:,}")
+    print(f"  boxes written          : {n_box:,}")
+    for cid, cnt in sorted(per_class.items()):
+        print(f"    {COARSE_NAMES[cid]:24s} {cnt:,}")
     print(f"  images w/o source label: {n_nolabel:,}")
     print(f"  images w/ empty label  : {n_empty:,}")
     if not args.dry_run:
