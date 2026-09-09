@@ -130,13 +130,22 @@ backend/data/dataset/
 │       ├── train/
 │       └── val/
 │
-└── classifier/            STAGE 2 — fine-grained, ~35 classes
+└── classifier/            STAGE 2 — fine-grained, ~33 classes
     ├── classes.json
     ├── train/
-    │   ├── Person/  Car/  Bus/  Tank/  F16/  AH64/  MQ9/  ...
+    │   ├── Person/  Car/  Bus/  Tank/  F16/  F35/  C130/  ...
+    │   └── aircraft/  helicopter/  drone_uav/     ← catch-alls for folded types
     └── val/
         └── (same class folders)
 ```
+
+The classifier class list is **derived at build time**, not hardcoded: the 31
+fine classes that clear the threshold (§5 Stage 4), plus coarse catch-all
+buckets absorbing the folded remainder — `aircraft` (absorbing `Generic_Jet`
+and every pruned fixed-wing type), `helicopter` (`AH64`, `Mi24`, …) and
+`drone_uav` (`MQ9`, `RQ4`, …). `military_ground_vehicle` is expected to be empty
+since `Tank` survives on its own. Expected total ≈ 33. The authoritative list is
+written to `classes.json` and `manifest.json` by the build.
 
 Class folder names use the exact strings from `backend/ml/taxonomy.py`
 (`FINE_NAMES` for fine classes, `COARSE_NAMES` for coarse). No third naming
@@ -183,9 +192,41 @@ preserved while their *relative* frequency rises substantially.
   This removes the need for the hardcoded skip-list.
 - Canonicalise names through `taxonomy.py`.
 - **Prune** any class with fewer than **200 unique** (post-dedup) images; fold
-  it into its coarse parent via `FINE_TO_COARSE`. Expected survivors: **~33–36
-  classes** (43 clear 200 raw; dedup at ~17% pushes the borderline ones under).
+  it into its coarse parent via `FINE_TO_COARSE`. Folding is not discarding: an
+  `AH64` crop becomes training data for `helicopter`, so the model still learns
+  from it and answers at coarse granularity.
 - **Cap** at 1,500 images per class, sampling the highest-resolution members.
+
+**Expected survivors: 31 classes — 14 civilian + 17 military.**
+
+| | classes |
+|---|---|
+| Civilian (14) | Person, Car, Night_Vision_Object, Bicycle, Forklift, Motorcycle, Bus, Dog, Bird, Cat, Horse, Cow, Sheep, Generic_Jet |
+| Military (17) | Tank, F15, F16, F18, F35, A10, B1, C130, C2, EF2000, J10, J20, JAS39, Rafale, Su34, US2, V22 |
+
+#### Why 200 and not 400
+
+The threshold was simulated at both values against real per-class duplicate
+rates. **The two settings keep an identical civilian class list** — every
+civilian class clears 400 comfortably (the smallest, `Bus`, has ~730 unique).
+The threshold therefore only ever bites on military classes:
+
+| | ≥200 | ≥400 |
+|---|---:|---:|
+| total classes | 31 | 18 |
+| military types | **17** | **4** |
+
+At 400 the only military survivors are `F15`, `F16`, `F18`, `Tank`. Lost would
+be `F35` (389 unique — missing the cut by 11 images), `C130` (367), `C2` (347),
+`A10` (274), `V22` (262), `B1` (242), plus **every helicopter** (`AH64` 125,
+`Mi24` 120) and **every drone** (`MQ9` 151, `RQ4` 108). Since `taxonomy.py`
+defines stage 2's purpose as fine-grained ID across
+aircraft/helicopter/drone_uav/military_ground_vehicle, a 4-class military output
+would not justify the stage.
+
+Raising the floor does not make the model more accurate — it makes the task
+easier and less useful. The levers for accuracy at a fixed class count are the
+per-class cap, augmentation and epoch count, not the prune floor.
 
 ### Stage 5 — Split
 Group-aware and seeded (`seed=42`, `val_fraction=0.1`), grouping by source image
@@ -217,8 +258,11 @@ Build fails loudly if any check fails.
 Windows `--workers` guidance). Changes required:
 
 - Point `--data` at `data/dataset/detector/dataset.yaml`.
-- `--imgsz 576` (down from 640) — ~1.55× faster per epoch, small accuracy cost
-  on distant objects.
+- **`--imgsz 640`** — YOLO's native resolution, which the pretrained weights are
+  tuned for. At batch 8 with AMP this occupies ~4–4.5 GB, leaving headroom
+  inside 6 GB after Windows takes ~0.7 GB for display. 704px (batch 6) and 768px
+  (batch 4) were considered and rejected: both risk OOM on a 6 GB laptop card,
+  and the reduced batch measurably degrades BatchNorm statistics.
 - **`--batch 8` explicitly, never `-1`.** Autobatch probes VRAM at startup and
   can pick a size that OOMs later once activations peak, killing an overnight run.
 - Warm-start from `models/ibvap_coarse.pt` rather than `yolo11s.pt`.
@@ -235,14 +279,18 @@ figure on this specific machine. Epoch count is then chosen from a table:
 
 | measured min/epoch | epochs in 20 h |
 |---:|---:|
-| 15 | 80 |
 | 20 | 60 |
 | 25 | 48 |
 | 30 | 40 |
+| 35 | 34 |
 | 40 | 30 |
 
-My estimate is 18–28 min/epoch at 50k images, 576px, batch 8 — but the estimate
+My estimate is 22–34 min/epoch at 50k images, 640px, batch 8 — but the estimate
 is not load-bearing. The measurement decides.
+
+If the measurement lands above 40 min/epoch, the fallback ladder is, in order:
+reduce `--target-detector` to 40k, then drop to `--imgsz 576`. Resolution is
+given up last, since it costs the most accuracy on distant objects.
 
 ---
 
@@ -263,7 +311,9 @@ Rewrite `scripts/train_classifier.py`:
   weights only and cannot truly resume.
 - Emits `models/classifier/ibvap_fine.pt` and `classes.json`.
 
-Estimated ~2–4 min/epoch on ~35k crops; 30 epochs ≈ 1.5–2 h.
+Estimated ~25k crops after the 1,500/class cap (≈17k civilian + ≈5.5k military
+fine + the catch-all buckets). At 224px/batch 64 that is ~2–3 min/epoch;
+30 epochs ≈ 1–1.5 h. Stage 2 is cheap — the detector dominates the budget.
 
 ---
 
