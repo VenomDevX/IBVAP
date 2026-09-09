@@ -445,10 +445,16 @@ The platform shall:
 **As built:**
 
 - Supabase JWT auth on every `/api/*` route and on the alert WebSocket; role guards
-  (`require_auth`, `require_admin`).
-- Middleware: TrustedHost + CORS allow-lists, `slowapi` rate limiting, security headers
-  (XSS / clickjacking / MIME-sniffing), request logging with client IP, input validation
-  (path traversal, injection patterns, upload-size cap).
+  (`require_auth`, `require_role(...)`, `require_admin`). Per-user camera scoping via
+  `user_profiles.allowed_areas` (`scoped_cameras`).
+- The alert WebSocket takes the JWT via the `Sec-WebSocket-Protocol: bearer, <jwt>`
+  handshake (kept out of URLs / access logs); `?token=` is a legacy fallback. The socket
+  is dropped once the token's own `exp` passes.
+- Middleware: TrustedHost + CORS allow-lists, `slowapi` rate limiting (`600/min` + a
+  `20/s` burst cap, keyed on the real client IP — `X-Forwarded-For` first hop only when
+  `TRUSTED_PROXY=1`), security headers (XSS / clickjacking / MIME-sniffing), request
+  logging with client IP, input validation (path traversal + injection patterns matched
+  against the raw **and** URL-decoded query/path, upload-size cap).
 - No fixed default credentials — seed passwords come from `IBVAP_ADMIN_PASSWORD` /
   `IBVAP_OPERATOR_PASSWORD`, else a random password is generated and logged once.
 - Evidence integrity: SHA-256 of every snapshot **plus** an append-only HMAC hash chain over the `events` and `alerts` rows (`src/alerts/evidence.py`) — each row commits to the previous row's hash, so altering or reordering any row breaks every later link. `scripts/verify_evidence_chain.py` walks the chain and re-hashes each snapshot file. **Tamper-EVIDENT, not tamper-PROOF**: an attacker who also holds `EVIDENCE_HMAC_KEY` can rewrite the whole chain — for production the key belongs in a KMS and the chain head should be periodically anchored to external WORM storage.
@@ -557,8 +563,8 @@ Spatial Analysis   Temporal Analysis
 |---|---|
 | Framework | PyTorch, `torchvision` |
 | Object detection (live pipeline) | Ultralytics **YOLOv8n**, COCO classes `[0,2,3,5,7]` (person, car, motorcycle, bus, truck) — `src/detection/detector.py` |
-| Object detection (custom) | YOLOv8 trained on a merged **91-class border/military dataset** — see **§9A**. Trained via `scripts/train_yolo.py`; **not yet loaded by the live pipeline** |
-| Stage-2 fine-grained classifier | **ResNet-50** (ImageNet-pretrained, custom head), fine-tuned on cropped detections — `scripts/train_classifier.py`, `scripts/inference_two_stage.py`. Experimental |
+| Object detection (custom) | YOLO trained on the **13-class coarse** border/military taxonomy (`backend/ml/taxonomy.py`) — see **§9A**. Trained via `scripts/train_yolo.py`; dataset built & verified, **training run pending / not yet loaded by the live pipeline** |
+| Stage-2 fine-grained classifier | Optional crop classifier (`scripts/train_classifier.py`, `scripts/inference_two_stage.py`) for airframe-level ID — **Phase 2**, the surveillance logic does not consume it. Experimental |
 | Multi-object tracking | **ByteTrack** via the `supervision` library (`sv.ByteTrack`) — `src/tracking/tracker.py` |
 | Face (module only) | ArcFace-style embeddings + cosine matching against a JSON gallery — `src/face/`. **Not called from the pipeline** |
 | Dominant colour | HSV histogram heuristic — `src/features/color_extractor.py` |
@@ -567,19 +573,28 @@ Spatial Analysis   Temporal Analysis
 ## 9.2 Backend Service
 
 - **FastAPI** + Uvicorn (Flask was dropped)
-- WebSocket endpoint `/ws/alerts` for real-time alert push (JWT-authenticated via query param)
-- Middleware stack: `TrustedHostMiddleware`, `CORSMiddleware`, `slowapi` rate limiting (`200/min` default),
-  `SecurityHeadersMiddleware`, `RequestLoggingMiddleware` (IP + audit trail), `InputValidationMiddleware`
-  (path-traversal / injection / upload-size checks)
+- WebSocket endpoint `/ws/alerts` for real-time alert push — JWT via the
+  `Sec-WebSocket-Protocol: bearer, <jwt>` handshake (`?token=` legacy fallback)
+- Middleware stack: `TrustedHostMiddleware`, `CORSMiddleware`, `slowapi` rate limiting
+  (`600/min` + `20/s` burst, keyed on the real client IP via `src/api/net.py`),
+  `SecurityHeadersMiddleware`, `RequestLoggingMiddleware` (IP + audit trail),
+  `InputValidationMiddleware` (raw + URL-decoded path-traversal / injection / upload-size checks)
 - Interactive docs auto-disabled when `IBVAP_ENV=production`
 
 ## 9.3 Frontend (operator dashboard)
 
-- **React 19 + TypeScript + Vite** (the "HTML/CSS/JS" plan is superseded)
-- **Tailwind CSS v4**, React Router 7
-- ApexCharts (`react-apexcharts`), Grid.js, Leaflet / `react-leaflet` (Map view)
-- `@supabase/supabase-js` for auth session + token handling
-- Served separately from the backend (own Vite dev server / nginx container)
+- **Next.js 15 (App Router) + React 19 + TypeScript**, built as a **static export**
+  (`output: 'export'`) — no Node server in production, nginx serves the files and
+  proxies `/api`, `/ws`, `/snapshots`, `/static` to the backend.
+- **Tailwind CSS v4** design system (`app/globals.css`); a small in-repo component
+  library in `frontend/src/components/ui/` (Button, Card, `DataTable`, RiskBadge, …).
+- ApexCharts (`react-apexcharts`, loaded client-only), Leaflet / `react-leaflet`
+  (Map view). Tables use the in-repo `DataTable` (Grid.js was removed).
+- Risk level is shown as a coded colour dot (low green / medium amber / high orange /
+  critical red) — no emoji.
+- `@supabase/supabase-js` for the auth session + token handling.
+- Dev: the browser calls the backend cross-origin via `NEXT_PUBLIC_API_BASE`
+  (backend CORS allows `:3001`); prod is same-origin behind nginx.
 
 ## 9.4 Data & Auth
 
@@ -656,9 +671,9 @@ configs/dataset_coarse.yaml + data/splits/{train,val}_coarse.txt
 scripts/train_yolo.py  ->  ml/eval_detector.py (per-class mAP)
 ```
 
-Legacy mergers (`merge_datasets.py`, `merge_military.py`, `add_external.py`,
-`add_granular_external.py`, `fix_existing_labels.py`, `fix_labels_and_split.py`,
-`download_plates.py`) are retired to `backend/scripts/legacy/` — see its README for why each failed.
+Earlier one-off dataset mergers (`merge_datasets.py`, `merge_military.py`,
+`add_external.py`, `fix_existing_labels.py`, …) were superseded by
+`scripts/add_class_dataset.py` and removed; see git history if the approaches are needed.
 
 ## 9A.4 Class balance after remap
 
@@ -742,9 +757,9 @@ The project shall NOT rely on one dataset for every task.
 A modular dataset strategy will be used.
 
 > **Implementation note (2026-09-08).** The detector currently in training does **not** use
-> VIRAT as its training source. It is trained on a **merged 91-class border/military dataset**
-> assembled from public detection sets + Roboflow exports (`backend/data/unified_yolo`,
-> ~91 k train / ~10 k val images) — see §9A. VIRAT / MOT17 / UFPR-Planalto801 / BDD100K
+> VIRAT as its training source. It is trained on the **13-class coarse** border/military
+> dataset assembled from public detection sets + Roboflow exports (`backend/data/detector_yolo`)
+> — see §9A. VIRAT / MOT17 / UFPR-Planalto801 / BDD100K
 > remain the intended **evaluation and tracking-benchmark** references and for a person/vehicle
 > generalisation baseline. The dataset descriptions below (§10.1–§10.7) describe the evaluation
 > plan, not the current training set.
@@ -1170,7 +1185,7 @@ Stream       GET       /api/stream/...         (MJPEG / annotated frame access)
 Reports      GET       /api/reports/daily      (24 h aggregation for CSV/PDF export)
 Audit        GET       /api/audit              (admin — user action log with IP + timestamp)
 Health       GET       /api/health             (unauthenticated)
-WebSocket    WS        /ws/alerts?token=<jwt>  (real-time alert push)
+WebSocket    WS        /ws/alerts  (real-time alert push; JWT via Sec-WebSocket-Protocol: bearer,<jwt>)
 Static       GET       /snapshots/<file>       (evidence images)
 ```
 
@@ -1446,66 +1461,34 @@ Dashboard
 
 ---
 
-# 23. Recommended Initial Software Repository
+# 23. Software Repository Layout (as built)
 
 ```text
 IBVAP/
+├── backend/
+│   ├── src/
+│   │   ├── ingestion/  detection/  tracking/  spatial/  temporal/
+│   │   ├── face/  anpr/  features/           # face + ANPR modules (delivered, not yet wired)
+│   │   ├── behavior/  fusion/  risk/  alerts/
+│   │   ├── database/                          # SQLAlchemy models + Repository (SQLite)
+│   │   └── api/                               # FastAPI app, routes, auth, middleware, websocket
+│   ├── ml/                                    # taxonomy, dataset verify, eval_detector
+│   ├── scripts/                               # training, dataset prep, db ops, seed_users, purge
+│   ├── configs/                               # cameras / zones / thresholds / risk_weights / retention
+│   ├── tests/
+│   ├── outputs/  (snapshots, logs, metrics — gitignored)
+│   ├── main.py   requirements*.txt   ruff.toml   Dockerfile
 │
-├── data/
-│   ├── virat/
-│   ├── ufpr/
-│   ├── mot17/
-│   ├── bdd100k/
-│   └── custom/
+├── frontend/                                  # Next.js 15 (App Router), static export
+│   ├── app/                                   # routes: /, /cameras, /alerts, /events, /event, ...
+│   ├── src/components/  context/  hooks/  api/  lib/  types/
+│   └── next.config.ts   Dockerfile   nginx.conf
 │
-├── models/
-│   ├── detection/
-│   ├── face/
-│   ├── anpr/
-│   └── risk/
-│
-├── src/
-│   ├── ingestion/
-│   ├── detection/
-│   ├── tracking/
-│   ├── spatial/
-│   ├── temporal/
-│   ├── face/
-│   ├── anpr/
-│   ├── behavior/
-│   ├── fusion/
-│   ├── risk/
-│   ├── alerts/
-│   ├── database/
-│   └── api/
-│
-├── dashboard/
-│   ├── templates/
-│   └── static/
-│
-├── configs/
-│   ├── cameras.yaml
-│   ├── zones.yaml
-│   └── thresholds.yaml
-│
-├── experiments/
-│   ├── detection/
-│   ├── tracking/
-│   ├── behavior/
-│   ├── fusion/
-│   └── risk/
-│
-├── outputs/
-│   ├── videos/
-│   ├── snapshots/
-│   ├── logs/
-│   └── metrics/
-│
-├── tests/
-│
-├── requirements.txt
-├── README.md
-└── main.py
+├── supabase/                                  # migrations (user_profiles + RLS), config.toml
+├── docs/
+├── scripts/                                   # repo-level ops (secret rotation)
+├── docker-compose.yml   docker-compose.tls.yml
+└── README.md
 ```
 
 ---
@@ -1738,11 +1721,11 @@ Legend: ✅ done · 🟡 partial / experimental · ⛔ not started.
 | FR-13 | Risk engine `R = w1·S+w2·T+w3·B+w4·I+w5·V`, 4 levels | ✅ | `src/risk/risk_engine.py`, weights in `configs/risk_weights.yaml`, explainable summary |
 | FR-13+ | ML event-level risk classifier (baseline comparison) | 🟡 | `src/risk/risk_classifier.py` (RandomForest) scaffolded; **no feature dataset generated, no trained model** |
 | FR-14 | Alert engine (dedup, rate-limit, min-risk, evidence, WS push) | ✅ | `src/alerts/alert_engine.py` + `notifiers.py` (email/SMS, mock fallback) |
-| FR-15 | Dashboard (live feed, status, boxes, IDs, zones, alerts, history, search, detail, evidence) | ✅ | React SPA in `frontend/src/pages/` |
+| FR-15 | Dashboard (live feed, status, boxes, IDs, zones, alerts, history, search, detail, evidence) | ✅ | Next.js App Router app in `frontend/app/` |
 | FR-15+ | Heatmap overlay, Threat-Score panel, Multi-camera grid, Map view | ✅ | `HeatmapOverlay`, `ThreatScorePanel`, `MultiView`, `MapView` |
 | FR-16 | Event database (cameras, tracks, events, alerts, plates, identities, risk, evidence) | 🟡 | SQLite: cameras/tracks/events/alerts/audit implemented; `identity_results` / `anpr_results` tables defined but not populated (FR-09/FR-10 not live) |
 | — | Reports (24 h aggregation → CSV/PDF) | ✅ | `/api/reports/daily` + frontend export |
-| — | Audit log page | ✅ | `/api/audit`, `frontend/src/pages/AuditLog.tsx` |
+| — | Audit log page | ✅ | `/api/audit`, `frontend/app/(app)/audit/page.tsx` |
 | — | Evidence hashing (SHA-256) | ✅ | `alert_engine._save_snapshot`, stored on event + alert |
 | — | Experiments 1–6 (§21) + metrics (§20) | ⛔ | `outputs/metrics/` empty; no `experiments/` results yet — **highest-value remaining work for evaluation** |
 
