@@ -9,7 +9,16 @@ from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from src.alerts import evidence
-from src.database.models import AlertModel, AuditLogModel, CameraModel, EventModel, UserModel, ZoneModel
+from src.database.models import (
+    AlertModel,
+    ANPRResultModel,
+    AuditLogModel,
+    CameraModel,
+    EventModel,
+    IdentityResultModel,
+    UserModel,
+    ZoneModel,
+)
 
 
 class Repository:
@@ -259,6 +268,60 @@ class Repository:
 
     def get_audit_logs(self, limit: int = 100) -> list[AuditLogModel]:
         return self.session.query(AuditLogModel).order_by(desc(AuditLogModel.timestamp)).limit(limit).all()
+
+    # ======================== IDENTITY / ANPR RESULTS ========================
+
+    def create_identity_result(
+        self, track_id: int, camera_id: str, identity_label: str, similarity_score: float
+    ) -> IdentityResultModel:
+        import uuid
+
+        row = IdentityResultModel(
+            identity_id=f"IDN_{uuid.uuid4().hex[:12]}",
+            track_id=track_id,
+            camera_id=camera_id,
+            identity_label=identity_label,
+            similarity_score=similarity_score,
+            timestamp=datetime.utcnow(),
+        )
+        self.session.add(row)
+        self.session.commit()
+        return row
+
+    def get_identity_results(self, camera_id: str = None, limit: int = 100) -> list[IdentityResultModel]:
+        q = self.session.query(IdentityResultModel)
+        if camera_id:
+            q = q.filter_by(camera_id=camera_id)
+        return q.order_by(desc(IdentityResultModel.timestamp)).limit(limit).all()
+
+    def create_anpr_result(
+        self,
+        track_id: int,
+        camera_id: str,
+        plate_text: str,
+        ocr_confidence: float,
+        plate_image_path: str = None,
+    ) -> ANPRResultModel:
+        import uuid
+
+        row = ANPRResultModel(
+            plate_id=f"PLT_{uuid.uuid4().hex[:12]}",
+            track_id=track_id,
+            camera_id=camera_id,
+            plate_text=plate_text,
+            ocr_confidence=ocr_confidence,
+            timestamp=datetime.utcnow(),
+            plate_image_path=plate_image_path,
+        )
+        self.session.add(row)
+        self.session.commit()
+        return row
+
+    def get_anpr_results(self, camera_id: str = None, limit: int = 100) -> list[ANPRResultModel]:
+        q = self.session.query(ANPRResultModel)
+        if camera_id:
+            q = q.filter_by(camera_id=camera_id)
+        return q.order_by(desc(ANPRResultModel.timestamp)).limit(limit).all()
 
     # ======================== ZONES ========================
 

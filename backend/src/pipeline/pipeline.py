@@ -17,7 +17,8 @@ from src.behavior.behavior_engine import BehaviorEngine
 from src.database.db import get_database
 from src.database.repository import Repository
 from src.detection.detector import ObjectDetector
-from src.features.anpr import extract_license_plate
+from src.face.face_recognizer import FaceRecognizer
+from src.features.anpr import extract_plate
 from src.features.color_extractor import get_dominant_color
 from src.fusion.context_fusion import ContextFusion
 from src.ingestion.video_source import CameraInfo, VideoSource
@@ -43,6 +44,7 @@ class CameraPipeline:
         fence_detector: FenceDetector,
         risk_config: dict,
         alert_engine: AlertEngine,
+        face_recognizer: FaceRecognizer | None = None,
     ):
         self.camera_info = camera_info
         self.video_source = VideoSource(camera_info)
@@ -59,6 +61,9 @@ class CameraPipeline:
         self.context_fusion = ContextFusion()
         self.risk_engine = RiskEngine(risk_config)
         self.alert_engine = alert_engine
+        self.face_recognizer = face_recognizer or FaceRecognizer(enabled=False)
+        self._face_check_times: dict[int, float] = {}
+        self._FACE_RECHECK_S = 2.0
 
         self._running = False
         self._thread: threading.Thread | None = None
@@ -152,7 +157,23 @@ class CameraPipeline:
                                 track.object_type in ("car", "truck", "bus", "motorcycle", "vehicle")
                                 and track.license_plate == "Unknown"
                             ):
-                                track.license_plate = extract_license_plate(crop)
+                                plate = extract_plate(crop)
+                                if plate["text"] != "Unknown":
+                                    track.license_plate = plate["text"]
+                                    track.plate_confidence = plate["confidence"]
+                            if (
+                                track.object_type == "person"
+                                and track.identity_status == "unknown"
+                                and self.face_recognizer.active
+                            ):
+                                last = self._face_check_times.get(tid, 0.0)
+                                if time.time() - last >= self._FACE_RECHECK_S:
+                                    self._face_check_times[tid] = time.time()
+                                    match = self.face_recognizer.identify(crop)
+                                    if match and match["status"] != "unknown":
+                                        track.identity_label = match["identity"]
+                                        track.identity_score = match["similarity"]
+                                        track.identity_status = match["status"]
 
                     self._process_track(track, frame)
 
@@ -259,10 +280,15 @@ class CameraPipeline:
         identity_context = {}
         if track.color != "Unknown":
             identity_context["color"] = track.color
+        if track.object_type == "person":
+            identity_context["identity"] = track.identity_label
+            identity_context["identity_status"] = track.identity_status
+            identity_context["identity_score"] = track.identity_score
 
         vehicle_context = {}
-        if hasattr(track, "license_plate") and track.license_plate != "Unknown":
+        if track.license_plate != "Unknown":
             vehicle_context["plate"] = track.license_plate
+            vehicle_context["plate_confidence"] = track.plate_confidence
 
         fused_event = self.context_fusion.fuse_events(
             track_id=track.track_id,
@@ -308,6 +334,20 @@ class CameraPipeline:
                 repo = Repository(session)
                 repo.create_event(fused_event.to_dict())
                 repo.create_alert(alert.to_dict())
+                if track.object_type == "person" and track.identity_status != "unknown":
+                    repo.create_identity_result(
+                        track_id=track.track_id,
+                        camera_id=camera_id,
+                        identity_label=track.identity_label,
+                        similarity_score=track.identity_score,
+                    )
+                if track.license_plate != "Unknown":
+                    repo.create_anpr_result(
+                        track_id=track.track_id,
+                        camera_id=camera_id,
+                        plate_text=track.license_plate,
+                        ocr_confidence=track.plate_confidence,
+                    )
                 session.close()
             except Exception as e:
                 logger.error(f"Database write error: {e}")
@@ -345,6 +385,7 @@ class IBVAPPipeline:
         self.zone_manager = ZoneManager()
         self.fence_detector = FenceDetector()
         self.alert_engine = AlertEngine()
+        self.face_recognizer: FaceRecognizer | None = None
         self._risk_config = {}
 
     def initialize(self):
@@ -385,6 +426,16 @@ class IBVAPPipeline:
             min_risk_score=alert_cfg.get("min_alert_risk_score", 20),
         )
 
+        # Face recognition (shared model, off by default — see thresholds.yaml)
+        fc = thresholds_config.get("face", {})
+        self.face_recognizer = FaceRecognizer(
+            enabled=bool(fc.get("enabled", False)),
+            gallery_path=fc.get("gallery_path", "./models/face/gallery.json"),
+            similarity_threshold=fc.get("similarity_threshold", 0.45),
+            uncertain_threshold=fc.get("uncertain_threshold", 0.35),
+            min_face_confidence=fc.get("min_face_confidence", 0.6),
+        )
+
         # Initialize database
         db = get_database()
 
@@ -408,6 +459,7 @@ class IBVAPPipeline:
                 fence_detector=self.fence_detector,
                 risk_config=self._risk_config,
                 alert_engine=self.alert_engine,
+                face_recognizer=self.face_recognizer,
             )
 
             self.camera_pipelines[camera_info.camera_id] = pipeline

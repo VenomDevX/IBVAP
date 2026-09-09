@@ -39,6 +39,12 @@ class Track:
     # Features
     color: str = "Unknown"
     license_plate: str = "Unknown"
+    plate_confidence: float = 0.0
+
+    # Identity (face recognition)
+    identity_label: str = "unknown"
+    identity_score: float = 0.0
+    identity_status: str = "unknown"  # known | uncertain | unknown
 
     # Risk Assessment
     risk_score: float = 0.0
@@ -134,6 +140,10 @@ class Track:
             "movement_direction": self.movement_direction,
             "color": self.color,
             "license_plate": self.license_plate,
+            "plate_confidence": round(self.plate_confidence, 3),
+            "identity_label": self.identity_label,
+            "identity_score": round(self.identity_score, 3),
+            "identity_status": self.identity_status,
             "risk_score": round(self.risk_score, 1),
             "risk_level": self.risk_level,
             "risk_factors": self.risk_factors,

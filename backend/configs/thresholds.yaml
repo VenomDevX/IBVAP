@@ -43,6 +43,20 @@ behavior:
   # Speed calculation: pixels per second threshold for "stationary"
   stationary_speed_threshold: 5.0
 
+face:
+  # Face recognition needs `insightface` + the buffalo_l model (~300 MB).
+  # Leave false unless the dependency is installed and a gallery exists.
+  enabled: false
+  gallery_path: "./models/face/gallery.json"
+  similarity_threshold: 0.45   # >= this => "known"
+  uncertain_threshold: 0.35    # >= this => "uncertain"
+  min_face_confidence: 0.6     # detector score floor
+
+anpr:
+  # OCR engine cascade: easyocr -> paddleocr -> pytesseract -> mock.
+  # Override with the IBVAP_OCR_ENGINE env var.
+  ocr_engine: "auto"
+
 alerts:
   # Cooldown: seconds before re-alerting on same track + same event type
   cooldown_seconds: 60
