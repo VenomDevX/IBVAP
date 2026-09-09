@@ -1,11 +1,16 @@
 """
 train_yolo.py — coarse detector training (IBVAP)
 ===============================================
-Trains the ~13-class coarse detector (see backend/ml/taxonomy.py) on the
-leak-free, clip-aware split (configs/dataset_coarse.yaml).
+Trains the 13-class coarse detector (see backend/ml/taxonomy.py) on the
+deduplicated, rare-class-preserving release set built by
+`python scripts/build_dataset.py` -> data/dataset/detector/dataset.yaml.
 
-Tuned for a ~6 GB RTX 40-series:  yolo11s @ 640, explicit SGD, disk cache, AMP.
-Run  `python -m ml.verify_dataset --data configs/dataset_coarse.yaml`  first.
+Tuned for a ~6 GB RTX 40-series (RTX 4050 Laptop): yolo11s @ 640, batch 8,
+explicit SGD, disk cache, AMP. Warm-starts from models/ibvap_coarse.pt.
+
+Measure before you commit a night to it:
+    python scripts/train_yolo.py --benchmark
+prints real minutes/epoch on this machine and the epochs that fit your budget.
 
 Windows note — if you hit
     RuntimeError: Couldn't open shared file mapping ... error code: <1455>
@@ -17,20 +22,25 @@ worker processes. Either:
 `--cache disk` (default) also keeps RAM use low; do NOT use `--cache ram` here.
 
 Usage:
-  python scripts/train_yolo.py                         # full run, defaults
+  python scripts/train_yolo.py --benchmark             # 1 epoch, report min/epoch
+  python scripts/train_yolo.py --epochs 48             # full run
   python scripts/train_yolo.py --epochs 3 --workers 0  # smoke test, worker-safe
   python scripts/train_yolo.py --resume --model outputs/training/ibvap_coarse/weights/last.pt
+
+Overnight runs should go through scripts/run_training.ps1, which restarts and
+resumes automatically after a transient CUDA fault.
 """
 
 import argparse
 import os
+import time
 
 # cuDNN STREAM_MISMATCH workaround for RTX 40-series
 os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
 from ultralytics import YOLO
 
-DEFAULT_DATA = "configs/dataset_coarse.yaml"
+DEFAULT_DATA = "data/dataset/detector/dataset.yaml"
 RUN_NAME = "ibvap_coarse"
 
 
@@ -54,7 +64,19 @@ def train(args):
         return
 
     if not os.path.exists(data_yaml):
-        raise SystemExit(f"data config not found: {data_yaml} (run scripts/make_clean_split.py first)")
+        raise SystemExit(f"data config not found: {data_yaml} (run scripts/build_dataset.py first)")
+
+    if args.batch == -1:
+        print(
+            "WARNING: --batch -1 (autobatch) probes VRAM at startup and can pick a size\n"
+            "         that OOMs later once activations peak, killing an overnight run.\n"
+            "         On a 6GB card use --batch 8."
+        )
+
+    if args.benchmark:
+        args.epochs = 1
+        print("BENCHMARK: one epoch, then report minutes/epoch and exit.")
+    t0 = time.time()
 
     print(
         f"data={data_yaml}  epochs={args.epochs}  imgsz={args.imgsz}  "
@@ -90,6 +112,22 @@ def train(args):
         exist_ok=True,
         plots=True,
     )
+    if args.benchmark:
+        mins = (time.time() - t0) / 60
+        print(f"\n=== BENCHMARK: {mins:.1f} min/epoch on this machine ===")
+        print("    Pick --epochs from your budget:")
+        for budget in (12, 20, 24):
+            print(f"      {budget:>2}h  ->  {int(budget * 60 / mins)} epochs")
+        if mins > 40:
+            print(
+                "\n    Over 40 min/epoch. Fallback ladder, in order:\n"
+                "      1. python scripts/build_dataset.py --force rebalance "
+                "--target-detector 40000\n"
+                "      2. --imgsz 576   (give up resolution LAST: it costs the most\n"
+                "         accuracy on the distant objects this system exists to spot)"
+            )
+        return
+
     print("\nDone.")
     print(f"  best: {args.project}/{args.name}/weights/best.pt")
     print(f"\nEvaluate:  python -m ml.eval_detector --weights outputs/training/{RUN_NAME}/weights/best.pt")
@@ -98,10 +136,25 @@ def train(args):
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description="Train the IBVAP coarse detector")
     p.add_argument("--data", default=DEFAULT_DATA)
-    p.add_argument("--model", default="yolo11s.pt", help="pretrained name or a checkpoint path")
-    p.add_argument("--epochs", type=int, default=150)
+    p.add_argument(
+        "--model",
+        default="models/ibvap_coarse.pt",
+        help="warm-start checkpoint, or a pretrained name like yolo11s.pt",
+    )
+    p.add_argument("--epochs", type=int, default=48)
     p.add_argument("--imgsz", type=int, default=640)
-    p.add_argument("--batch", type=int, default=-1, help="-1 = auto-fit VRAM")
+    p.add_argument(
+        "--batch",
+        type=int,
+        default=8,
+        help="explicit batch size. Do NOT use -1 on a 6GB card: autobatch probes "
+        "VRAM at startup and can pick a size that OOMs hours later.",
+    )
+    p.add_argument(
+        "--benchmark",
+        action="store_true",
+        help="train exactly one epoch, report min/epoch, and exit",
+    )
     p.add_argument("--patience", type=int, default=40)
     p.add_argument("--device", default="0", help="0 / 0,1 / cpu")
     p.add_argument("--project", default="outputs/training", help="output dir (point at Drive on Colab)")
