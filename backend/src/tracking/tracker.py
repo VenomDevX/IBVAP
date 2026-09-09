@@ -3,8 +3,7 @@ IBVAP — ByteTrack Multi-Object Tracker
 Integrates ByteTrack for persistent object tracking across frames.
 """
 
-import time
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 import numpy as np
 import cv2

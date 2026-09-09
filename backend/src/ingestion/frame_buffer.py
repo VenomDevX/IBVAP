@@ -4,8 +4,7 @@ Thread-safe frame buffer for decoupling video capture from processing.
 """
 
 import threading
-import time
-from typing import Optional, Tuple
+from typing import Optional
 from collections import deque
 from dataclasses import dataclass
 

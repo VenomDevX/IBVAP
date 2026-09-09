@@ -4,14 +4,13 @@ CRUD operations for all entities.
 """
 
 from datetime import datetime
-from typing import List, Optional, Dict
+from typing import List, Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, and_
-from loguru import logger
+from sqlalchemy import desc
 
 from src.database.models import (
-    CameraModel, TrackModel, EventModel, AlertModel,
-    IdentityResultModel, ANPRResultModel, UserModel, AuditLogModel, ZoneModel
+    CameraModel, EventModel, AlertModel,
+    UserModel, AuditLogModel, ZoneModel
 )
 from src.alerts import evidence
 

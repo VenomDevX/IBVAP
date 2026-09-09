@@ -5,7 +5,6 @@ YOLO-based license plate detection.
 
 from typing import List, Optional, Tuple
 import numpy as np
-import cv2
 from loguru import logger
 
 

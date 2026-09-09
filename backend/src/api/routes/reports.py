@@ -7,7 +7,6 @@ import time
 from datetime import datetime
 from src.api.auth import require_auth
 from src.database.db import get_database
-from src.database.repository import Repository
 
 router = APIRouter()
 

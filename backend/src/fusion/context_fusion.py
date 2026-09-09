@@ -164,11 +164,11 @@ class ContextFusion:
         desc += " was detected"
         
         if spatial_context.get("in_restricted"):
-            desc += f" in restricted zone"
+            desc += " in restricted zone"
         elif spatial_context.get("fence_crossed"):
-            desc += f" crossing a fence"
+            desc += " crossing a fence"
         elif temporal_context.get("is_loitering"):
-            desc += f" loitering"
+            desc += " loitering"
         temporal_context["semantic_description"] = desc
 
         # Deduplicate factors

@@ -4,8 +4,7 @@ Weighted risk scoring: R = w1*S + w2*T + w3*B + w4*I + w5*V
 Produces explainable risk scores with human-readable reasons.
 """
 
-from typing import Dict, List, Optional, Tuple
-from loguru import logger
+from typing import List, Tuple
 
 from src.fusion.context_fusion import FusedEvent
 
@@ -251,15 +250,15 @@ class RiskEngine:
             f"  Event Type: {fused_event.event_type.replace('_', ' ').title()}",
             f"  Object: {fused_event.object_type} (Track ID: {fused_event.track_id})",
             f"  Camera: {fused_event.camera_id}",
-            f"",
-            f"  Contributing Factors:",
+            "",
+            "  Contributing Factors:",
         ]
 
         for factor in fused_event.contributing_factors:
             lines.append(f"    ✓ {factor}")
 
         if fused_event.duration > 0:
-            lines.append(f"")
+            lines.append("")
             lines.append(f"  Duration: {fused_event.duration:.0f} seconds")
 
         lines.append(f"{'=' * 50}")

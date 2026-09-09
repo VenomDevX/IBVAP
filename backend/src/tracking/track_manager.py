@@ -8,7 +8,6 @@ from collections import deque
 from typing import Dict, List, Optional
 
 from src.tracking.track import Track
-from loguru import logger
 
 
 class TrackManager:

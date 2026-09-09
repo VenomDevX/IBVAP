@@ -1,7 +1,6 @@
 import os
 import cv2
 import glob
-from tqdm import tqdm
 
 # VIRAT object type -> COARSE taxonomy ids (backend/ml/taxonomy.py)
 # 0: person   1: car
@@ -85,7 +84,7 @@ def convert_virat(virat_path, output_path, extract_fps=1):
                         w = x_max - x_min
                         h = y_max - y_min
                         frame_boxes[frame_id].append((unified_class, x_min, y_min, w, h))
-                    except Exception as e:
+                    except Exception:
                         continue
                 
         # Open video and extract frames

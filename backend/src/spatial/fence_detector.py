@@ -4,8 +4,7 @@ Detects line/boundary crossing events using trajectory analysis.
 """
 
 from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass, field
-import time
+from dataclasses import dataclass
 import math
 
 import numpy as np

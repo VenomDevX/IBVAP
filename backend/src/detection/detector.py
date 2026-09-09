@@ -6,7 +6,6 @@ Wrapper around Ultralytics YOLO for person/vehicle detection.
 import time
 from collections import deque
 from typing import List, Optional, Dict
-from pathlib import Path
 
 import numpy as np
 import cv2

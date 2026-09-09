@@ -5,7 +5,7 @@ Matches face embeddings against an authorized gallery.
 
 import json
 import os
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List
 import numpy as np
 from loguru import logger
 

@@ -30,7 +30,7 @@ import os
 import shutil
 from collections import Counter
 
-from ml.taxonomy import FINE_TO_COARSE, FINE_NAMES, COARSE_NAMES, NUM_COARSE
+from ml.taxonomy import FINE_TO_COARSE, COARSE_NAMES, NUM_COARSE
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BACKEND = os.path.dirname(HERE)

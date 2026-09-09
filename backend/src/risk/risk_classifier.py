@@ -3,7 +3,7 @@ IBVAP — ML Risk Classifier (Optional)
 Event-level ML classifier for comparison with rule-based baseline.
 """
 
-from typing import List, Optional, Tuple
+from typing import Tuple
 import numpy as np
 from loguru import logger
 

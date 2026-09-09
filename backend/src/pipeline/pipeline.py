@@ -6,18 +6,15 @@ Main orchestrator: Ingest → Detect → Track → Spatial → Temporal → Beha
 import time
 import threading
 import os
-from typing import Dict, Optional, List, Callable
+from typing import Dict, Optional
 from pathlib import Path
 
-import cv2
 import numpy as np
 import yaml
 from loguru import logger
 
-from src.ingestion.video_source import VideoSource, CameraInfo, CameraStatus
-from src.ingestion.frame_buffer import FrameBuffer, FramePacket
+from src.ingestion.video_source import VideoSource, CameraInfo
 from src.detection.detector import ObjectDetector
-from src.detection.detection_result import FrameDetections
 from src.tracking.tracker import MultiObjectTracker
 from src.tracking.track_manager import TrackManager
 from src.spatial.zone_manager import ZoneManager
@@ -31,7 +28,6 @@ from src.risk.risk_engine import RiskEngine
 from src.alerts.alert_engine import AlertEngine
 from src.database.db import get_database
 from src.database.repository import Repository
-from src.api.websocket import ws_manager
 from src.features.color_extractor import get_dominant_color
 from src.features.anpr import extract_license_plate
 from src.spatial.heatmap_tracker import HeatmapTracker
