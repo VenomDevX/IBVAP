@@ -108,6 +108,12 @@ class AlertEngine:
             contributing_factors=fused_event.contributing_factors,
             snapshot_path=snapshot_path,
             snapshot_hash=snapshot_hash,
+            plate_result=(fused_event.vehicle_context or {}).get("plate"),
+            identity_result=(
+                (fused_event.identity_context or {}).get("identity")
+                if (fused_event.identity_context or {}).get("identity_status") not in (None, "unknown")
+                else None
+            ),
         )
 
         # Store

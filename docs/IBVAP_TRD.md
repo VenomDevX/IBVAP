@@ -574,9 +574,9 @@ Spatial Analysis   Temporal Analysis
 | Object detection (custom) | YOLO trained on the **13-class coarse** border/military taxonomy (`backend/ml/taxonomy.py`) — see **§9A**. Trained via `scripts/train_yolo.py`; dataset built & verified, **training run pending / not yet loaded by the live pipeline** |
 | Stage-2 fine-grained classifier | Optional crop classifier (`scripts/train_classifier.py`, `scripts/inference_two_stage.py`) for airframe-level ID — **Phase 2**, the surveillance logic does not consume it. Experimental |
 | Multi-object tracking | **ByteTrack** via the `supervision` library (`sv.ByteTrack`) — `src/tracking/tracker.py` |
-| Face (module only) | ArcFace-style embeddings + cosine matching against a JSON gallery — `src/face/`. **Not called from the pipeline** |
+| Face recognition | InsightFace (buffalo_l) detection + ArcFace embeddings, cosine-matched against a JSON gallery — `src/face/`, orchestrated by `FaceRecognizer`. **Wired into the pipeline** for `person` tracks (throttled ~2 s/track); off by default (`face.enabled` in thresholds.yaml — needs `insightface`). |
 | Dominant colour | HSV histogram heuristic — `src/features/color_extractor.py` |
-| ANPR OCR | `pytesseract` + contour heuristics with a mock fallback — `src/features/anpr.py`. **TRD target remains PaddleOCR / EasyOCR**; treat current output as experimental |
+| ANPR OCR | `src/anpr/ocr.py` engine cascade **EasyOCR → PaddleOCR → pytesseract → mock** (`IBVAP_OCR_ENGINE` overrides). `src/features/anpr.py` localises the plate (YOLO plate model if present, else contour heuristic) then OCRs it. EasyOCR is the default (reuses torch); optional dep in `requirements-training.txt`. |
 
 ## 9.2 Backend Service
 
@@ -1723,8 +1723,8 @@ Legend: ✅ done · 🟡 partial / experimental · ⛔ not started.
 | FR-06 | Direction analysis | ✅ | `src/spatial/direction_analyzer.py`, "toward restricted zone" |
 | FR-07 | Loitering detection | ✅ | `src/temporal/loitering_detector.py`, dwell-time tiers in risk engine |
 | FR-08 | Night / low-light context | ✅ | `src/temporal/night_detector.py` (time-of-day + brightness) |
-| FR-09 | Face detection / embedding / matching | 🟡 | Modules in `src/face/` complete but **not called by `pipeline._process_track`**; identity context only carries dominant colour |
-| FR-10 | ANPR (plate detect → OCR → confidence) | 🟡 | `src/features/anpr.py` uses `pytesseract` with a `MOCK-PLT` fallback; `src/anpr/` detector stubs exist. TRD target PaddleOCR not integrated |
+| FR-09 | Face detection / embedding / matching | 🟡→✅ | `FaceRecognizer` wired into the pipeline (person tracks, throttled); identity feeds context fusion + `identity_results` + `alerts.identity_result`. Off by default — enable `face.enabled` + `pip install insightface`. |
+| FR-10 | ANPR (plate detect → OCR → confidence) | ✅ | Real OCR via `src/anpr/ocr.py` (EasyOCR default). Plate text + confidence attach to the track, feed context fusion, and persist to `anpr_results` + `alerts.plate_result`. Plate-localiser YOLO model optional (`models/anpr/plate_detector.pt`). |
 | FR-11 | Behaviour engine (intrusion, fence, loiter, direction, night, combined) | ✅ | `src/behavior/behavior_engine.py`, "combined suspicious" at 3+ flags |
 | FR-12 | Context fusion + alert dedup | ✅ | `src/fusion/context_fusion.py` — one `FusedEvent` + semantic description + cooldown |
 | FR-13 | Risk engine `R = w1·S+w2·T+w3·B+w4·I+w5·V`, 4 levels | ✅ | `src/risk/risk_engine.py`, weights in `configs/risk_weights.yaml`, explainable summary |
@@ -1732,7 +1732,7 @@ Legend: ✅ done · 🟡 partial / experimental · ⛔ not started.
 | FR-14 | Alert engine (dedup, rate-limit, min-risk, evidence, WS push) | ✅ | `src/alerts/alert_engine.py` + `notifiers.py` (email/SMS, mock fallback) |
 | FR-15 | Dashboard (live feed, status, boxes, IDs, zones, alerts, history, search, detail, evidence) | ✅ | Next.js App Router app in `frontend/app/` |
 | FR-15+ | Heatmap overlay, Threat-Score panel, Multi-camera grid, Map view | ✅ | `HeatmapOverlay`, `ThreatScorePanel`, `MultiView`, `MapView` |
-| FR-16 | Event database (cameras, tracks, events, alerts, plates, identities, risk, evidence) | 🟡 | SQLite: cameras/tracks/events/alerts/audit implemented; `identity_results` / `anpr_results` tables defined but not populated (FR-09/FR-10 not live) |
+| FR-16 | Event database (cameras, tracks, events, alerts, plates, identities, risk, evidence) | ✅ | SQLite: cameras/tracks/events/alerts/audit + **`identity_results` / `anpr_results` now populated** by the pipeline (`Repository.create_identity_result` / `create_anpr_result`). |
 | — | Reports (24 h aggregation → CSV/PDF) | ✅ | `/api/reports/daily` + frontend export |
 | — | Audit log page | ✅ | `/api/audit`, `frontend/app/(app)/audit/page.tsx` |
 | — | Evidence hashing (SHA-256) | ✅ | `alert_engine._save_snapshot`, stored on event + alert |
