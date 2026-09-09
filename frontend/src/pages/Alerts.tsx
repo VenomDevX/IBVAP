@@ -9,24 +9,21 @@ export default function Alerts() {
   const [filterLevel, setFilterLevel] = useState('');
   const [filterReviewed, setFilterReviewed] = useState('');
   const [filterCamera, setFilterCamera] = useState('');
+  const [query, setQuery] = useState('');
   const gridRef = useRef<HTMLDivElement>(null);
   const gridInstance = useRef<Grid | null>(null);
+  const rawRef = useRef<Alert[]>([]);
 
   useEffect(() => {
     apiFetch('/api/cameras').then(r => r.json()).then(setCameras).catch(console.error);
   }, []);
 
-  const loadAlerts = async () => {
-    let url = '/api/alerts?limit=200';
-    if (filterLevel) url += `&risk_level=${filterLevel}`;
-    if (filterReviewed) url += `&reviewed=${filterReviewed}`;
-    if (filterCamera) url += `&camera_id=${filterCamera}`;
-
-    try {
-      const res = await apiFetch(url);
-      const alerts: Alert[] = await res.json();
-
-      const mappedData = alerts.map(a => [
+  const render = () => {
+    const q = query.trim().toLowerCase();
+    const rows = rawRef.current
+      .filter(a => !q || [a.alert_id, a.event_type, a.camera_id, a.risk_level]
+        .some(v => String(v ?? '').toLowerCase().includes(q)))
+      .map(a => [
         html(`<span class="risk-badge ${a.risk_level}">${getRiskEmoji(a.risk_level)} ${a.risk_level}</span>`),
         a.alert_id,
         formatEventType(a.event_type),
@@ -42,25 +39,35 @@ export default function Alerts() {
         `),
       ]);
 
-      if (gridInstance.current) {
-        gridInstance.current.updateConfig({ data: mappedData }).forceRender();
-      } else if (gridRef.current) {
-        gridInstance.current = new Grid({
-          columns: ['Level', 'Alert ID', 'Event Type', 'Camera', 'Time', 'Score', 'Status', 'Actions'],
-          data: mappedData,
-          search: true,
-          sort: true,
-          pagination: { limit: 15 },
-          className: { table: 'data-table' },
-        }).render(gridRef.current);
-      }
+    if (gridInstance.current) {
+      gridInstance.current.updateConfig({ data: rows }).forceRender();
+    } else if (gridRef.current) {
+      gridInstance.current = new Grid({
+        columns: ['Level', 'Alert ID', 'Event Type', 'Camera', 'Time', 'Score', 'Status', 'Actions'],
+        data: rows,
+        search: false,
+        sort: true,
+        pagination: { limit: 15 },
+        className: { table: 'data-table' },
+      }).render(gridRef.current);
+    }
+  };
+
+  const loadAlerts = async () => {
+    let url = '/api/alerts?limit=200';
+    if (filterLevel) url += `&risk_level=${filterLevel}`;
+    if (filterReviewed) url += `&reviewed=${filterReviewed}`;
+    if (filterCamera) url += `&camera_id=${filterCamera}`;
+    try {
+      const res = await apiFetch(url);
+      rawRef.current = await res.json();
+      render();
     } catch (err) {
       console.error('Failed to load alerts:', err);
     }
   };
 
   useEffect(() => {
-    // Expose review function globally for gridjs html buttons
     (window as unknown as Record<string, unknown>).__reviewAlert = async (alertId: string) => {
       try {
         await apiFetch(`/api/alerts/${alertId}/review`, { method: 'POST' });
@@ -70,16 +77,23 @@ export default function Alerts() {
       }
     };
     loadAlerts();
-
-    return () => {
-      delete (window as unknown as Record<string, unknown>).__reviewAlert;
-    };
+    return () => { delete (window as unknown as Record<string, unknown>).__reviewAlert; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterLevel, filterReviewed, filterCamera]);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { render(); }, [query]);
+
   return (
-    <>
+    <div className="list-page">
       <div className="filters-bar">
+        <div className="filters-search">
+          <i className="fas fa-magnifying-glass" />
+          <input
+            type="text" placeholder="Search alerts…"
+            value={query} onChange={e => setQuery(e.target.value)}
+          />
+        </div>
         <select className="select-small" value={filterLevel} onChange={e => setFilterLevel(e.target.value)}>
           <option value="">All Levels</option>
           <option value="critical">🔴 Critical</option>
@@ -96,10 +110,10 @@ export default function Alerts() {
           <option value="">All Cameras</option>
           {cameras.map(c => <option key={c.camera_id} value={c.camera_id}>{c.name}</option>)}
         </select>
-        <button onClick={loadAlerts} className="btn btn-sm"><i className="fas fa-refresh" /> Refresh</button>
+        <button onClick={loadAlerts} className="btn btn-sm"><i className="fas fa-rotate-right" /> Refresh</button>
       </div>
 
       <div className="table-container" ref={gridRef} />
-    </>
+    </div>
   );
 }

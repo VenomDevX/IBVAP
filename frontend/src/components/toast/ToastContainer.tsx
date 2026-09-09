@@ -9,7 +9,8 @@ interface Toast {
 }
 
 let toastId = 0;
-const MAX_VISIBLE = 4;
+const MAX_VISIBLE = 3;
+const TTL_MS = 4000;
 
 export default function ToastContainer() {
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -20,15 +21,17 @@ export default function ToastContainer() {
     setToasts(prev => [...prev, { id, alert }].slice(-MAX_VISIBLE));
     setTimeout(() => {
       setToasts(prev => prev.filter(t => t.id !== id));
-    }, 5000);
+    }, TTL_MS);
   }, []);
 
   useWebSocket(handleAlert);
 
+  const dismiss = (id: number) => setToasts(prev => prev.filter(t => t.id !== id));
+
   return (
     <div className="toast-container" id="toast-container">
       {toasts.map(({ id, alert }) => (
-        <div key={id} className={`toast ${alert.risk_level}`}>
+        <div key={id} className={`toast ${alert.risk_level}`} onClick={() => dismiss(id)} title="Dismiss">
           <div>
             <div className="toast-title">
               {getRiskEmoji(alert.risk_level)} {formatEventType(alert.event_type)}
