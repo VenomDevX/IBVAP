@@ -4,9 +4,8 @@ SQLAlchemy ORM models matching TRD Section 17 schema.
 """
 
 from datetime import datetime
-from sqlalchemy import (
-    Column, Integer, String, Float, Boolean, DateTime, ForeignKey, JSON
-)
+
+from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
@@ -14,6 +13,7 @@ Base = declarative_base()
 
 class CameraModel(Base):
     """Camera configuration and status."""
+
     __tablename__ = "cameras"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -36,6 +36,7 @@ class CameraModel(Base):
 
 class TrackModel(Base):
     """Tracked object records."""
+
     __tablename__ = "tracks"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -52,6 +53,7 @@ class TrackModel(Base):
 
 class EventModel(Base):
     """Security events (fused events from the context fusion engine)."""
+
     __tablename__ = "events"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -81,6 +83,7 @@ class EventModel(Base):
 
 class AlertModel(Base):
     """Alert records."""
+
     __tablename__ = "alerts"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -112,6 +115,7 @@ class AlertModel(Base):
 
 class IdentityResultModel(Base):
     """Face recognition identity results."""
+
     __tablename__ = "identity_results"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -126,6 +130,7 @@ class IdentityResultModel(Base):
 
 class ANPRResultModel(Base):
     """License plate recognition results."""
+
     __tablename__ = "anpr_results"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -141,6 +146,7 @@ class ANPRResultModel(Base):
 
 class UserModel(Base):
     """System users for authentication."""
+
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -156,6 +162,7 @@ class UserModel(Base):
 
 class AuditLogModel(Base):
     """Audit log for important actions."""
+
     __tablename__ = "audit_logs"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -168,6 +175,7 @@ class AuditLogModel(Base):
 
 class ZoneModel(Base):
     """Persistent zone configurations."""
+
     __tablename__ = "zones"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -180,3 +188,14 @@ class ZoneModel(Base):
     enabled = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class RevokedTokenModel(Base):
+    """Denylist of access tokens invalidated by an explicit logout."""
+
+    __tablename__ = "revoked_tokens"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    token_hash = Column(String(64), unique=True, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    revoked_at = Column(DateTime, default=datetime.utcnow)

@@ -11,6 +11,7 @@ from fastapi.responses import Response, StreamingResponse
 
 from src.api.auth import require_auth_media
 from src.api.middleware.input_validator import sanitize_camera_id
+from src.api.ratelimit import limiter
 
 router = APIRouter()
 
@@ -21,6 +22,7 @@ _MAX_FRAMES = 60 * 60 * 30
 async def generate_mjpeg(camera_id: str, request: Request):
     """Async generator that yields MJPEG frames until the client disconnects."""
     from src.api.app import get_pipeline
+
     pipeline = get_pipeline()
     if not pipeline:
         return
@@ -40,10 +42,7 @@ async def generate_mjpeg(camera_id: str, request: Request):
         if frame is not None:
             ok, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
             if ok:
-                yield (
-                    b"--frame\r\n"
-                    b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
-                )
+                yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n")
                 frames += 1
             await asyncio.sleep(0.033)  # ~30 FPS cap
         else:
@@ -51,10 +50,12 @@ async def generate_mjpeg(camera_id: str, request: Request):
 
 
 @router.get("/{camera_id}")
+@limiter.limit("20/minute")
 async def video_stream(camera_id: str, request: Request, _user=Depends(require_auth_media)):
     """Get MJPEG video stream for a camera."""
     camera_id = sanitize_camera_id(camera_id)
     from src.api.app import get_pipeline
+
     pipeline = get_pipeline()
 
     if not pipeline or camera_id not in pipeline.camera_pipelines:
@@ -67,10 +68,12 @@ async def video_stream(camera_id: str, request: Request, _user=Depends(require_a
 
 
 @router.get("/{camera_id}/snapshot")
-async def get_snapshot(camera_id: str, _user=Depends(require_auth_media)):
+@limiter.limit("60/minute")
+async def get_snapshot(camera_id: str, request: Request, _user=Depends(require_auth_media)):
     """Get a single snapshot frame from a camera."""
     camera_id = sanitize_camera_id(camera_id)
     from src.api.app import get_pipeline
+
     pipeline = get_pipeline()
 
     if not pipeline:

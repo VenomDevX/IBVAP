@@ -54,6 +54,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [session]);
 
   const logout = async () => {
+    // Revoke the access token server-side first (a plain signOut only clears the
+    // browser; the JWT stays valid for the rest of its ~1h life otherwise).
+    try {
+      await apiFetch('/api/auth/logout', { method: 'POST' });
+    } catch {
+      /* best effort — sign out locally regardless */
+    }
     await supabase.auth.signOut();
   };
 

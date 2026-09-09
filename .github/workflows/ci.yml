@@ -20,10 +20,10 @@ jobs:
         run: |
           pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
           pip install -r requirements.txt -r requirements-dev.txt
-      # Bug-class ruleset only (see backend/ruff.toml) — style/line-length are
-      # not yet enforced. Widen `select` in a follow-up once those are cleaned.
       - name: Lint
-        run: ruff check --output-format=github src scripts ml
+        run: |
+          ruff check --output-format=github src scripts ml
+          ruff format --check src scripts ml tests
       - name: Tests
         run: pytest -q
 
@@ -46,3 +46,35 @@ jobs:
         env:
           NEXT_PUBLIC_SUPABASE_URL: http://localhost:54321
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install scanners
+        run: pip install bandit pip-audit semgrep
+
+      # Static analysis of our own code — enforced (offline, deterministic).
+      - name: Bandit (Python SAST)
+        run: bandit -r backend/src backend/ml -c backend/bandit.yaml -q
+
+      # Registry rulesets need network and can change; advisory so an upstream
+      # rule update can't turn an unrelated PR red. Findings show as annotations.
+      - name: Semgrep (OWASP + language rules)
+        continue-on-error: true
+        run: semgrep scan --config p/python --config p/javascript --config p/owasp-top-ten backend/src frontend/app frontend/src
+
+      # Dependency CVEs — advisory (transitive CVEs with no fix shouldn't block a merge).
+      - name: pip-audit (backend deps)
+        continue-on-error: true
+        run: pip-audit -r backend/requirements.txt --desc
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: npm audit (frontend deps)
+        continue-on-error: true
+        working-directory: frontend
+        run: npm audit --audit-level=high

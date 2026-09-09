@@ -37,6 +37,7 @@ async def authenticate_ws(websocket: WebSocket) -> dict | None:
         return None
     try:
         payload = _auth._verify_token(token)
+        _auth._deny_if_revoked(token)
     except Exception:
         await websocket.close(code=4003, reason="Invalid or expired token")
         return None
@@ -50,7 +51,7 @@ class WebSocketManager:
 
     def __init__(self):
         self.active_connections: list[WebSocket] = []
-        self._identities: dict = {}   # id(websocket) -> token payload
+        self._identities: dict = {}  # id(websocket) -> token payload
         self._lock = asyncio.Lock()
         self._loop = None
 

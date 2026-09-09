@@ -14,14 +14,16 @@ import os
 import time
 
 import jwt
-from jwt import PyJWKClient
 from fastapi import Depends, HTTPException, Request, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jwt import PyJWKClient
 from loguru import logger
-from supabase import create_client, Client
+from supabase import Client, create_client
+
+from src.api.token_revocation import is_token_revoked
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "http://127.0.0.1:54321")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")                  # anon key (fallback token check)
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")  # anon key (fallback token check)
 SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")  # service_role — reads user_profiles
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")
 # Optional: enforce the token `iss`. Leave unset unless you know the exact issuer string
@@ -43,15 +45,18 @@ def _jwks():
 
 
 def _unauth(detail: str) -> HTTPException:
-    return HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=detail,
-                         headers={"WWW-Authenticate": "Bearer"})
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED, detail=detail, headers={"WWW-Authenticate": "Bearer"}
+    )
+
 
 # Dev-only static-token bypass (off unless IBVAP_DEV_BYPASS is set)
 _DEV_BYPASS = os.getenv("IBVAP_DEV_BYPASS", "").strip()
 _IS_DEV = os.getenv("IBVAP_ENV", "development").lower() != "production"
 if _DEV_BYPASS and _IS_DEV:
-    logger.warning("IBVAP_DEV_BYPASS is set — a static bearer token grants admin. "
-                   "Never use this outside local development.")
+    logger.warning(
+        "IBVAP_DEV_BYPASS is set — a static bearer token grants admin. Never use this outside local development."
+    )
 
 VALID_ROLES = ("admin", "supervisor", "operator", "auditor")
 DEFAULT_ROLE = "operator"
@@ -59,7 +64,7 @@ DEFAULT_ROLE = "operator"
 security = HTTPBearer()
 
 _PROFILE_TTL = 60.0
-_profile_cache: dict = {}          # user_id -> (expiry_ts, {"role", "allowed_areas"})
+_profile_cache: dict = {}  # user_id -> (expiry_ts, {"role", "allowed_areas"})
 _service_client = None
 _warned_no_service_key = False
 
@@ -100,13 +105,7 @@ def resolve_profile(user_id: str) -> dict:
     client = _get_service_client()
     if client is not None and user_id and user_id != "unknown":
         try:
-            resp = (
-                client.table("user_profiles")
-                .select("role, allowed_areas")
-                .eq("id", user_id)
-                .limit(1)
-                .execute()
-            )
+            resp = client.table("user_profiles").select("role, allowed_areas").eq("id", user_id).limit(1).execute()
             row = (resp.data or [None])[0]
             if row:
                 role = (row.get("role") or DEFAULT_ROLE).lower()
@@ -137,10 +136,12 @@ def _verify_token(token: str) -> dict:
         if alg == "HS256":
             if not SUPABASE_JWT_SECRET:
                 raise jwt.InvalidTokenError("HS256 token but SUPABASE_JWT_SECRET is unset")
-            return jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=["HS256"], **kwargs)
-        # asymmetric — verify against the project's published JWKS
-        key = _jwks().get_signing_key_from_jwt(token).key
-        return jwt.decode(token, key, algorithms=["ES256", "RS256", "RS384", "RS512", "EdDSA"], **kwargs)
+            payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=["HS256"], **kwargs)
+        else:
+            # asymmetric — verify against the project's published JWKS
+            key = _jwks().get_signing_key_from_jwt(token).key
+            payload = jwt.decode(token, key, algorithms=["ES256", "RS256", "RS384", "RS512", "EdDSA"], **kwargs)
+        return payload
     except jwt.ExpiredSignatureError:
         raise _unauth("Token has expired")
     except Exception as e:
@@ -159,6 +160,7 @@ async def require_auth(credentials: HTTPAuthorizationCredentials = Depends(secur
         )
 
     payload = _verify_token(token)
+    _deny_if_revoked(token)
     user_id = payload.get("sub", "unknown")
     profile = resolve_profile(user_id)
 
@@ -192,6 +194,11 @@ def require_role(*roles: str):
 require_admin = require_role("admin")
 
 
+def _deny_if_revoked(token: str) -> None:
+    if is_token_revoked(token):
+        raise _unauth("Token has been revoked")
+
+
 _media_security = HTTPBearer(auto_error=False)
 
 
@@ -214,11 +221,15 @@ async def require_auth_media(
             headers={"WWW-Authenticate": "Bearer"},
         )
     payload = _verify_token(token)
+    _deny_if_revoked(token)
     uid = payload.get("sub", "unknown")
     profile = resolve_profile(uid)
     return {
-        "token": token, "user_id": uid, "email": payload.get("email", ""),
-        "app_role": profile["role"], "allowed_areas": profile["allowed_areas"],
+        "token": token,
+        "user_id": uid,
+        "email": payload.get("email", ""),
+        "app_role": profile["role"],
+        "allowed_areas": profile["allowed_areas"],
         "role": profile["role"],
     }
 

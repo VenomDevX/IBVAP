@@ -3,11 +3,11 @@ IBVAP — Zone Manager
 Manages virtual restricted zones with polygon-based containment checks.
 """
 
-from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
+from typing import Any
 
-import numpy as np
 import cv2
+import numpy as np
 from loguru import logger
 
 try:
@@ -21,14 +21,15 @@ except ImportError:
 @dataclass
 class Zone:
     """A virtual zone definition."""
+
     zone_id: str
     name: str
     zone_type: str  # "restricted", "buffer", "safe", "entry_exit"
     camera_id: str
-    points: List[Tuple[int, int]]
+    points: list[tuple[int, int]]
     enabled: bool = True
-    color: Tuple[int, int, int] = (255, 0, 0)
-    _polygon: any = field(default=None, repr=False)
+    color: tuple[int, int, int] = (255, 0, 0)
+    _polygon: Any = field(default=None, repr=False)
 
     def __post_init__(self):
         if Polygon is not None and len(self.points) >= 3:
@@ -80,8 +81,8 @@ class ZoneManager:
     """
 
     def __init__(self):
-        self._zones: Dict[str, Zone] = {}  # zone_id -> Zone
-        self._camera_zones: Dict[str, List[str]] = {}  # camera_id -> [zone_ids]
+        self._zones: dict[str, Zone] = {}  # zone_id -> Zone
+        self._camera_zones: dict[str, list[str]] = {}  # camera_id -> [zone_ids]
 
     def load_from_config(self, config: dict):
         """Load zones from YAML config."""
@@ -114,20 +115,18 @@ class ZoneManager:
         if zone_id in self._zones:
             zone = self._zones[zone_id]
             if zone.camera_id in self._camera_zones:
-                self._camera_zones[zone.camera_id] = [
-                    z for z in self._camera_zones[zone.camera_id] if z != zone_id
-                ]
+                self._camera_zones[zone.camera_id] = [z for z in self._camera_zones[zone.camera_id] if z != zone_id]
             del self._zones[zone_id]
 
-    def get_zone(self, zone_id: str) -> Optional[Zone]:
+    def get_zone(self, zone_id: str) -> Zone | None:
         return self._zones.get(zone_id)
 
-    def get_camera_zones(self, camera_id: str) -> List[Zone]:
+    def get_camera_zones(self, camera_id: str) -> list[Zone]:
         """Get all zones for a specific camera."""
         zone_ids = self._camera_zones.get(camera_id, [])
         return [self._zones[zid] for zid in zone_ids if zid in self._zones]
 
-    def check_point(self, camera_id: str, x: int, y: int) -> List[Zone]:
+    def check_point(self, camera_id: str, x: int, y: int) -> list[Zone]:
         """
         Check which zones a point falls inside for a given camera.
         Returns list of zones the point is in.
@@ -138,7 +137,7 @@ class ZoneManager:
                 containing_zones.append(zone)
         return containing_zones
 
-    def check_track_zones(self, camera_id: str, centroid: Tuple[int, int]) -> List[str]:
+    def check_track_zones(self, camera_id: str, centroid: tuple[int, int]) -> list[str]:
         """
         Check which zone IDs a tracked object's centroid falls inside.
         Returns list of zone IDs.
@@ -154,8 +153,9 @@ class ZoneManager:
                 return True
         return False
 
-    def get_nearest_zone_distance(self, camera_id: str, x: int, y: int,
-                                   zone_type: str = "restricted") -> Tuple[Optional[str], float]:
+    def get_nearest_zone_distance(
+        self, camera_id: str, x: int, y: int, zone_type: str = "restricted"
+    ) -> tuple[str | None, float]:
         """Get distance to the nearest zone of a given type."""
         min_dist = float("inf")
         nearest_id = None
@@ -171,8 +171,7 @@ class ZoneManager:
         return nearest_id, min_dist if nearest_id else float("inf")
 
     @staticmethod
-    def draw_zones(frame: np.ndarray, zones: List[Zone],
-                   alpha: float = 0.3) -> np.ndarray:
+    def draw_zones(frame: np.ndarray, zones: list[Zone], alpha: float = 0.3) -> np.ndarray:
         """Draw zone overlays on frame."""
         overlay = frame.copy()
 
@@ -192,15 +191,12 @@ class ZoneManager:
             cx = int(np.mean([p[0] for p in zone.points]))
             cy = int(np.mean([p[1] for p in zone.points]))
             label = f"{zone.name} ({zone.zone_type})"
-            cv2.putText(
-                frame, label, (cx - 50, cy),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2
-            )
+            cv2.putText(frame, label, (cx - 50, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
 
         # Blend overlay
         result = cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0)
         return result
 
-    def get_all_zones(self) -> List[dict]:
+    def get_all_zones(self) -> list[dict]:
         """Get all zones as JSON-serializable list."""
         return [zone.to_dict() for zone in self._zones.values()]
