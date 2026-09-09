@@ -9,7 +9,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from PIL import Image  # noqa: E402
 
+from ml.dataset_build.dedup import dedup, hamming  # noqa: E402
 from ml.dataset_build.index import (  # noqa: E402
+    ImageRecord,
     dhash,
     has_label_file,
     label_path_for,
@@ -199,3 +201,82 @@ def test_walk_images_finds_nested_files(tmp_path):
     _img(tmp_path / "top.jpg")
     found = {os.path.basename(p) for p in walk_images(tmp_path)}
     assert found == {"deep.jpg", "top.jpg"}
+
+
+# ──────────────────────────────────────────────────────────────
+# Stage 2 — dedup
+# ──────────────────────────────────────────────────────────────
+
+
+def _rec(path, md5="m", dh=0, w=100, h=100, source="crops"):
+    return ImageRecord(
+        path=path, source=source, rel=path, width=w, height=h,
+        size=w * h, md5=md5, dhash=dh,
+    )
+
+
+def test_hamming():
+    assert hamming(0b0000, 0b0000) == 0
+    assert hamming(0b0001, 0b0000) == 1
+    assert hamming(0b1011, 0b0010) == 2
+
+
+def test_dedup_removes_exact_duplicates():
+    kept, removed = dedup([_rec("a.jpg", "same"), _rec("b.jpg", "same")])
+    assert len(kept) == 1
+    assert [r[2] for r in removed] == ["exact"]
+
+
+def test_dedup_keeps_highest_resolution_representative():
+    kept, _ = dedup([
+        _rec("small.jpg", "m1", 1, w=50, h=50),
+        _rec("big.jpg", "m2", 1, w=500, h=500),
+    ])
+    assert [r.path for r in kept] == ["big.jpg"]
+
+
+def test_dedup_removes_near_duplicates_within_threshold():
+    kept, removed = dedup([_rec("a.jpg", "m1", 0b1100), _rec("b.jpg", "m2", 0b0000)])
+    assert len(kept) == 1
+    assert removed[0][2] == "near"
+
+
+def test_dedup_keeps_images_beyond_threshold():
+    kept, _ = dedup([_rec("a.jpg", "m1", 0b1111), _rec("b.jpg", "m2", 0b0000)])
+    assert len(kept) == 2
+
+
+def test_dedup_near_boundary_is_inclusive_at_three():
+    # exactly 3 differing bits -> duplicate; 4 -> distinct
+    three = dedup([_rec("a", "m1", 0b111), _rec("b", "m2", 0)])[0]
+    four = dedup([_rec("a", "m1", 0b1111), _rec("b", "m2", 0)])[0]
+    assert len(three) == 1
+    assert len(four) == 2
+
+
+def test_dedup_finds_near_dupes_across_all_four_bands():
+    """Pigeonhole check: a difference in the top band must still be caught."""
+    base = 0
+    for band in range(4):
+        other = 1 << (band * 16)  # single differing bit, one per band
+        kept, _ = dedup([_rec("a", "m1", base), _rec("b", "m2", other)])
+        assert len(kept) == 1, f"missed a near-dupe differing in band {band}"
+
+
+def test_dedup_disabled_when_max_distance_zero():
+    kept, _ = dedup([_rec("a", "m1", 0b1), _rec("b", "m2", 0b0)], max_distance=0)
+    assert len(kept) == 2
+
+
+def test_dedup_is_deterministic_regardless_of_input_order():
+    recs = [_rec(f"{i}.jpg", f"m{i}", i * 7) for i in range(60)]
+    a, _ = dedup(list(recs))
+    b, _ = dedup(list(reversed(recs)))
+    assert {r.path for r in a} == {r.path for r in b}
+
+
+def test_dedup_removed_entries_point_at_a_survivor():
+    recs = [_rec(f"{i}.jpg", "same", 0) for i in range(5)]
+    kept, removed = dedup(recs)
+    survivors = {r.path for r in kept}
+    assert all(keeper in survivors for _, keeper, _ in removed)
