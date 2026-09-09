@@ -158,7 +158,7 @@ class CameraPipeline:
                                 and track.license_plate == "Unknown"
                             ):
                                 plate = extract_plate(crop)
-                                if plate["text"] != "Unknown":
+                                if plate["text"] != "Unknown" and plate["confidence"] > 0:
                                     track.license_plate = plate["text"]
                                     track.plate_confidence = plate["confidence"]
                             if (
@@ -327,30 +327,45 @@ class CameraPipeline:
                 fused_event.evidence_path = alert.snapshot_path
                 fused_event.evidence_hash = alert.snapshot_hash
 
-            # Store to database
+            # Store to database — each write is independent so one failure
+            # (e.g. a duplicate) doesn't drop the rest.
+            db = get_database()
+            session = db.get_session()
             try:
-                db = get_database()
-                session = db.get_session()
                 repo = Repository(session)
-                repo.create_event(fused_event.to_dict())
-                repo.create_alert(alert.to_dict())
+                for label, fn in (
+                    ("event", lambda: repo.create_event(fused_event.to_dict())),
+                    ("alert", lambda: repo.create_alert(alert.to_dict())),
+                ):
+                    try:
+                        fn()
+                    except Exception as e:
+                        session.rollback()
+                        logger.error(f"DB write error ({label}): {e}")
                 if track.object_type == "person" and track.identity_status != "unknown":
-                    repo.create_identity_result(
-                        track_id=track.track_id,
-                        camera_id=camera_id,
-                        identity_label=track.identity_label,
-                        similarity_score=track.identity_score,
-                    )
+                    try:
+                        repo.create_identity_result(
+                            track_id=track.track_id,
+                            camera_id=camera_id,
+                            identity_label=track.identity_label,
+                            similarity_score=track.identity_score,
+                        )
+                    except Exception as e:
+                        session.rollback()
+                        logger.error(f"DB write error (identity): {e}")
                 if track.license_plate != "Unknown":
-                    repo.create_anpr_result(
-                        track_id=track.track_id,
-                        camera_id=camera_id,
-                        plate_text=track.license_plate,
-                        ocr_confidence=track.plate_confidence,
-                    )
+                    try:
+                        repo.create_anpr_result(
+                            track_id=track.track_id,
+                            camera_id=camera_id,
+                            plate_text=track.license_plate,
+                            ocr_confidence=track.plate_confidence,
+                        )
+                    except Exception as e:
+                        session.rollback()
+                        logger.error(f"DB write error (anpr): {e}")
+            finally:
                 session.close()
-            except Exception as e:
-                logger.error(f"Database write error: {e}")
 
         self._stats["events_generated"] += 1
 
