@@ -8,12 +8,14 @@ detection:
   # Custom coarse detector weights (backend/ml/taxonomy.py, 13 classes).
   # When set and the file exists, the pipeline loads it and emits ALL its classes
   # (detect_all=True) and target_classes below is ignored. Leave "" for the stock model.
-  weights_path: ""
+  # 3-epoch smoke-test model (person/car/plate/bike solid; aerial classes pending
+  # the full Colab run -> notebooks/train_colab.ipynb). Swap in ibvap_coarse_best.pt.
+  weights_path: "models/ibvap_coarse.pt"
   # target_classes only applies to the STOCK model (COCO ids):
   # 0=person, 2=car, 3=motorcycle, 5=bus, 7=truck
   target_classes: [0, 2, 3, 5, 7]
   # Stock model variant if weights_path is empty: yolov8n / yolov8s / yolo11s
-  model_variant: "yolov8n"
+  model_variant: "yolo11s"
   # Input size (train and infer at the same size; coarse model trained at 640)
   imgsz: 640
 
