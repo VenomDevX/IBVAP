@@ -118,22 +118,33 @@ Fix: guarded `del response.headers["server"]`. Underscores the H14 point — pin
 
 ## MEDIUM  (hardening — lower blast radius)
 
-- Rate limiter is one **global** bucket behind nginx (`get_remote_address` always sees the nginx IP); no per-route limits.
-- `InputValidationMiddleware` — bypassable denylist (checks the still-encoded query string only, never request bodies), over-broad (`on\w+=` 400s `?online=true`), and `validate_image_file` / `sanitize_camera_id` are defined but never called.
-- WebSocket: token in query string, payload discarded (no per-connection identity / scoping), no re-validation.
-- Missing DB indexes on `events.camera_id`, `alerts.camera_id`, `alerts.reviewed`, `tracks.camera_id`, `audit_logs.username`; Postgres migration declares no indexes at all.
+- Rate limiter is one **global** bucket behind nginx (`get_remote_address` always sees the nginx IP); no per-route limits. **[FIXED 2026-09-09]** keyed on the real client (`src/api/net.py`, honours `TRUSTED_PROXY`); 600/min + 20/s burst; tighter per-route caps on `/stream` (20/min), `/heatmap` (30/min), `/snapshot` (60–120/min), `/auth/logout` (10/min).
+- `InputValidationMiddleware` — bypassable denylist. **[FIXED 2026-09-09]** matches the raw **and** URL-decoded query, path, **and** JSON/form bodies (capped, skips uploads); injection regex narrowed (no longer 400s `?online=true`); `sanitize_camera_id` wired into every `/{camera_id}` route; `validate_image_file` documented for upload handlers.
+- WebSocket. **[FIXED 2026-09-09]** JWT via `Sec-WebSocket-Protocol: bearer,<jwt>` handshake (`?token=` legacy fallback); per-connection identity stored; inbound frames size-capped and ignored; socket dropped on token `exp`; revoked tokens rejected.
+- Missing DB indexes. **[MOSTLY FIXED]** `models.py` indexes `events.camera_id/timestamp/event_type/risk_level`, `alerts.camera_id/timestamp/risk_level/reviewed`, `audit_logs.username/timestamp`, `tracks.track_id`. Still open: `tracks.camera_id`. (Postgres migrations are vestigial — ADR-001.)
 - nginx `add_header` inside the static-asset block voided the 5 server-level security headers. **[FIXED]** headers repeated in each `location` with `always`.
 - nginx served `/snapshots/*.jpg` via the image-caching **regex** block (`Cache-Control: public, 6M`), overriding the backend's `no-store`. **[FIXED]** `location ^~ /snapshots/` now wins.
-- `get_heatmap` runs a pure-Python loop over up to 50k points + a 41x41 GaussianBlur **on the event loop**, polled every 5s per visible camera.
+- `get_heatmap` ran heavy compute on the event loop. **[FIXED 2026-09-09]** `window` clamped 10–3600 s; `generate_heatmap` + PNG encode moved to a threadpool.
 - Docker: no `.dockerignore` -> `COPY . .` bakes `venv/`, `ibvap.db`, `*.pt`, and `.env` if present into an image layer; no `HEALTHCHECK`; app code `chown`ed writable by the runtime user; SQLite DB not on a volume -> lost on restart.
 - `docker-compose.yml` has hardcoded `postgres:postgres` DSN, no resource limits, no `no-new-privileges` / `cap_drop`, frontend nginx runs as root.
-- Session-timeout hook is per-tab and in-memory; a reload resets the 30-min clock; the already-issued access JWT stays valid ~1h after "logout" (no denylist).
-- `notifiers.py` logs operator email + phone at INFO on every critical alert; SMTP uses opportunistic `starttls()` with no cert verification.
-- CORS `allow_credentials=True` on a pure bearer API; default list has invalid `http://localhost:80`.
-- Client-side-only role gating: `Settings.tsx` hardcodes `role='operator'`; `App.tsx` `ProtectedRoute` checks only `isAuthenticated` — no admin route guard.
-- Dead `localStorage.getItem('ibvap_token')` reads in `HeatmapOverlay.tsx`; `Alerts.tsx` sends client-set `reviewed_by`.
+- Session-timeout hook is per-tab/in-memory (reload resets the 30-min clock). **[FIXED 2026-09-09]** for the denylist part: `POST /api/auth/logout` revokes the token server-side (`revoked_tokens` table + in-process set); `require_auth` / `require_auth_media` / the WS handshake all check it. The frontend calls it on logout.
+- `notifiers.py` logging + SMTP. **[FIXED 2026-09-09]** contacts redacted in logs; bounded 2-worker pool; 10 s SMTP timeout. (starttls cert verification still opportunistic.)
+- CORS. **[FIXED]** `allow_credentials=False`; default origin list is `:3000` / `:3001` (localhost + 127.0.0.1), no `:80`.
+- Client-side role gating. **[PARTIAL 2026-09-09]** Settings + Zones read the real role (`/api/auth/me`); admin actions (zone delete) are hidden for non-admins. Still no per-*route* client guard — the backend `require_role` is the real enforcement.
+- Dead `localStorage` reads + client-set `reviewed_by`. **[FIXED 2026-09-09]** removed in the Next.js rebuild; the backend drops any client `reviewed_by`.
 
 ---
+
+## 2026-09-09 hardening — round 2
+
+Landed on `feat/coarse-detector-security-hardening`. See the MEDIUM list above
+(now annotated) plus: production startup now **fails fast** if `SUPABASE_JWT_SECRET`,
+`SUPABASE_SERVICE_KEY`, or a real `EVIDENCE_HMAC_KEY` is missing (`_assert_production_config`);
+server-side token revocation; per-route rate limits; body-level injection scanning;
+`admin123` scrubbed from `DEPLOYMENT.md` / scripts / `.env.example`; a `security` CI job
+(bandit enforced; semgrep / pip-audit / npm-audit advisory); `ruff format` + widened lint.
+**Still on you:** H21 git-history purge (`docs/SECRET_ROTATION.md`), H12 TLS cert,
+H13 move the session out of `localStorage` (BFF/cookie).
 
 ## What is already done right (do not "fix" these away)
 

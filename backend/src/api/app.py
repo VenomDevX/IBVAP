@@ -6,31 +6,32 @@ Frontend is served separately (Next.js static export behind nginx).
 
 import asyncio
 import os
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect
+import jwt
+from fastapi import Depends, FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from loguru import logger
-from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from src.api.auth import require_auth
 from src.api.middleware.input_validator import InputValidationMiddleware
 from src.api.middleware.security import RequestLoggingMiddleware, SecurityHeadersMiddleware
-from src.api.net import client_ip
+from src.api.ratelimit import limiter
 from src.api.routes import alerts, audit, cameras, events, reports, snapshots, statistics, stream, tracks, zones
+from src.api.token_revocation import revoke_token
 from src.api.websocket import authenticate_ws, ws_manager
 from src.pipeline.pipeline import IBVAPPipeline
 
 # Global pipeline reference
 pipeline: IBVAPPipeline = None
 
-# Rate limiter — keyed on the real client (see net.client_ip), not the nginx peer.
-# Sustained cap + a short burst cap so one client can't machine-gun the API.
-limiter = Limiter(key_func=client_ip, default_limits=["600/minute", "20/second"])
+_PLACEHOLDER_KEYS = {"", "change-me", "changeme", "test-hmac-key", "dev", "secret", "placeholder"}
 
 
 @asynccontextmanager
@@ -62,17 +63,33 @@ async def lifespan(app: FastAPI):
         pipeline.stop_all()
 
 
+def _assert_production_config() -> None:
+    """Fail fast rather than run degraded in production."""
+    if os.getenv("SUPABASE_JWT_SECRET", "") == "":
+        raise RuntimeError(
+            "IBVAP_ENV=production but SUPABASE_JWT_SECRET is not set — every request "
+            "would fail auth or fall back to a blocking network check."
+        )
+    if os.getenv("SUPABASE_SERVICE_KEY", "") == "":
+        raise RuntimeError(
+            "IBVAP_ENV=production but SUPABASE_SERVICE_KEY is not set — application "
+            "roles can't be resolved and every user silently becomes 'operator'."
+        )
+    if os.getenv("EVIDENCE_HMAC_KEY", "").strip().lower() in _PLACEHOLDER_KEYS:
+        raise RuntimeError(
+            "IBVAP_ENV=production but EVIDENCE_HMAC_KEY is unset or a known placeholder — "
+            "the evidence hash chain would be forgeable and unverifiable across restarts."
+        )
+
+
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
 
     # Production mode disables interactive docs
     is_production = os.getenv("IBVAP_ENV", "development").lower() == "production"
 
-    if is_production and not os.getenv("SUPABASE_JWT_SECRET"):
-        raise RuntimeError(
-            "IBVAP_ENV=production but SUPABASE_JWT_SECRET is not set — refusing to start "
-            "(every request would fail auth or fall back to a blocking network check)."
-        )
+    if is_production:
+        _assert_production_config()
 
     app = FastAPI(
         title="IBVAP — Intelligent Border Video Analytics Platform",
@@ -89,10 +106,7 @@ def create_app() -> FastAPI:
     # Order matters: first added = outermost layer (runs first on request)
 
     # 1. Trusted hosts — prevent host header injection attacks
-    trusted_hosts = os.getenv(
-        "TRUSTED_HOSTS",
-        "localhost,127.0.0.1,0.0.0.0"
-    ).split(",")
+    trusted_hosts = os.getenv("TRUSTED_HOSTS", "localhost,127.0.0.1,0.0.0.0").split(",")
     app.add_middleware(
         TrustedHostMiddleware,
         allowed_hosts=[h.strip() for h in trusted_hosts],
@@ -176,7 +190,7 @@ def create_app() -> FastAPI:
     async def health_check():
         return {"status": "ok", "service": "ibvap-backend"}
 
-    # ======================== Current User ========================
+    # ======================== Auth ========================
     @app.get("/api/auth/me", tags=["Auth"])
     async def whoami(user: dict = Depends(require_auth)):
         """The caller's resolved application identity (role drives the UI's feature gating)."""
@@ -187,6 +201,18 @@ def create_app() -> FastAPI:
             "role": user["app_role"],
             "allowed_areas": user["allowed_areas"],
         }
+
+    @app.post("/api/auth/logout", tags=["Auth"])
+    @limiter.limit("10/minute")
+    async def logout(request: Request, user: dict = Depends(require_auth)):
+        """Revoke the caller's access token server-side (real logout)."""
+        token = user["token"]
+        try:
+            exp = jwt.decode(token, options={"verify_signature": False}).get("exp")
+        except Exception:
+            exp = time.time() + 3600
+        revoke_token(token, exp)
+        return {"status": "logged_out"}
 
     if is_production:
         logger.info("Running in PRODUCTION mode — API docs disabled")

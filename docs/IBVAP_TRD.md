@@ -454,13 +454,21 @@ The platform shall:
   `20/s` burst cap, keyed on the real client IP — `X-Forwarded-For` first hop only when
   `TRUSTED_PROXY=1`), security headers (XSS / clickjacking / MIME-sniffing), request
   logging with client IP, input validation (path traversal + injection patterns matched
-  against the raw **and** URL-decoded query/path, upload-size cap).
+  against the raw **and** URL-decoded query, path, **and** JSON/form request bodies;
+  upload-size cap). Tighter per-route limits on `/stream`, `/heatmap`, `/snapshot`,
+  `/auth/logout`.
 - No fixed default credentials — seed passwords come from `IBVAP_ADMIN_PASSWORD` /
   `IBVAP_OPERATOR_PASSWORD`, else a random password is generated and logged once.
 - Evidence integrity: SHA-256 of every snapshot **plus** an append-only HMAC hash chain over the `events` and `alerts` rows (`src/alerts/evidence.py`) — each row commits to the previous row's hash, so altering or reordering any row breaks every later link. `scripts/verify_evidence_chain.py` walks the chain and re-hashes each snapshot file. **Tamper-EVIDENT, not tamper-PROOF**: an attacker who also holds `EVIDENCE_HMAC_KEY` can rewrite the whole chain — for production the key belongs in a KMS and the chain head should be periodically anchored to external WORM storage.
 - Audit log (`/api/audit`, admin-only): action, username, IP, timestamp.
-- Client-side session timeout after 30 min inactivity (`useSessionTimeout`).
+- **Server-side logout**: `POST /api/auth/logout` records a SHA-256 of the token in
+  `revoked_tokens` (SQLite, swept on expiry) + an in-process set; `require_auth`,
+  `require_auth_media` and the WS handshake reject revoked tokens. The frontend calls
+  it before `supabase.auth.signOut()`. Client-side idle timeout after 30 min still applies.
 - API docs (`/docs`, `/openapi.json`) disabled in `production` mode.
+- Production **fails to start** (`_assert_production_config`) unless `SUPABASE_JWT_SECRET`,
+  `SUPABASE_SERVICE_KEY`, and a non-placeholder `EVIDENCE_HMAC_KEY` are all set — no
+  silent RBAC downgrade or forgeable evidence chain.
 - Secrets read from environment only; DB URL passwords masked in logs.
 
 ## NFR-06 Privacy
@@ -1185,6 +1193,7 @@ Stream       GET       /api/stream/...         (MJPEG / annotated frame access)
 Reports      GET       /api/reports/daily      (24 h aggregation for CSV/PDF export)
 Audit        GET       /api/audit              (admin — user action log with IP + timestamp)
 Health       GET       /api/health             (unauthenticated)
+POST         /api/auth/logout        revoke the caller's access token (server-side logout)
 WebSocket    WS        /ws/alerts  (real-time alert push; JWT via Sec-WebSocket-Protocol: bearer,<jwt>)
 Static       GET       /snapshots/<file>       (evidence images)
 ```

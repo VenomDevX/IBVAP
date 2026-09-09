@@ -10,10 +10,11 @@ must not be world-readable or cacheable by intermediaries.
 import os
 import re
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 
 from src.api.auth import require_auth_media
+from src.api.ratelimit import limiter
 
 router = APIRouter()
 
@@ -25,7 +26,8 @@ def _snapshots_dir() -> str:
 
 
 @router.get("/{name}")
-async def get_snapshot(name: str, _user: dict = Depends(require_auth_media)):
+@limiter.limit("120/minute")
+async def get_snapshot(name: str, request: Request, _user: dict = Depends(require_auth_media)):
     """Serve one evidence image by filename (no traversal, no listing)."""
     if not _NAME_RE.match(name):
         raise HTTPException(status_code=400, detail="Invalid snapshot name")

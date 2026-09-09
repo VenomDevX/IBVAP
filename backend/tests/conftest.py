@@ -1,4 +1,5 @@
 """Shared test fixtures. Run: pip install -r requirements-dev.txt && pytest"""
+
 import os
 import sys
 import tempfile
@@ -14,12 +15,19 @@ os.environ.setdefault("TRUSTED_HOSTS", "*")
 os.environ.pop("SUPABASE_JWT_SECRET", None)
 os.environ.pop("SUPABASE_SERVICE_KEY", None)
 
+# Rate limiting is not the unit under test here and its in-memory store
+# leaks across the session (many requests from one 'testclient' IP).
+from src.api.ratelimit import limiter  # noqa: E402
+
+limiter.enabled = False
+
 
 @pytest.fixture()
 def tmp_db(monkeypatch):
     path = tempfile.mktemp(suffix=".db")
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{path}")
     import src.database.db as dbmod
+
     monkeypatch.setattr(dbmod, "_db_instance", None)
     db = dbmod.get_database()
     yield db
@@ -29,6 +37,7 @@ def tmp_db(monkeypatch):
 @pytest.fixture()
 def repo(tmp_db):
     from src.database.repository import Repository
+
     s = tmp_db.get_session()
     yield Repository(s)
     s.close()
@@ -48,6 +57,7 @@ def client(monkeypatch, tmp_db):
     monkeypatch.setattr(appmod, "lifespan", _noop)
 
     from fastapi.testclient import TestClient
+
     app = appmod.create_app()
     app.router.lifespan_context = _noop
     with TestClient(app, base_url="http://localhost", raise_server_exceptions=False) as c:
@@ -57,9 +67,9 @@ def client(monkeypatch, tmp_db):
 def make_token(role="operator", monkeypatch=None):
     """A fake auth: monkeypatch _verify_token + resolve_profile to return this identity."""
     import src.api.auth as auth
+
     payload = {"sub": f"user-{role}", "email": f"{role}@ibvap.local"}
     if monkeypatch:
         monkeypatch.setattr(auth, "_verify_token", lambda t: payload)
-        monkeypatch.setattr(auth, "resolve_profile",
-                            lambda uid: {"role": role, "allowed_areas": []})
+        monkeypatch.setattr(auth, "resolve_profile", lambda uid: {"role": role, "allowed_areas": []})
     return "Bearer faketoken"

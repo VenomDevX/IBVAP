@@ -17,20 +17,21 @@ cp backend/.env.example backend/.env
 #                            real user tokens are ES256 and verified via the project JWKS)
 #   SUPABASE_JWT_ISSUER    = leave BLANK unless it exactly matches a real token's `iss`
 #   EVIDENCE_HMAC_KEY      = a long random string
-#   IBVAP_PORT             = 8002   (frontend/vite.config.ts proxies /api here)
+#   SUPABASE_SERVICE_KEY  = service_role key (required; RBAC downgrades to 'operator' without it)
+#   IBVAP_PORT            = 8002   (frontend NEXT_PUBLIC_API_BASE points here in dev)
 
 # 3. Create login accounts (self-signup is disabled by design)
 cd backend
-python scripts/seed_users.py --defaults
-#   -> admin / admin123   and   operator / operator123
-#      (passwords come from IBVAP_ADMIN_PASSWORD / IBVAP_OPERATOR_PASSWORD)
+IBVAP_ADMIN_PASSWORD='<strong pw>' IBVAP_OPERATOR_PASSWORD='<strong pw>' \n  python scripts/seed_users.py --defaults
+#   creates admin@ibvap.local / operator@ibvap.local. If the *_PASSWORD env
+#   vars are unset the script generates a strong password and prints it once.
 
 # 4. Run
 python main.py --port 8002                     # backend
 cd ../frontend && npm run dev                   # http://localhost:3001
 
 # Diagnose any auth problem end to end:
-python backend/scripts/check_auth.py --email admin@ibvap.local --password admin123 --backend http://127.0.0.1:8002
+IBVAP_ADMIN_PASSWORD='<pw>' python backend/scripts/check_auth.py --backend http://127.0.0.1:8002
 ```
 
 **"Email logins are disabled"** = GoTrue's email provider is off. `[auth.email] enable_signup`
