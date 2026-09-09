@@ -9,6 +9,8 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 os.environ.setdefault("IBVAP_ENV", "development")
 os.environ.setdefault("EVIDENCE_HMAC_KEY", "test-hmac-key")
+# TestClient's WebSocket host handling trips TrustedHostMiddleware otherwise.
+os.environ.setdefault("TRUSTED_HOSTS", "*")
 os.environ.pop("SUPABASE_JWT_SECRET", None)
 os.environ.pop("SUPABASE_SERVICE_KEY", None)
 
@@ -36,6 +38,7 @@ def repo(tmp_db):
 def client(monkeypatch, tmp_db):
     """TestClient with a no-op lifespan and a monkeypatched token verifier."""
     import contextlib
+
     import src.api.app as appmod
 
     @contextlib.asynccontextmanager

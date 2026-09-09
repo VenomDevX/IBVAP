@@ -1,37 +1,36 @@
 """
 IBVAP — FastAPI Application
 AI Microservice: video analytics pipeline + REST API.
-Frontend is served separately by React/Vite.
+Frontend is served separately (Next.js static export behind nginx).
 """
 
+import asyncio
 import os
-import json
-from pathlib import Path
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Depends
-from fastapi.staticfiles import StaticFiles
+from fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from loguru import logger
 from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
-from loguru import logger
 
-import asyncio
-from src.api.routes import cameras, events, alerts, zones, tracks, statistics, stream, reports, audit, snapshots
-from src.api.auth import _verify_token, require_auth
-from src.api.websocket import ws_manager
-from src.api.middleware.security import SecurityHeadersMiddleware, RequestLoggingMiddleware
+from src.api.auth import require_auth
 from src.api.middleware.input_validator import InputValidationMiddleware
+from src.api.middleware.security import RequestLoggingMiddleware, SecurityHeadersMiddleware
+from src.api.net import client_ip
+from src.api.routes import alerts, audit, cameras, events, reports, snapshots, statistics, stream, tracks, zones
+from src.api.websocket import authenticate_ws, ws_manager
 from src.pipeline.pipeline import IBVAPPipeline
 
 # Global pipeline reference
 pipeline: IBVAPPipeline = None
 
-# Rate limiter
-limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
+# Rate limiter — keyed on the real client (see net.client_ip), not the nginx peer.
+# Sustained cap + a short burst cap so one client can't machine-gun the API.
+limiter = Limiter(key_func=client_ip, default_limits=["600/minute", "20/second"])
 
 
 @asynccontextmanager
@@ -65,7 +64,7 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
-    
+
     # Production mode disables interactive docs
     is_production = os.getenv("IBVAP_ENV", "development").lower() == "production"
 
@@ -74,7 +73,7 @@ def create_app() -> FastAPI:
             "IBVAP_ENV=production but SUPABASE_JWT_SECRET is not set — refusing to start "
             "(every request would fail auth or fall back to a blocking network check)."
         )
-    
+
     app = FastAPI(
         title="IBVAP — Intelligent Border Video Analytics Platform",
         description="AI-Based Video Analytics for Border Surveillance",
@@ -102,7 +101,7 @@ def create_app() -> FastAPI:
     # 2. CORS — restrict to allowed frontend origins
     cors_origins = os.getenv(
         "CORS_ORIGINS",
-        "http://localhost,http://localhost:3000,http://localhost:5173,http://127.0.0.1:3000"
+        "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001",
     ).split(",")
     app.add_middleware(
         CORSMiddleware,
@@ -144,22 +143,32 @@ def create_app() -> FastAPI:
     # ======================== WebSocket ========================
     @app.websocket("/ws/alerts")
     async def websocket_alerts(websocket: WebSocket):
-        # Authenticate via query param: /ws/alerts?token=<jwt>
-        token = websocket.query_params.get("token")
-        if not token:
-            await websocket.close(code=4001, reason="Missing auth token")
-            return
-        try:
-            _verify_token(token)
-        except Exception:
-            await websocket.close(code=4003, reason="Invalid or expired token")
-            return
+        """Live alert stream.
 
-        await ws_manager.connect(websocket)
+        Auth: prefer the `Sec-WebSocket-Protocol: bearer, <jwt>` handshake (the
+        token never lands in a URL / access log); fall back to `?token=<jwt>`
+        for older clients. The connection is dropped once the token's own `exp`
+        passes so a revoked-by-expiry session can't linger on the socket.
+        """
+        identity = await authenticate_ws(websocket)
+        if identity is None:
+            return  # authenticate_ws already closed the socket with a reason
+
+        await ws_manager.connect(websocket, identity)
         try:
             while True:
-                data = await websocket.receive_text()
+                # Inbound frames are not part of the protocol — read to detect
+                # disconnects, cap the size, and otherwise ignore them.
+                msg = await websocket.receive_text()
+                if len(msg) > 4096:
+                    await websocket.close(code=1009, reason="Frame too large")
+                    break
+                if ws_manager.token_expired(websocket):
+                    await websocket.close(code=4003, reason="Token expired")
+                    break
         except WebSocketDisconnect:
+            pass
+        finally:
             await ws_manager.disconnect(websocket)
 
     # ======================== Health Check ========================
@@ -191,5 +200,3 @@ def get_pipeline() -> IBVAPPipeline:
     """Get the global pipeline instance."""
     global pipeline
     return pipeline
-
-

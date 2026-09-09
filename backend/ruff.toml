@@ -1,0 +1,12 @@
+# Backend lint config.
+#
+# The codebase predates linting and carries ~400 style findings (import order,
+# `Optional`/`Dict` usage, long lines). Rather than a mass reformat, this pins
+# the *bug-class* rules — real defects, not style — so CI stays actionable.
+# Widen `select` (add "I", "UP", "E5", "B", "BLE") in a dedicated cleanup PR.
+line-length = 120
+target-version = "py311"
+
+[lint]
+select = ["E4", "E7", "E9", "F"]
+ignore = ["E402", "E741", "E701", "E702"]
