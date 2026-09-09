@@ -27,7 +27,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
         <ul className="nav-links">
           <li>
             <NavLink to="/" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} end>
-              <i className="fas fa-border-all" /><span>Dashboard</span>
+              <i className="fas fa-gauge-high" /><span>Dashboard</span>
             </NavLink>
           </li>
           <li>
