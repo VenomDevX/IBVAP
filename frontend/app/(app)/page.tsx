@@ -39,6 +39,7 @@ const EMPTY: DashboardData = {
 function useDashboardData() {
   const [data, setData] = useState<DashboardData>(EMPTY);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -59,16 +60,19 @@ function useDashboardData() {
         timeseries: await ts.json(),
         byType: statData.alert_stats?.by_type ?? {},
       });
-      setLoading(false);
+      setError(false);
     } catch (err) {
       console.error('Dashboard data error:', err);
+      setError(true);
+    } finally {
+      setLoading(false);
     }
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
   useInterval(refresh, 5000);
 
-  return { data, loading };
+  return { data, loading, error, refresh };
 }
 
 function ReportButtons() {
@@ -232,9 +236,17 @@ function CameraStatus({ cameras }: { cameras: Camera[] }) {
 }
 
 export default function DashboardPage() {
-  const { data, loading } = useDashboardData();
+  const { data, loading, error, refresh } = useDashboardData();
 
-  if (loading || !data.summary) return <Loading label="Loading dashboard…" />;
+  if (loading) return <Loading label="Loading dashboard…" />;
+
+  if (!data.summary) {
+    return (
+      <EmptyState icon="triangle-exclamation" message={error ? "Can't reach the backend. Retrying every 5s…" : 'No data yet'}>
+        <Button size="sm" icon="rotate-right" onClick={refresh}>Retry now</Button>
+      </EmptyState>
+    );
+  }
 
   const s = data.summary;
   const cards: ReactNode = (

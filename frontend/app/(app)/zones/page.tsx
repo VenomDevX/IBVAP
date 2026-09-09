@@ -23,8 +23,9 @@ export default function ZonesPage() {
   const load = useCallback(() => {
     apiFetch('/api/zones')
       .then(r => r.json())
-      .then(z => { setZones(z); setLoading(false); })
-      .catch(err => console.error('Failed to load zones:', err));
+      .then(z => setZones(z))
+      .catch(err => console.error('Failed to load zones:', err))
+      .finally(() => setLoading(false));
   }, []);
 
   useEffect(() => { load(); }, [load]);
