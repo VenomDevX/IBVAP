@@ -7,9 +7,17 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from pathlib import Path  # noqa: E402
+
+import pytest  # noqa: E402
 from PIL import Image  # noqa: E402
 
 from ml.dataset_build.dedup import dedup, hamming  # noqa: E402
+from ml.dataset_build.emit import (  # noqa: E402
+    emit_detector,
+    verify,
+    write_dataset_yaml,
+)
 from ml.dataset_build.index import (  # noqa: E402
     ImageRecord,
     dhash,
@@ -25,6 +33,14 @@ from ml.dataset_build.rebalance import (  # noqa: E402
     RARE_CLASS_IDS,
     select_detector_images,
 )
+from ml.dataset_build.restructure import (  # noqa: E402
+    AGGREGATE_MAP,
+    build_class_plan,
+    canonical_class_name,
+    coarse_parent,
+    leaf_of,
+)
+from ml.dataset_build.split import assert_no_leak, split_records  # noqa: E402
 from ml.grouping import family, group_key, stable_bucket  # noqa: E402
 
 
@@ -367,3 +383,259 @@ def test_stats_reports_per_class_box_counts():
     labels = {"a.jpg": [0, 0, 7], "b.jpg": [2]}
     _, stats = select_detector_images(recs, labels, target=10, background_frac=0.0)
     assert stats["boxes_per_class"] == {0: 2, 2: 1, 7: 1}
+
+
+# ──────────────────────────────────────────────────────────────
+# Stage 4 — classifier restructure
+# ──────────────────────────────────────────────────────────────
+
+
+def _c(rel, i, w=100):
+    p = f"{rel}/{i}.jpg"
+    return ImageRecord(path=p, source="crops", rel=p, width=w, height=w,
+                       size=w * w, md5=p, dhash=i)
+
+
+def test_aggregate_map_drops_only_the_ambiguous_one():
+    assert AGGREGATE_MAP["Military_Aircraft"] == "aircraft"
+    assert AGGREGATE_MAP["Animal"] == "animal"
+    assert AGGREGATE_MAP["Two_Wheeler"] is None
+
+
+def test_leaf_of_reads_the_parent_folder():
+    assert leaf_of("Military/F16/x.jpg") == "F16"
+    assert leaf_of("Military_Aircraft/x.jpg") == "Military_Aircraft"
+    assert leaf_of("x.jpg") is None
+
+
+def test_canonical_name_folds_disk_and_taxonomy_spelling():
+    # folder is Night_Vision_Object, taxonomy says "Night Vision Object"
+    assert canonical_class_name("Night_Vision_Object") == "Night_Vision_Object"
+    assert canonical_class_name("Night Vision Object") == "Night_Vision_Object"
+    assert canonical_class_name("F16") == "F16"
+    assert canonical_class_name("NotARealClass") is None
+
+
+def test_coarse_parent_mapping():
+    assert coarse_parent("F16") == "aircraft"
+    assert coarse_parent("AH64") == "helicopter"
+    assert coarse_parent("MQ9") == "drone_uav"
+    assert coarse_parent("Tank") == "military_ground_vehicle"
+    assert coarse_parent("Dog") == "animal"
+
+
+def test_class_above_threshold_survives():
+    recs = [_c("Military/F16", i) for i in range(250)]
+    plan = build_class_plan(recs, threshold=200)
+    assert "F16" in plan.classes
+    assert plan.counts["F16"] == 250
+
+
+def test_starved_siblings_pool_into_a_viable_coarse_bucket():
+    """The real case: AH64 125, Mi24 120, Ka52 92 each fail the floor alone,
+    but together they make a `helicopter` bucket worth training."""
+    recs = [_c("Military/AH64", i) for i in range(125)]
+    recs += [_c("Military/Mi24", i) for i in range(120)]
+    recs += [_c("Military/Ka52", i) for i in range(92)]
+    plan = build_class_plan(recs, threshold=200)
+
+    assert plan.classes == ["helicopter"]
+    for fine in ("AH64", "Mi24", "Ka52"):
+        assert fine not in plan.classes
+        assert plan.folded[fine] == "helicopter"
+    assert plan.assignments["Military/AH64/0.jpg"] == "helicopter"
+    assert plan.counts["helicopter"] == 337
+
+
+def test_a_lone_starved_class_is_dropped_when_its_bucket_stays_short():
+    """Folding is not a free pass: if the bucket is still under the floor it goes.
+    Here Mi24 survives on its own, so it never joins helicopter to rescue AH64."""
+    recs = [_c("Military/AH64", i) for i in range(50)]
+    recs += [_c("Military/Mi24", i) for i in range(200)]
+    plan = build_class_plan(recs, threshold=200)
+
+    assert plan.classes == ["Mi24"]
+    assert plan.folded["AH64"] == "helicopter"
+    assert plan.dropped["helicopter"] == 50
+    assert "Military/AH64/0.jpg" not in plan.assignments
+
+
+def test_two_wheeler_images_are_dropped_entirely():
+    recs = [_c("Two_Wheeler", i) for i in range(500)]
+    recs += [_c("Vehicles/Bicycle", i) for i in range(300)]
+    plan = build_class_plan(recs, threshold=200)
+    assert "Two_Wheeler" not in plan.classes
+    assert plan.dropped["Two_Wheeler"] == 500
+    assert not any(k.startswith("Two_Wheeler/") for k in plan.assignments)
+    assert "Bicycle" in plan.classes, "the unambiguous sibling must be unaffected"
+
+
+def test_military_aircraft_aggregate_becomes_the_aircraft_bucket():
+    recs = [_c("Military_Aircraft", i) for i in range(300)]
+    plan = build_class_plan(recs, threshold=200)
+    assert plan.assignments["Military_Aircraft/0.jpg"] == "aircraft"
+    assert "aircraft" in plan.classes
+
+
+def test_generic_jet_merges_into_aircraft_not_its_own_class():
+    """Generic_Jet means 'a jet we could not identify' - that IS the bucket."""
+    recs = [_c("Military/Generic_Jet", i) for i in range(400)]
+    plan = build_class_plan(recs, threshold=200)
+    assert "Generic_Jet" not in plan.classes
+    assert plan.assignments["Military/Generic_Jet/0.jpg"] == "aircraft"
+
+
+def test_unknown_folder_is_dropped_and_recorded():
+    recs = [_c("Weird/Nonsense", i) for i in range(300)]
+    plan = build_class_plan(recs, threshold=200)
+    assert plan.classes == []
+    assert plan.dropped["<unknown:Nonsense>"] == 300
+
+
+def test_cap_limits_class_size_preferring_large_images():
+    recs = [_c("People/Person", i, w=10 + i) for i in range(300)]
+    plan = build_class_plan(recs, threshold=10, cap=100)
+    assigned = [k for k, v in plan.assignments.items() if v == "Person"]
+    assert len(assigned) == 100
+    assert "People/Person/299.jpg" in assigned      # largest kept
+    assert "People/Person/0.jpg" not in assigned    # smallest dropped
+    assert plan.counts["Person"] == 100
+
+
+def test_starved_class_with_no_parent_capacity_is_dropped():
+    # 5 AH64 only: folds to helicopter, which is still under threshold -> dropped
+    recs = [_c("Military/AH64", i) for i in range(5)]
+    plan = build_class_plan(recs, threshold=200)
+    assert plan.classes == []
+    assert plan.dropped["helicopter"] == 5
+
+
+def test_plan_is_deterministic_regardless_of_order():
+    recs = [_c("Military/F16", i) for i in range(400)]
+    a = build_class_plan(list(recs), threshold=200, cap=250)
+    b = build_class_plan(list(reversed(recs)), threshold=200, cap=250)
+    assert a.assignments == b.assignments
+    assert a.classes == b.classes
+
+
+# ──────────────────────────────────────────────────────────────
+# Stage 5 — group-aware split
+# ──────────────────────────────────────────────────────────────
+
+
+def _s(name):
+    return ImageRecord(path=f"/d/{name}", source="detector", rel=name, width=64,
+                       height=64, size=100, md5=name, dhash=0)
+
+
+def test_split_is_roughly_val_fraction():
+    recs = [_s(f"img_{i}.jpg") for i in range(1000)]
+    train, val = split_records(recs, val_fraction=0.1)
+    assert 50 < len(val) < 200
+    assert len(train) + len(val) == 1000
+
+
+def test_split_keeps_clip_frames_together():
+    recs = [_s(f"mot_02_{i:06d}.jpg") for i in range(50)]
+    recs += [_s(f"mot_09_{i:06d}.jpg") for i in range(50)]
+    train, val = split_records(recs, val_fraction=0.5)
+    assert_no_leak(train, val)
+
+
+def test_split_keeps_roboflow_twins_together():
+    recs = [_s(f"frame_1_jpg.rf.{i:012x}.jpg") for i in range(20)]
+    recs += [_s(f"other_9_jpg.rf.{i:012x}.jpg") for i in range(20)]
+    train, val = split_records(recs, val_fraction=0.5)
+    assert_no_leak(train, val)
+
+
+def test_assert_no_leak_detects_a_leak():
+    a = [_s("mot_02_000001.jpg")]
+    b = [_s("mot_02_000002.jpg")]  # same clip -> same group
+    with pytest.raises(AssertionError):
+        assert_no_leak(a, b)
+
+
+def test_every_family_is_represented_in_val():
+    # one family whose single group might otherwise hash into train
+    recs = [_s("solo_000001.jpg")]
+    train, val = split_records(recs, val_fraction=0.1)
+    assert len(val) == 1 and len(train) == 0
+
+
+def test_split_is_deterministic():
+    recs = [_s(f"img_{i}.jpg") for i in range(500)]
+    _, v1 = split_records(recs, seed=42)
+    _, v2 = split_records(list(reversed(recs)), seed=42)
+    assert {r.path for r in v1} == {r.path for r in v2}
+
+
+# ──────────────────────────────────────────────────────────────
+# Stage 6 — emit + verify
+# ──────────────────────────────────────────────────────────────
+
+
+def _make_det(tmp_path, name, classes):
+    img = tmp_path / "src" / "images" / "train" / name
+    img.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (32, 32)).save(img)
+    lbl = tmp_path / "src" / "labels" / "train" / Path(name).with_suffix(".txt").name
+    lbl.parent.mkdir(parents=True, exist_ok=True)
+    lbl.write_text("".join(f"{c} 0.5 0.5 0.1 0.1\n" for c in classes))
+    return ImageRecord(path=str(img), source="detector", rel=f"images/train/{name}",
+                       width=32, height=32, size=100, md5=name, dhash=0)
+
+
+def test_emit_detector_copies_images_and_labels(tmp_path):
+    tr = [_make_det(tmp_path, "a.jpg", [0])]
+    va = [_make_det(tmp_path, "b.jpg", [7])]
+    out = tmp_path / "dataset"
+    stats = emit_detector(tr, va, out)
+    assert (out / "detector" / "images" / "train" / "a.jpg").exists()
+    assert (out / "detector" / "labels" / "train" / "a.txt").exists()
+    assert (out / "detector" / "images" / "val" / "b.jpg").exists()
+    assert stats["train"] == 1 and stats["val"] == 1 and stats["no_label"] == 0
+
+
+def test_emit_is_resumable(tmp_path):
+    tr = [_make_det(tmp_path, "a.jpg", [0])]
+    out = tmp_path / "dataset"
+    emit_detector(tr, [], out)
+    stats = emit_detector(tr, [], out)  # second run skips the existing file
+    assert stats["skipped"] == 1 and stats["copied"] == 0
+
+
+def test_write_dataset_yaml_has_13_classes(tmp_path):
+    text = write_dataset_yaml(tmp_path).read_text(encoding="utf-8")
+    assert "nc: 13" in text
+    assert "6: license_plate" in text
+    assert "7: military_ground_vehicle" in text
+
+
+def test_verify_flags_missing_label(tmp_path):
+    out = tmp_path / "dataset"
+    emit_detector([_make_det(tmp_path, "a.jpg", [0])], [], out)
+    (out / "detector" / "labels" / "train" / "a.txt").unlink()
+    assert any("missing label" in p for p in verify(out))
+
+
+def test_verify_flags_out_of_range_class(tmp_path):
+    out = tmp_path / "dataset"
+    emit_detector([_make_det(tmp_path, "a.jpg", [99])], [], out)
+    assert any("out of range" in p for p in verify(out))
+
+
+def test_verify_flags_same_image_in_both_splits(tmp_path):
+    rec = _make_det(tmp_path, "dup.jpg", [0])
+    out = tmp_path / "dataset"
+    emit_detector([rec], [rec], out)
+    assert any("both train and val" in p for p in verify(out))
+
+
+def test_verify_clean_dataset_returns_no_problems(tmp_path):
+    tr = [_make_det(tmp_path, "a.jpg", [0])]
+    va = [_make_det(tmp_path, "b.jpg", [7])]
+    out = tmp_path / "dataset"
+    emit_detector(tr, va, out)
+    write_dataset_yaml(out)
+    assert verify(out) == []
