@@ -71,6 +71,9 @@ class Repository:
     # ======================== EVENTS ========================
 
     def create_event(self, event_data: dict) -> EventModel:
+        existing = self.get_event(event_data["event_id"])
+        if existing is not None:
+            return existing  # fusion re-emits the same event_id for an ongoing situation
         event = EventModel(
             event_id=event_data["event_id"],
             camera_id=event_data["camera_id"],
