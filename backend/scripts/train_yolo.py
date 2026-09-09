@@ -65,7 +65,7 @@ def train(args):
         imgsz=args.imgsz,
         batch=args.batch,            # -1 = auto-fit VRAM
         patience=args.patience,
-        device=0,
+        device=args.device,
         workers=args.workers,        # 2 is Windows-safe; use 0 on "shared file mapping" errors
         cache=args.cache,
         # --- optimizer: explicit SGD with the well-tuned YOLO fine-tuning schedule
@@ -84,13 +84,13 @@ def train(args):
         degrees=5.0,
         scale=0.5,
         deterministic=False,         # cuDNN STREAM_MISMATCH workaround
-        project="outputs/training",
-        name=RUN_NAME,
+        project=args.project,
+        name=args.name,
         exist_ok=True,
         plots=True,
     )
     print("\nDone.")
-    print(f"  best: outputs/training/{RUN_NAME}/weights/best.pt")
+    print(f"  best: {args.project}/{args.name}/weights/best.pt")
     print(f"\nEvaluate:  python -m ml.eval_detector "
           f"--weights outputs/training/{RUN_NAME}/weights/best.pt")
 
@@ -103,6 +103,9 @@ if __name__ == "__main__":
     p.add_argument("--imgsz", type=int, default=640)
     p.add_argument("--batch", type=int, default=-1, help="-1 = auto-fit VRAM")
     p.add_argument("--patience", type=int, default=40)
+    p.add_argument("--device", default="0", help="0 / 0,1 / cpu")
+    p.add_argument("--project", default="outputs/training", help="output dir (point at Drive on Colab)")
+    p.add_argument("--name", default=RUN_NAME)
     p.add_argument("--workers", type=int, default=2,
                    help="dataloader workers; use 0 on Windows 'shared file mapping' errors")
     p.add_argument("--optimizer", default="SGD", choices=["SGD", "AdamW", "auto"])
