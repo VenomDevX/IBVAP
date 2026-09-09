@@ -4,7 +4,6 @@ Standardized detection output format.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Tuple
 
 import numpy as np
 
@@ -12,11 +11,12 @@ import numpy as np
 @dataclass
 class DetectionResult:
     """A single object detection result."""
-    bbox: Tuple[int, int, int, int]  # (x1, y1, x2, y2)
+
+    bbox: tuple[int, int, int, int]  # (x1, y1, x2, y2)
     class_id: int
     class_name: str
     confidence: float
-    centroid: Tuple[int, int] = field(init=False)
+    centroid: tuple[int, int] = field(init=False)
 
     def __post_init__(self):
         x1, y1, x2, y2 = self.bbox
@@ -47,10 +47,11 @@ class DetectionResult:
 @dataclass
 class FrameDetections:
     """All detections for a single frame."""
+
     frame_id: int
     camera_id: str
     timestamp: float
-    detections: List[DetectionResult] = field(default_factory=list)
+    detections: list[DetectionResult] = field(default_factory=list)
 
     @property
     def person_count(self) -> int:
@@ -61,7 +62,7 @@ class FrameDetections:
         vehicle_classes = {"car", "motorcycle", "bus", "truck"}
         return sum(1 for d in self.detections if d.class_name in vehicle_classes)
 
-    def get_by_class(self, class_name: str) -> List[DetectionResult]:
+    def get_by_class(self, class_name: str) -> list[DetectionResult]:
         return [d for d in self.detections if d.class_name == class_name]
 
     def to_numpy(self) -> np.ndarray:
@@ -70,7 +71,4 @@ class FrameDetections:
         """
         if not self.detections:
             return np.empty((0, 6))
-        return np.array([
-            [*d.bbox, d.confidence, d.class_id]
-            for d in self.detections
-        ], dtype=np.float32)
+        return np.array([[*d.bbox, d.confidence, d.class_id] for d in self.detections], dtype=np.float32)

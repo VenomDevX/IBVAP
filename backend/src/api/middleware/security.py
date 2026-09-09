@@ -11,10 +11,10 @@ import time
 import uuid
 
 import jwt as _jwt
+from loguru import logger
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
-from loguru import logger
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -102,6 +102,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         try:
             from src.database.db import get_database
             from src.database.repository import Repository
+
             session = get_database().get_session()
             try:
                 Repository(session).create_audit_log(
@@ -164,7 +165,6 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         except Exception as e:
             elapsed_ms = (time.time() - start_time) * 1000
             logger.error(
-                f"[{request_id}] {method} {path} → EXCEPTION ({elapsed_ms:.0f}ms) "
-                f"| IP: {client_ip} | Error: {e}"
+                f"[{request_id}] {method} {path} → EXCEPTION ({elapsed_ms:.0f}ms) | IP: {client_ip} | Error: {e}"
             )
             raise

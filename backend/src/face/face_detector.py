@@ -3,7 +3,6 @@ IBVAP — Face Detector
 Face detection using InsightFace/RetinaFace.
 """
 
-from typing import List
 import numpy as np
 from loguru import logger
 
@@ -19,7 +18,8 @@ class FaceDetector:
     def _load_model(self):
         try:
             from insightface.app import FaceAnalysis
-            self._model = FaceAnalysis(name=self._model_name, providers=['CPUExecutionProvider'])
+
+            self._model = FaceAnalysis(name=self._model_name, providers=["CPUExecutionProvider"])
             self._model.prepare(ctx_id=0, det_size=(640, 640))
             logger.success("Face detection model loaded")
         except ImportError:
@@ -27,7 +27,7 @@ class FaceDetector:
         except Exception as e:
             logger.error(f"Face model load error: {e}")
 
-    def detect_faces(self, frame: np.ndarray) -> List[dict]:
+    def detect_faces(self, frame: np.ndarray) -> list[dict]:
         """Detect faces in a frame. Returns list of face dicts."""
         if self._model is None:
             return []
@@ -37,13 +37,19 @@ class FaceDetector:
             results = []
             for face in faces:
                 bbox = face.bbox.astype(int).tolist()
-                results.append({
-                    "bbox": bbox,
-                    "confidence": float(face.det_score),
-                    "embedding": face.normed_embedding.tolist() if face.normed_embedding is not None else None,
-                    "age": int(face.age) if hasattr(face, 'age') else None,
-                    "gender": "M" if hasattr(face, 'gender') and face.gender == 1 else "F" if hasattr(face, 'gender') else None,
-                })
+                results.append(
+                    {
+                        "bbox": bbox,
+                        "confidence": float(face.det_score),
+                        "embedding": face.normed_embedding.tolist() if face.normed_embedding is not None else None,
+                        "age": int(face.age) if hasattr(face, "age") else None,
+                        "gender": "M"
+                        if hasattr(face, "gender") and face.gender == 1
+                        else "F"
+                        if hasattr(face, "gender")
+                        else None,
+                    }
+                )
             return results
         except Exception as e:
             logger.error(f"Face detection error: {e}")

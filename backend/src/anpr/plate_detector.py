@@ -3,7 +3,6 @@ IBVAP — License Plate Detector
 YOLO-based license plate detection.
 """
 
-from typing import List, Optional, Tuple
 import numpy as np
 from loguru import logger
 
@@ -21,8 +20,10 @@ class PlateDetector:
 
     def _load_model(self):
         try:
-            from ultralytics import YOLO
             import os
+
+            from ultralytics import YOLO
+
             if os.path.exists(self._model_path):
                 self._model = YOLO(self._model_path)
                 logger.success("Plate detection model loaded")
@@ -31,8 +32,7 @@ class PlateDetector:
         except Exception as e:
             logger.warning(f"Plate detector init error: {e}")
 
-    def detect_plates(self, frame: np.ndarray,
-                      vehicle_bbox: Optional[Tuple[int, int, int, int]] = None) -> List[dict]:
+    def detect_plates(self, frame: np.ndarray, vehicle_bbox: tuple[int, int, int, int] | None = None) -> list[dict]:
         """
         Detect license plates in a frame or vehicle crop.
 
@@ -69,11 +69,13 @@ class PlateDetector:
                         # Crop plate
                         plate_crop = frame[abs_y1:abs_y2, abs_x1:abs_x2]
 
-                        results.append({
-                            "bbox": (abs_x1, abs_y1, abs_x2, abs_y2),
-                            "confidence": conf,
-                            "crop": plate_crop,
-                        })
+                        results.append(
+                            {
+                                "bbox": (abs_x1, abs_y1, abs_x2, abs_y2),
+                                "confidence": conf,
+                                "crop": plate_crop,
+                            }
+                        )
         except Exception as e:
             logger.error(f"Plate detection error: {e}")
 

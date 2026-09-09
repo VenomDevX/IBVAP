@@ -14,6 +14,7 @@ router = APIRouter()
 async def get_track(track_id: int, user: dict = Depends(require_auth)):
     """Get a specific track's details and trajectory."""
     from src.api.app import get_pipeline
+
     pipeline = get_pipeline()
     if pipeline:
         for cam_id, cam_pipeline in pipeline.camera_pipelines.items():
@@ -28,6 +29,7 @@ async def get_track(track_id: int, user: dict = Depends(require_auth)):
 async def list_active_tracks(user: dict = Depends(require_auth)):
     """Get all active tracks across cameras."""
     from src.api.app import get_pipeline
+
     pipeline = get_pipeline()
     result = []
     if pipeline:

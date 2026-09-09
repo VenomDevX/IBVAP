@@ -4,15 +4,12 @@ CRUD operations for all entities.
 """
 
 from datetime import datetime
-from typing import List, Optional
-from sqlalchemy.orm import Session
-from sqlalchemy import desc
 
-from src.database.models import (
-    CameraModel, EventModel, AlertModel,
-    UserModel, AuditLogModel, ZoneModel
-)
+from sqlalchemy import desc
+from sqlalchemy.orm import Session
+
 from src.alerts import evidence
+from src.database.models import AlertModel, AuditLogModel, CameraModel, EventModel, UserModel, ZoneModel
 
 
 class Repository:
@@ -23,9 +20,16 @@ class Repository:
 
     # ======================== CAMERAS ========================
 
-    def create_camera(self, camera_id: str, name: str, stream_url: str,
-                      camera_type: str = "general", location_label: str = "",
-                      latitude: float = None, longitude: float = None) -> CameraModel:
+    def create_camera(
+        self,
+        camera_id: str,
+        name: str,
+        stream_url: str,
+        camera_type: str = "general",
+        location_label: str = "",
+        latitude: float = None,
+        longitude: float = None,
+    ) -> CameraModel:
         """Create a new camera configuration."""
         cam = CameraModel(
             camera_id=camera_id,
@@ -36,16 +40,16 @@ class Repository:
             latitude=latitude,
             longitude=longitude,
             status="offline",
-            enabled=True
+            enabled=True,
         )
         self.session.add(cam)
         self.session.commit()
         return cam
 
-    def get_camera(self, camera_id: str) -> Optional[CameraModel]:
+    def get_camera(self, camera_id: str) -> CameraModel | None:
         return self.session.query(CameraModel).filter_by(camera_id=camera_id).first()
 
-    def get_all_cameras(self) -> List[CameraModel]:
+    def get_all_cameras(self) -> list[CameraModel]:
         return self.session.query(CameraModel).all()
 
     def update_camera_status(self, camera_id: str, status: str):
@@ -74,10 +78,21 @@ class Repository:
             evidence_path=event_data.get("evidence_path"),
             evidence_hash=event_data.get("evidence_hash"),
         )
-        self._chain(event, EventModel, [
-            "event_id", "camera_id", "track_id", "event_type", "timestamp",
-            "object_type", "risk_score", "risk_level", "evidence_hash",
-        ])
+        self._chain(
+            event,
+            EventModel,
+            [
+                "event_id",
+                "camera_id",
+                "track_id",
+                "event_type",
+                "timestamp",
+                "object_type",
+                "risk_score",
+                "risk_level",
+                "evidence_hash",
+            ],
+        )
         self.session.add(event)
         self.session.commit()
         return event
@@ -85,17 +100,14 @@ class Repository:
     def _chain(self, row, model, fields):
         """Attach prev_hash / chain_hash linking this row to the previous one."""
         last = (
-            self.session.query(model.chain_hash)
-            .filter(model.chain_hash.isnot(None))
-            .order_by(desc(model.id))
-            .first()
+            self.session.query(model.chain_hash).filter(model.chain_hash.isnot(None)).order_by(desc(model.id)).first()
         )
         prev = last[0] if last else None
         record = {f: getattr(row, f) for f in fields}
         row.prev_hash = prev or evidence.GENESIS
         row.chain_hash = evidence.compute_hash(record, prev)
 
-    def get_event(self, event_id: str) -> Optional[EventModel]:
+    def get_event(self, event_id: str) -> EventModel | None:
         return self.session.query(EventModel).filter_by(event_id=event_id).first()
 
     def delete_before(self, model, cutoff, ts_field="timestamp") -> int:
@@ -107,9 +119,15 @@ class Repository:
         self.session.commit()
         return n
 
-    def get_events(self, camera_id: str = None, event_type: str = None,
-                   risk_level: str = None, limit: int = 100,
-                   offset: int = 0, allowed_cameras=None) -> List[EventModel]:
+    def get_events(
+        self,
+        camera_id: str = None,
+        event_type: str = None,
+        risk_level: str = None,
+        limit: int = 100,
+        offset: int = 0,
+        allowed_cameras=None,
+    ) -> list[EventModel]:
         query = self.session.query(EventModel)
         if allowed_cameras is not None:
             query = query.filter(EventModel.camera_id.in_(allowed_cameras or ["__none__"]))
@@ -148,19 +166,37 @@ class Repository:
             plate_result=alert_data.get("plate_result"),
             identity_result=alert_data.get("identity_result"),
         )
-        self._chain(alert, AlertModel, [
-            "alert_id", "camera_id", "event_id", "track_id", "event_type",
-            "timestamp", "risk_score", "risk_level", "object_type", "snapshot_hash",
-        ])
+        self._chain(
+            alert,
+            AlertModel,
+            [
+                "alert_id",
+                "camera_id",
+                "event_id",
+                "track_id",
+                "event_type",
+                "timestamp",
+                "risk_score",
+                "risk_level",
+                "object_type",
+                "snapshot_hash",
+            ],
+        )
         self.session.add(alert)
         self.session.commit()
         return alert
 
-    def get_alert(self, alert_id: str) -> Optional[AlertModel]:
+    def get_alert(self, alert_id: str) -> AlertModel | None:
         return self.session.query(AlertModel).filter_by(alert_id=alert_id).first()
 
-    def get_alerts(self, camera_id: str = None, risk_level: str = None,
-                   reviewed: bool = None, limit: int = 100, allowed_cameras=None) -> List[AlertModel]:
+    def get_alerts(
+        self,
+        camera_id: str = None,
+        risk_level: str = None,
+        reviewed: bool = None,
+        limit: int = 100,
+        allowed_cameras=None,
+    ) -> list[AlertModel]:
         query = self.session.query(AlertModel)
         if allowed_cameras is not None:
             query = query.filter(AlertModel.camera_id.in_(allowed_cameras or ["__none__"]))
@@ -184,23 +220,31 @@ class Repository:
 
     # ======================== USERS ========================
 
-    def create_user(self, username: str, hashed_password: str,
-                    role: str = "operator", full_name: str = "",
-                    allowed_areas: list = None, is_active: bool = True) -> UserModel:
+    def create_user(
+        self,
+        username: str,
+        hashed_password: str,
+        role: str = "operator",
+        full_name: str = "",
+        allowed_areas: list = None,
+        is_active: bool = True,
+    ) -> UserModel:
         user = UserModel(
-            username=username, hashed_password=hashed_password,
-            role=role, full_name=full_name,
+            username=username,
+            hashed_password=hashed_password,
+            role=role,
+            full_name=full_name,
             allowed_areas=allowed_areas or [],
-            is_active=is_active
+            is_active=is_active,
         )
         self.session.add(user)
         self.session.commit()
         return user
 
-    def get_user(self, username: str) -> Optional[UserModel]:
+    def get_user(self, username: str) -> UserModel | None:
         return self.session.query(UserModel).filter_by(username=username).first()
 
-    def get_all_users(self) -> List[UserModel]:
+    def get_all_users(self) -> list[UserModel]:
         return self.session.query(UserModel).all()
 
     def count_users(self) -> int:
@@ -208,19 +252,13 @@ class Repository:
 
     # ======================== AUDIT LOGS ========================
 
-    def create_audit_log(self, action: str, username: str,
-                         details: dict = None, ip_address: str = None):
-        log = AuditLogModel(
-            action=action, username=username,
-            details=details or {}, ip_address=ip_address
-        )
+    def create_audit_log(self, action: str, username: str, details: dict = None, ip_address: str = None):
+        log = AuditLogModel(action=action, username=username, details=details or {}, ip_address=ip_address)
         self.session.add(log)
         self.session.commit()
 
-    def get_audit_logs(self, limit: int = 100) -> List[AuditLogModel]:
-        return self.session.query(AuditLogModel).order_by(
-            desc(AuditLogModel.timestamp)
-        ).limit(limit).all()
+    def get_audit_logs(self, limit: int = 100) -> list[AuditLogModel]:
+        return self.session.query(AuditLogModel).order_by(desc(AuditLogModel.timestamp)).limit(limit).all()
 
     # ======================== ZONES ========================
 
@@ -238,7 +276,7 @@ class Repository:
         self.session.commit()
         return zone
 
-    def get_zones(self, camera_id: str = None) -> List[ZoneModel]:
+    def get_zones(self, camera_id: str = None) -> list[ZoneModel]:
         query = self.session.query(ZoneModel)
         if camera_id:
             query = query.filter_by(camera_id=camera_id)
@@ -263,15 +301,14 @@ class Repository:
 
         # Risk level distribution
         from sqlalchemy import func
+
         risk_dist = dict(
-            self.session.query(AlertModel.risk_level, func.count(AlertModel.id))
-            .group_by(AlertModel.risk_level).all()
+            self.session.query(AlertModel.risk_level, func.count(AlertModel.id)).group_by(AlertModel.risk_level).all()
         )
 
         # Event type distribution
         event_dist = dict(
-            self.session.query(EventModel.event_type, func.count(EventModel.id))
-            .group_by(EventModel.event_type).all()
+            self.session.query(EventModel.event_type, func.count(EventModel.id)).group_by(EventModel.event_type).all()
         )
 
         return {

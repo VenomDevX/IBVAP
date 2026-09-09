@@ -4,9 +4,10 @@ SQLite database connection and schema initialization.
 """
 
 import os
-from sqlalchemy import create_engine, event
-from sqlalchemy.orm import sessionmaker, Session
+
 from loguru import logger
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import Session, sessionmaker
 
 from src.database.models import Base
 
@@ -28,6 +29,7 @@ class Database:
             hide_parameters=True,
         )
         if is_sqlite:
+
             @event.listens_for(self.engine, "connect")
             def _sqlite_pragmas(dbapi_conn, _rec):
                 cur = dbapi_conn.cursor()
@@ -35,9 +37,8 @@ class Database:
                 cur.execute("PRAGMA busy_timeout=5000")
                 cur.execute("PRAGMA synchronous=NORMAL")
                 cur.close()
-        self.SessionLocal = sessionmaker(
-            autocommit=False, autoflush=False, bind=self.engine
-        )
+
+        self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
         self._initialized = False
 
     def init_db(self):
@@ -48,11 +49,13 @@ class Database:
         self._initialized = True
         # Mask password in log output
         import re
-        safe_url = re.sub(r'://([^:]+):([^@]+)@', r'://\1:***@', self.db_url)
+
+        safe_url = re.sub(r"://([^:]+):([^@]+)@", r"://\1:***@", self.db_url)
         logger.success(f"Database initialized: {safe_url}")
 
     def _add_missing_columns(self):
         from sqlalchemy import inspect, text
+
         insp = inspect(self.engine)
         wanted = {
             "events": {"prev_hash": "VARCHAR(64)", "chain_hash": "VARCHAR(64)"},

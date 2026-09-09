@@ -50,6 +50,7 @@ class NotificationManager:
         if self.twilio_sid and self.twilio_token:
             try:
                 from twilio.rest import Client
+
                 self.twilio_client = Client(self.twilio_sid, self.twilio_token)
             except ImportError:
                 logger.warning("Twilio library not installed — SMS disabled.")
@@ -68,9 +69,7 @@ class NotificationManager:
         if self.smtp_server and self.smtp_user and self.target_email:
             try:
                 email = EmailMessage()
-                email.set_content(
-                    f"{msg}\n\nRisk Factors: {', '.join(alert.get('contributing_factors', []))}"
-                )
+                email.set_content(f"{msg}\n\nRisk Factors: {', '.join(alert.get('contributing_factors', []))}")
                 email["Subject"] = f"IBVAP Critical Alert: {alert.get('camera_id')}"
                 email["From"] = self.smtp_user
                 email["To"] = self.target_email
@@ -89,7 +88,9 @@ class NotificationManager:
         if self.twilio_client and self.target_phone:
             try:
                 self.twilio_client.messages.create(
-                    body=msg, from_=self.twilio_from, to=self.target_phone,
+                    body=msg,
+                    from_=self.twilio_from,
+                    to=self.target_phone,
                 )
                 logger.info(f"Critical alert SMS sent to {_redact_phone(self.target_phone)}")
             except Exception as e:

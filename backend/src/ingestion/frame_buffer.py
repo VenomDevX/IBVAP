@@ -4,7 +4,6 @@ Thread-safe frame buffer for decoupling video capture from processing.
 """
 
 import threading
-from typing import Optional
 from collections import deque
 from dataclasses import dataclass
 
@@ -14,6 +13,7 @@ import numpy as np
 @dataclass
 class FramePacket:
     """A single frame with metadata."""
+
     frame: np.ndarray
     frame_id: int
     camera_id: str
@@ -42,7 +42,7 @@ class FrameBuffer:
             self._buffer.append(packet)
             self._event.set()
 
-    def get(self, timeout: float = 1.0) -> Optional[FramePacket]:
+    def get(self, timeout: float = 1.0) -> FramePacket | None:
         """
         Get the next frame from the buffer.
         Blocks until a frame is available or timeout is reached.
@@ -59,7 +59,7 @@ class FrameBuffer:
                 self._event.clear()
             return packet
 
-    def get_latest(self) -> Optional[FramePacket]:
+    def get_latest(self) -> FramePacket | None:
         """Get the most recent frame, discarding older ones."""
         with self._lock:
             if len(self._buffer) == 0:

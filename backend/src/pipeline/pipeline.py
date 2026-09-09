@@ -3,42 +3,47 @@ IBVAP — Video Processing Pipeline
 Main orchestrator: Ingest → Detect → Track → Spatial → Temporal → Behavior → Fusion → Risk → Alert → Store
 """
 
-import time
-import threading
 import os
-from typing import Dict, Optional
+import threading
+import time
 from pathlib import Path
 
 import numpy as np
 import yaml
 from loguru import logger
 
-from src.ingestion.video_source import VideoSource, CameraInfo
-from src.detection.detector import ObjectDetector
-from src.tracking.tracker import MultiObjectTracker
-from src.tracking.track_manager import TrackManager
-from src.spatial.zone_manager import ZoneManager
-from src.spatial.fence_detector import FenceDetector
-from src.spatial.direction_analyzer import DirectionAnalyzer
-from src.temporal.loitering_detector import LoiteringDetector
-from src.temporal.night_detector import NightDetector
-from src.behavior.behavior_engine import BehaviorEngine
-from src.fusion.context_fusion import ContextFusion
-from src.risk.risk_engine import RiskEngine
 from src.alerts.alert_engine import AlertEngine
+from src.behavior.behavior_engine import BehaviorEngine
 from src.database.db import get_database
 from src.database.repository import Repository
-from src.features.color_extractor import get_dominant_color
+from src.detection.detector import ObjectDetector
 from src.features.anpr import extract_license_plate
+from src.features.color_extractor import get_dominant_color
+from src.fusion.context_fusion import ContextFusion
+from src.ingestion.video_source import CameraInfo, VideoSource
+from src.risk.risk_engine import RiskEngine
+from src.spatial.direction_analyzer import DirectionAnalyzer
+from src.spatial.fence_detector import FenceDetector
 from src.spatial.heatmap_tracker import HeatmapTracker
+from src.spatial.zone_manager import ZoneManager
+from src.temporal.loitering_detector import LoiteringDetector
+from src.temporal.night_detector import NightDetector
+from src.tracking.track_manager import TrackManager
+from src.tracking.tracker import MultiObjectTracker
 
 
 class CameraPipeline:
     """Processing pipeline for a single camera source."""
 
-    def __init__(self, camera_info: CameraInfo, detector: ObjectDetector,
-                 zone_manager: ZoneManager, fence_detector: FenceDetector,
-                 risk_config: dict, alert_engine: AlertEngine):
+    def __init__(
+        self,
+        camera_info: CameraInfo,
+        detector: ObjectDetector,
+        zone_manager: ZoneManager,
+        fence_detector: FenceDetector,
+        risk_config: dict,
+        alert_engine: AlertEngine,
+    ):
         self.camera_info = camera_info
         self.video_source = VideoSource(camera_info)
         self.detector = detector  # Shared detector across cameras
@@ -56,9 +61,9 @@ class CameraPipeline:
         self.alert_engine = alert_engine
 
         self._running = False
-        self._thread: Optional[threading.Thread] = None
-        self._latest_frame: Optional[np.ndarray] = None
-        self._latest_annotated: Optional[np.ndarray] = None
+        self._thread: threading.Thread | None = None
+        self._latest_frame: np.ndarray | None = None
+        self._latest_annotated: np.ndarray | None = None
         self._frame_lock = threading.Lock()
         self._stats = {
             "frames_processed": 0,
@@ -134,16 +139,21 @@ class CameraPipeline:
                     if track.duration > 0.5:
                         x1, y1, x2, y2 = [int(v) for v in track.bbox]
                         # Ensure bounds
-                        x1 = max(0, x1); y1 = max(0, y1)
-                        x2 = min(frame.shape[1], x2); y2 = min(frame.shape[0], y2)
-                        
+                        x1 = max(0, x1)
+                        y1 = max(0, y1)
+                        x2 = min(frame.shape[1], x2)
+                        y2 = min(frame.shape[0], y2)
+
                         if x2 > x1 and y2 > y1:
                             crop = frame[y1:y2, x1:x2]
                             if track.color == "Unknown":
                                 track.color = get_dominant_color(crop)
-                            if track.object_type in ("car", "truck", "bus", "motorcycle", "vehicle") and track.license_plate == "Unknown":
+                            if (
+                                track.object_type in ("car", "truck", "bus", "motorcycle", "vehicle")
+                                and track.license_plate == "Unknown"
+                            ):
                                 track.license_plate = extract_license_plate(crop)
-                            
+
                     self._process_track(track, frame)
 
                 # Annotate frame
@@ -153,8 +163,7 @@ class CameraPipeline:
                 if camera_zones:
                     annotated = ZoneManager.draw_zones(annotated, camera_zones)
                 # Draw fences
-                fences = [f for f in self.fence_detector._fences.values()
-                          if f.camera_id == camera_id]
+                fences = [f for f in self.fence_detector._fences.values() if f.camera_id == camera_id]
                 if fences:
                     annotated = FenceDetector.draw_fences(annotated, fences)
                 # Draw tracks
@@ -215,10 +224,7 @@ class CameraPipeline:
         toward_restricted = False
         for zone in self.zone_manager.get_camera_zones(camera_id):
             if zone.zone_type == "restricted":
-                zone_center = (
-                    int(np.mean([p[0] for p in zone.points])),
-                    int(np.mean([p[1] for p in zone.points]))
-                )
+                zone_center = (int(np.mean([p[0] for p in zone.points])), int(np.mean([p[1] for p in zone.points])))
                 if self.direction_analyzer.is_moving_toward_zone(track, zone_center):
                     toward_restricted = True
                     break
@@ -255,7 +261,7 @@ class CameraPipeline:
             identity_context["color"] = track.color
 
         vehicle_context = {}
-        if hasattr(track, 'license_plate') and track.license_plate != "Unknown":
+        if hasattr(track, "license_plate") and track.license_plate != "Unknown":
             vehicle_context["plate"] = track.license_plate
 
         fused_event = self.context_fusion.fuse_events(
@@ -275,7 +281,7 @@ class CameraPipeline:
 
         # 9. Risk scoring
         fused_event = self.risk_engine.score_fused_event(fused_event)
-        
+
         # Attach latest risk to the track for live dashboard
         track.risk_score = fused_event.risk_score
         track.risk_level = fused_event.risk_level
@@ -308,12 +314,12 @@ class CameraPipeline:
 
         self._stats["events_generated"] += 1
 
-    def get_latest_frame(self) -> Optional[np.ndarray]:
+    def get_latest_frame(self) -> np.ndarray | None:
         """Get the latest raw frame."""
         with self._frame_lock:
             return self._latest_frame.copy() if self._latest_frame is not None else None
 
-    def get_latest_annotated_frame(self) -> Optional[np.ndarray]:
+    def get_latest_annotated_frame(self) -> np.ndarray | None:
         """Get the latest annotated frame (with overlays)."""
         with self._frame_lock:
             return self._latest_annotated.copy() if self._latest_annotated is not None else None
@@ -334,8 +340,8 @@ class IBVAPPipeline:
 
     def __init__(self, config_dir: str = "./configs"):
         self.config_dir = Path(config_dir)
-        self.camera_pipelines: Dict[str, CameraPipeline] = {}
-        self.detector: Optional[ObjectDetector] = None
+        self.camera_pipelines: dict[str, CameraPipeline] = {}
+        self.detector: ObjectDetector | None = None
         self.zone_manager = ZoneManager()
         self.fence_detector = FenceDetector()
         self.alert_engine = AlertEngine()
@@ -356,12 +362,9 @@ class IBVAPPipeline:
         weights_path = det_cfg.get("weights_path") or ""
         use_custom = bool(weights_path) and os.path.exists(weights_path)
         if weights_path and not use_custom:
-            logger.warning(
-                f"detection.weights_path set but not found ({weights_path}) - using stock model"
-            )
+            logger.warning(f"detection.weights_path set but not found ({weights_path}) - using stock model")
         self.detector = ObjectDetector(
-            model_path=weights_path if use_custom
-            else det_cfg.get("model_variant", "yolov8n") + ".pt",
+            model_path=weights_path if use_custom else det_cfg.get("model_variant", "yolov8n") + ".pt",
             confidence_threshold=det_cfg.get("confidence_threshold", 0.40),
             target_classes=det_cfg.get("target_classes") or [0, 2, 3, 5, 7],
             imgsz=det_cfg.get("imgsz", 640),
@@ -416,26 +419,25 @@ class IBVAPPipeline:
                 existing = repo.get_camera(camera_info.camera_id)
                 if not existing:
                     # Mock locations for the map view based on camera ID
-                    lat, lng = 28.6139, 77.2090 # Default to New Delhi coordinates
+                    lat, lng = 28.6139, 77.2090  # Default to New Delhi coordinates
                     if camera_info.camera_id == "cam_north":
                         lat, lng = 28.6150, 77.2100
                     elif camera_info.camera_id == "cam_south":
                         lat, lng = 28.6120, 77.2080
 
                     repo.create_camera(
-                        camera_id=camera_info.camera_id, 
+                        camera_id=camera_info.camera_id,
                         name=camera_info.name,
-                        stream_url=camera_info.source, 
+                        stream_url=camera_info.source,
                         camera_type=camera_info.camera_type,
                         latitude=lat,
-                        longitude=lng
+                        longitude=lng,
                     )
                 session.close()
             except Exception as e:
                 logger.error(f"DB camera save error: {e}")
 
         logger.success(f"IBVAP Pipeline initialized with {len(self.camera_pipelines)} cameras")
-
 
     def start_all(self):
         """Start all camera pipelines."""
@@ -447,19 +449,16 @@ class IBVAPPipeline:
         for cam_id, pipeline in self.camera_pipelines.items():
             pipeline.stop()
 
-    def get_pipeline(self, camera_id: str) -> Optional[CameraPipeline]:
+    def get_pipeline(self, camera_id: str) -> CameraPipeline | None:
         return self.camera_pipelines.get(camera_id)
 
-    def get_all_stats(self) -> Dict[str, dict]:
-        return {
-            cam_id: pipeline.get_stats()
-            for cam_id, pipeline in self.camera_pipelines.items()
-        }
+    def get_all_stats(self) -> dict[str, dict]:
+        return {cam_id: pipeline.get_stats() for cam_id, pipeline in self.camera_pipelines.items()}
 
     def _load_yaml(self, filename: str) -> dict:
         filepath = self.config_dir / filename
         try:
-            with open(filepath, "r") as f:
+            with open(filepath) as f:
                 return yaml.safe_load(f) or {}
         except FileNotFoundError:
             logger.warning(f"Config file not found: {filepath}")

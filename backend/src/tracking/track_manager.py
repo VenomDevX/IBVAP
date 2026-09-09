@@ -5,7 +5,6 @@ High-level track lifecycle management and querying.
 
 import time
 from collections import deque
-from typing import Dict, List, Optional
 
 from src.tracking.track import Track
 
@@ -18,11 +17,11 @@ class TrackManager:
 
     def __init__(self, expiry_seconds: float = 10.0):
         self.expiry_seconds = expiry_seconds
-        self._tracks: Dict[int, Track] = {}
+        self._tracks: dict[int, Track] = {}
         self._expired_tracks = deque(maxlen=1000)
         self._expired_ids: set = set()
 
-    def update_tracks(self, active_tracks: Dict[int, Track]):
+    def update_tracks(self, active_tracks: dict[int, Track]):
         """Sync internal state with tracker output."""
         now = time.time()
         self._tracks = active_tracks
@@ -38,37 +37,28 @@ class TrackManager:
         if len(self._expired_ids) > 5000:
             self._expired_ids = {t.track_id for t in self._expired_tracks}
 
-    def get_active_tracks(self) -> Dict[int, Track]:
+    def get_active_tracks(self) -> dict[int, Track]:
         """Get all currently active tracks."""
         return {tid: t for tid, t in self._tracks.items() if t.is_active}
 
-    def get_track(self, track_id: int) -> Optional[Track]:
+    def get_track(self, track_id: int) -> Track | None:
         return self._tracks.get(track_id)
 
-    def get_tracks_in_zone(self, zone_id: str) -> List[Track]:
+    def get_tracks_in_zone(self, zone_id: str) -> list[Track]:
         """Get all active tracks currently inside a zone."""
-        return [
-            t for t in self._tracks.values()
-            if t.is_active and zone_id in t.current_zones
-        ]
+        return [t for t in self._tracks.values() if t.is_active and zone_id in t.current_zones]
 
-    def get_person_tracks(self) -> Dict[int, Track]:
-        return {
-            tid: t for tid, t in self._tracks.items()
-            if t.is_active and t.object_type == "person"
-        }
+    def get_person_tracks(self) -> dict[int, Track]:
+        return {tid: t for tid, t in self._tracks.items() if t.is_active and t.object_type == "person"}
 
-    def get_vehicle_tracks(self) -> Dict[int, Track]:
+    def get_vehicle_tracks(self) -> dict[int, Track]:
         vehicle_types = {"car", "motorcycle", "bus", "truck"}
-        return {
-            tid: t for tid, t in self._tracks.items()
-            if t.is_active and t.object_type in vehicle_types
-        }
+        return {tid: t for tid, t in self._tracks.items() if t.is_active and t.object_type in vehicle_types}
 
-    def get_loitering_tracks(self) -> List[Track]:
+    def get_loitering_tracks(self) -> list[Track]:
         return [t for t in self._tracks.values() if t.is_active and t.is_loitering]
 
-    def get_recent_expired(self, limit: int = 50) -> List[Track]:
+    def get_recent_expired(self, limit: int = 50) -> list[Track]:
         return list(self._expired_tracks)[-limit:]
 
     @property

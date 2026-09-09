@@ -13,14 +13,33 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from src.alerts import evidence
 from src.database.db import get_database
 from src.database.models import AlertModel, EventModel
-from src.alerts import evidence
 
-EVENT_FIELDS = ["event_id", "camera_id", "track_id", "event_type", "timestamp",
-                "object_type", "risk_score", "risk_level", "evidence_hash"]
-ALERT_FIELDS = ["alert_id", "camera_id", "event_id", "track_id", "event_type",
-                "timestamp", "risk_score", "risk_level", "object_type", "snapshot_hash"]
+EVENT_FIELDS = [
+    "event_id",
+    "camera_id",
+    "track_id",
+    "event_type",
+    "timestamp",
+    "object_type",
+    "risk_score",
+    "risk_level",
+    "evidence_hash",
+]
+ALERT_FIELDS = [
+    "alert_id",
+    "camera_id",
+    "event_id",
+    "track_id",
+    "event_type",
+    "timestamp",
+    "risk_score",
+    "risk_level",
+    "object_type",
+    "snapshot_hash",
+]
 
 
 def check(session, model, fields, label):

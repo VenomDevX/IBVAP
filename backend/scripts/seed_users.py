@@ -28,6 +28,7 @@ sys.path.insert(0, BACKEND)
 
 try:
     from dotenv import load_dotenv
+
     load_dotenv(os.path.join(BACKEND, ".env"))
 except Exception:
     pass
@@ -59,25 +60,30 @@ def seed_one(sb, email, password, role, areas, full_name):
         sb.auth.admin.update_user_by_id(user_id, {"password": password, "email_confirm": True})
         print(f"  reset password for existing {email} ({user_id})")
     else:
-        res = sb.auth.admin.create_user({
-            "email": email, "password": password, "email_confirm": True,
-        })
+        res = sb.auth.admin.create_user(
+            {
+                "email": email,
+                "password": password,
+                "email_confirm": True,
+            }
+        )
         user_id = res.user.id
         print(f"  created {email} ({user_id})")
 
-    sb.table("user_profiles").upsert({
-        "id": user_id,
-        "role": role,
-        "full_name": full_name or email.split("@")[0],
-        "allowed_areas": areas,
-    }).execute()
+    sb.table("user_profiles").upsert(
+        {
+            "id": user_id,
+            "role": role,
+            "full_name": full_name or email.split("@")[0],
+            "allowed_areas": areas,
+        }
+    ).execute()
     print(f"  user_profiles: role={role}  allowed_areas={areas or 'ALL'}")
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--defaults", action="store_true",
-                    help="seed admin@ibvap.local + operator@ibvap.local")
+    ap.add_argument("--defaults", action="store_true", help="seed admin@ibvap.local + operator@ibvap.local")
     ap.add_argument("--email")
     ap.add_argument("--password")
     ap.add_argument("--role", default="operator", choices=ROLES)

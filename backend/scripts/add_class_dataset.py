@@ -30,6 +30,7 @@ Then:
 
 import os
 import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import argparse
 import glob
@@ -45,9 +46,7 @@ IMG_EXTS = (".jpg", ".jpeg", ".png")
 RF_HASH = re.compile(r"\.rf\.[0-9a-fA-F]{6,}\.(?:jpg|jpeg|png|bmp|webp)$", re.I)
 
 # name (lowercased) -> coarse id, from the old fine taxonomy
-_FINE_NAME_TO_COARSE = {
-    FINE_NAMES[fid].lower(): FINE_TO_COARSE[fid] for fid in FINE_NAMES
-}
+_FINE_NAME_TO_COARSE = {FINE_NAMES[fid].lower(): FINE_TO_COARSE[fid] for fid in FINE_NAMES}
 
 
 def source_key(filename: str) -> str:
@@ -127,8 +126,10 @@ def to_box(parts: list[str]):
         x, y, w, h = (x0 + x1) / 2, (y0 + y1) / 2, x1 - x0, y1 - y0
     else:
         return None
-    x = min(1.0, max(0.0, x)); y = min(1.0, max(0.0, y))
-    w = min(1.0, max(0.0, w)); h = min(1.0, max(0.0, h))
+    x = min(1.0, max(0.0, x))
+    y = min(1.0, max(0.0, y))
+    w = min(1.0, max(0.0, w))
+    h = min(1.0, max(0.0, h))
     if w <= 0 or h <= 0:
         return None
     return sid, x, y, w, h
@@ -139,6 +140,7 @@ def load_src_names(src: str) -> dict[int, str]:
         p = os.path.join(src, cand)
         if os.path.isfile(p):
             import yaml
+
             names = yaml.safe_load(open(p, encoding="utf-8")).get("names")
             if isinstance(names, dict):
                 return {int(k): str(v) for k, v in names.items()}
@@ -152,7 +154,8 @@ def purge_old(dst_root: str, prefix: str):
     for split in ("train", "valid"):
         for ext in IMG_EXTS:
             for p in glob.glob(os.path.join(dst_root, "images", split, f"{prefix}_*{ext}")):
-                os.remove(p); removed += 1
+                os.remove(p)
+                removed += 1
         for p in glob.glob(os.path.join(dst_root, "labels", split, f"{prefix}_*.txt")):
             os.remove(p)
     for c in glob.glob(os.path.join(dst_root, "**", "*.cache"), recursive=True):
@@ -217,8 +220,10 @@ def main():
     print(f"merge  {src}\n    ->  {dst_root}   (prefix '{prefix}')")
     if id_map:
         from collections import Counter
+
         tgt = Counter(id_map.values())
         from ml.taxonomy import COARSE_NAMES
+
         print("    mapping -> " + ", ".join(f"{COARSE_NAMES[c]}:{n}src" for c, n in tgt.items()))
 
     if args.purge_old and not args.dry_run:
@@ -253,8 +258,7 @@ def main():
             continue
 
         kept = 0
-        with open(lbl_src, "r", encoding="utf-8", errors="ignore") as fin, \
-             open(out_lbl, "w", encoding="utf-8") as fout:
+        with open(lbl_src, encoding="utf-8", errors="ignore") as fin, open(out_lbl, "w", encoding="utf-8") as fout:
             for line in fin:
                 p = line.split()
                 if len(p) < 5:
@@ -275,9 +279,10 @@ def main():
                 per_class[tid] += 1
                 kept += 1
         n_box += kept
-        n_empty += (kept == 0)
+        n_empty += kept == 0
 
     from ml.taxonomy import COARSE_NAMES
+
     print(f"\n{'DRY RUN — ' if args.dry_run else ''}summary:")
     print(f"  images written        : {n_img:,}")
     print(f"  boxes written          : {n_box:,}")
@@ -286,8 +291,10 @@ def main():
     print(f"  images w/o source label: {n_nolabel:,}")
     print(f"  images w/ empty label  : {n_empty:,}")
     if not args.dry_run:
-        print("\nNext:\n  python scripts/make_clean_split.py --src data/detector_yolo"
-              "\n  python scripts/pack_dataset_for_colab.py --tar")
+        print(
+            "\nNext:\n  python scripts/make_clean_split.py --src data/detector_yolo"
+            "\n  python scripts/pack_dataset_for_colab.py --tar"
+        )
 
 
 if __name__ == "__main__":

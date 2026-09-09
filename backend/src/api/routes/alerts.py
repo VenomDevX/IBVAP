@@ -4,7 +4,6 @@ Alert querying, review, and management endpoints.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from typing import Optional
 
 from src.api.auth import require_auth, scoped_cameras
 from src.database.db import get_database
@@ -15,9 +14,9 @@ router = APIRouter()
 
 @router.get("")
 async def list_alerts(
-    camera_id: Optional[str] = None,
-    risk_level: Optional[str] = None,
-    reviewed: Optional[bool] = None,
+    camera_id: str | None = None,
+    risk_level: str | None = None,
+    reviewed: bool | None = None,
     limit: int = Query(default=100, le=500),
     user: dict = Depends(require_auth),
 ):
@@ -25,8 +24,7 @@ async def list_alerts(
     db = get_database()
     session = db.get_session()
     repo = Repository(session)
-    alerts_list = repo.get_alerts(camera_id, risk_level, reviewed, limit,
-                                 allowed_cameras=scoped_cameras(user))
+    alerts_list = repo.get_alerts(camera_id, risk_level, reviewed, limit, allowed_cameras=scoped_cameras(user))
     result = [
         {
             "alert_id": a.alert_id,
@@ -54,6 +52,7 @@ async def list_alerts(
 async def get_live_alerts(user: dict = Depends(require_auth)):
     """Get real-time alerts from the alert engine."""
     from src.api.app import get_pipeline
+
     pipeline = get_pipeline()
     if pipeline:
         return pipeline.alert_engine.get_all_alerts(limit=50)

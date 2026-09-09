@@ -3,17 +3,16 @@ IBVAP — Alert Engine
 Generates, deduplicates, and manages security alerts.
 """
 
-import time
 import os
-from typing import Dict, List, Optional, Callable
+import time
 from collections import defaultdict, deque
+from collections.abc import Callable
 
 import cv2
 import numpy as np
 from loguru import logger
 
 from src.alerts import evidence
-
 from src.alerts.alert import Alert
 from src.fusion.context_fusion import FusedEvent
 
@@ -42,11 +41,12 @@ class AlertEngine:
 
         self._alert_counter: int = 0
         self._alerts = deque(maxlen=5000)
-        self._recent_alerts: Dict[str, float] = {}  # dedup key -> timestamp
-        self._rate_counter: Dict[str, list] = defaultdict(list)  # camera_id -> [timestamps]
-        self._notification_callbacks: List[Callable] = []
+        self._recent_alerts: dict[str, float] = {}  # dedup key -> timestamp
+        self._rate_counter: dict[str, list] = defaultdict(list)  # camera_id -> [timestamps]
+        self._notification_callbacks: list[Callable] = []
 
         from src.alerts.notifiers import NotificationManager
+
         self.notification_manager = NotificationManager()
 
         # Ensure snapshots directory exists
@@ -59,8 +59,8 @@ class AlertEngine:
     def generate_alert(
         self,
         fused_event: FusedEvent,
-        frame: Optional[np.ndarray] = None,
-    ) -> Optional[Alert]:
+        frame: np.ndarray | None = None,
+    ) -> Alert | None:
         """
         Generate an alert from a fused event.
         Applies deduplication, rate limiting, and minimum risk threshold.
@@ -82,9 +82,7 @@ class AlertEngine:
 
         # --- Rate limiting ---
         camera_id = fused_event.camera_id
-        self._rate_counter[camera_id] = [
-            t for t in self._rate_counter[camera_id] if now - t < 60
-        ]
+        self._rate_counter[camera_id] = [t for t in self._rate_counter[camera_id] if now - t < 60]
         if len(self._rate_counter[camera_id]) >= self.max_alerts_per_minute:
             logger.warning(f"Rate limit reached for camera {camera_id}")
             return None
@@ -93,9 +91,7 @@ class AlertEngine:
         snapshot_path = None
         snapshot_hash = None
         if frame is not None:
-            snapshot_path, snapshot_hash = self._save_snapshot(
-                frame, fused_event.camera_id, fused_event.event_id
-            )
+            snapshot_path, snapshot_hash = self._save_snapshot(frame, fused_event.camera_id, fused_event.event_id)
 
         # --- Create alert ---
         self._alert_counter += 1
@@ -137,8 +133,7 @@ class AlertEngine:
 
         return alert
 
-    def _save_snapshot(self, frame: np.ndarray, camera_id: str,
-                       event_id: str):
+    def _save_snapshot(self, frame: np.ndarray, camera_id: str, event_id: str):
         """Save an evidence snapshot image and compute its SHA-256 hash."""
         try:
             filename = f"{camera_id}_{event_id}_{int(time.time())}.jpg"
@@ -159,22 +154,19 @@ class AlertEngine:
                 return True
         return False
 
-    def get_all_alerts(self, limit: int = 100) -> List[dict]:
+    def get_all_alerts(self, limit: int = 100) -> list[dict]:
         return [a.to_dict() for a in reversed(list(self._alerts)[-limit:])]
 
-    def get_unreviewed_alerts(self) -> List[dict]:
+    def get_unreviewed_alerts(self) -> list[dict]:
         return [a.to_dict() for a in reversed(self._alerts) if not a.reviewed]
 
-    def get_alerts_by_camera(self, camera_id: str, limit: int = 50) -> List[dict]:
-        return [
-            a.to_dict() for a in reversed(self._alerts)
-            if a.camera_id == camera_id
-        ][:limit]
+    def get_alerts_by_camera(self, camera_id: str, limit: int = 50) -> list[dict]:
+        return [a.to_dict() for a in reversed(self._alerts) if a.camera_id == camera_id][:limit]
 
-    def get_alerts_by_level(self, level: str) -> List[dict]:
+    def get_alerts_by_level(self, level: str) -> list[dict]:
         return [a.to_dict() for a in reversed(self._alerts) if a.risk_level == level]
 
-    def get_alert(self, alert_id: str) -> Optional[dict]:
+    def get_alert(self, alert_id: str) -> dict | None:
         for a in self._alerts:
             if a.alert_id == alert_id:
                 return a.to_dict()
@@ -182,6 +174,7 @@ class AlertEngine:
 
     def get_statistics(self) -> dict:
         from collections import Counter
+
         levels = Counter(a.risk_level for a in self._alerts)
         types = Counter(a.event_type for a in self._alerts)
         reviewed = sum(1 for a in self._alerts if a.reviewed)
