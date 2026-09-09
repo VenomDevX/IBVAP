@@ -133,8 +133,20 @@ def main() -> None:
     dd, dc = BUILD / "dedup_detector.jsonl", BUILD / "dedup_crops.jsonl"
     if not done("dedup"):
         t = time.time()
-        det_k, det_r = dedup_mod.dedup(det)
-        crop_k, crop_r = dedup_mod.dedup(crops)
+        # Tie-breaks decide which copy of a duplicate SURVIVES, and getting them
+        # wrong silently destroys whole classes — see the docstrings on
+        # restructure.specificity and rebalance.rare_first_priority.
+        print("      reading detector labels (for rare-class dedup priority)...")
+        det_labels = {r.path: read_label_classes(r.path) for r in det}
+        det_k, det_r = dedup_mod.dedup(
+            det, priority=rebal_mod.rare_first_priority(det_labels)
+        )
+        crop_k, crop_r = dedup_mod.dedup(
+            crops,
+            priority=restruct_mod.specificity,
+            group_by=restruct_mod.dedup_group,
+            conflict_key=restruct_mod.dedup_group,
+        )
         write_index(det_k, dd)
         write_index(crop_k, dc)
         with open(BUILD / "duplicates.jsonl", "w", encoding="utf-8") as fh:
@@ -144,6 +156,7 @@ def main() -> None:
             "detector_kept": len(det_k), "detector_removed": len(det_r),
             "crops_kept": len(crop_k), "crops_removed": len(crop_r),
             "crops_removed_pct": round(100 * len(crop_r) / max(1, len(crops)), 2),
+            "crops_label_conflicts": sum(1 for x in crop_r if x[2] == "conflict"),
             "seconds": round(time.time() - t),
         }
         save()
@@ -151,6 +164,9 @@ def main() -> None:
     m = manifest["dedup"]
     print(f"[2/6] dedup       OK  detector {len(det):,} -> {m['detector_kept']:,}   "
           f"crops {len(crops):,} -> {m['crops_kept']:,} (-{m['crops_removed_pct']}%)")
+    if m.get("crops_label_conflicts"):
+        print(f"      {m['crops_label_conflicts']:,} images dropped as LABEL CONFLICTS "
+              f"(identical bytes filed under two classes)")
 
     det = read_index(dd)
     crops = read_index(dc)
@@ -162,6 +178,7 @@ def main() -> None:
         print("      reading labels...")
         labels = {r.path: read_label_classes(r.path) for r in det}
         labelled = {r.path for r in det if has_label_file(r.path)}
+        print(f"      {len(labelled):,}/{len(det):,} have a label file")
         sel, stats = rebal_mod.select_detector_images(
             det, labels, target=args.target_detector,
             background_frac=args.background_frac, seed=args.seed, labelled=labelled,

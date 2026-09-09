@@ -31,6 +31,7 @@ from ml.dataset_build.index import (  # noqa: E402
 )
 from ml.dataset_build.rebalance import (  # noqa: E402
     RARE_CLASS_IDS,
+    rare_first_priority,
     select_detector_images,
 )
 from ml.dataset_build.restructure import (  # noqa: E402
@@ -38,7 +39,9 @@ from ml.dataset_build.restructure import (  # noqa: E402
     build_class_plan,
     canonical_class_name,
     coarse_parent,
+    dedup_group,
     leaf_of,
+    specificity,
 )
 from ml.dataset_build.split import assert_no_leak, split_records  # noqa: E402
 from ml.grouping import family, group_key, stable_bucket  # noqa: E402
@@ -657,3 +660,184 @@ def test_build_dataset_cli_help_runs():
     assert r.returncode == 0, r.stderr
     for flag in ("--target-detector", "--threshold", "--cap", "--force", "--dry-run"):
         assert flag in r.stdout
+
+
+# ──────────────────────────────────────────────────────────────
+# Regression: dedup tie-breaks must not annihilate specific classes
+# ──────────────────────────────────────────────────────────────
+
+
+def _agg(rel, md5, dh=None):
+    """A crop record at `rel` with a given md5 (byte-identical copies share one).
+
+    dhash defaults to a value derived from md5 so identical bytes hash alike and
+    unrelated fixtures do not collide in the near pass.
+    """
+    return ImageRecord(path=rel, source="crops", rel=rel, width=100, height=100,
+                       size=1000, md5=md5,
+                       dhash=dh if dh is not None else (hash(md5) & 0xFFFFFFFFFFFFFFFF))
+
+
+def test_specificity_ranks_specific_class_over_aggregate():
+    assert specificity(_agg("Vehicles/Bicycle/x.jpg", "m")) == 1
+    assert specificity(_agg("Two_Wheeler/x.jpg", "m")) == 0
+    assert specificity(_agg("Animals/Dog/x.jpg", "m")) == 1
+    assert specificity(_agg("Animal/x.jpg", "m")) == 0
+    assert specificity(_agg("Military/F16/x.jpg", "m")) == 1
+    assert specificity(_agg("Military_Aircraft/x.jpg", "m")) == 0
+
+
+def test_dedup_keeps_the_specifically_labelled_copy_not_the_aggregate():
+    """THE regression. Two_Wheeler/ holds byte-identical copies of Bicycle/ and
+    Motorcycle/; Animal/ of Dog/ etc. Ranking on path alone kept the aggregate
+    (T < V, 'Animal/' < 'Animals') and zeroed 8 real classes."""
+    recs = [
+        _agg("Two_Wheeler/a.jpg", "m1"),
+        _agg("Vehicles/Bicycle/a.jpg", "m1"),      # same bytes
+        _agg("Animal/b.jpg", "m2"),
+        _agg("Animals/Dog/b.jpg", "m2"),           # same bytes
+        _agg("Military_Aircraft/c.jpg", "m3"),
+        _agg("Military/F16/c.jpg", "m3"),          # same bytes
+    ]
+    kept, _ = dedup(recs, priority=specificity)
+    surviving = {r.rel for r in kept}
+    assert surviving == {
+        "Vehicles/Bicycle/a.jpg",
+        "Animals/Dog/b.jpg",
+        "Military/F16/c.jpg",
+    }, f"aggregate copy survived instead of the labelled one: {surviving}"
+
+
+def test_dedup_specificity_survives_a_full_class_plan():
+    """End to end: aggregates are exact copies, so the fine classes must live."""
+    recs = []
+    for i in range(300):
+        recs.append(_agg(f"Vehicles/Bicycle/{i}.jpg", f"bike{i}"))
+        recs.append(_agg(f"Two_Wheeler/{i}.jpg", f"bike{i}"))  # identical bytes
+    kept, _ = dedup(recs, max_distance=0, priority=specificity)
+    plan = build_class_plan(kept, threshold=200)
+    assert "Bicycle" in plan.classes
+    assert plan.counts["Bicycle"] == 300
+    assert plan.dropped.get("Two_Wheeler", 0) == 0, "nothing should be left in it"
+
+
+def test_rare_first_priority_keeps_the_rare_detector_image():
+    a = ImageRecord(path="person.jpg", source="detector", rel="person.jpg",
+                    width=640, height=640, size=100, md5="same", dhash=0)
+    b = ImageRecord(path="tank.jpg", source="detector", rel="tank.jpg",
+                    width=640, height=640, size=100, md5="same", dhash=0)
+    labels = {"person.jpg": [0], "tank.jpg": [7]}  # 7 = military_ground_vehicle
+    kept, _ = dedup([a, b], priority=rare_first_priority(labels))
+    assert [r.path for r in kept] == ["tank.jpg"]
+
+
+def test_dedup_group_resolves_aggregates_to_the_target_class():
+    assert dedup_group(_agg("Military_Aircraft/x.jpg", "m")) == "aircraft"
+    assert dedup_group(_agg("Military/F16/x.jpg", "m")) == "F16"
+    assert dedup_group(_agg("Animals/Dog/x.jpg", "m")) == "Dog"
+    assert dedup_group(_agg("Two_Wheeler/x.jpg", "m")) == "<dropped>"
+
+
+def test_near_dedup_does_not_merge_across_classes():
+    """An F16 and an F18 that look alike at 8x8 are two labels, not one image.
+    Dropping either destroys the distinction the classifier exists to learn."""
+    a = _agg("Military/F16/a.jpg", "m1", dh=0b1010)
+    b = _agg("Military/F18/b.jpg", "m2", dh=0b1011)  # Hamming 1
+
+    merged, _ = dedup([a, b], max_distance=3)
+    assert len(merged) == 1, "sanity: without grouping they collapse"
+
+    kept, _ = dedup([a, b], max_distance=3, group_by=dedup_group)
+    assert {r.rel for r in kept} == {"Military/F16/a.jpg", "Military/F18/b.jpg"}
+
+
+def test_near_dedup_still_merges_within_one_class():
+    a = _agg("Military/F16/a.jpg", "m1", dh=0b1010)
+    b = _agg("Military/F16/b.jpg", "m2", dh=0b1011)
+    kept, removed = dedup([a, b], max_distance=3, group_by=dedup_group)
+    assert len(kept) == 1
+    assert removed[0][2] == "near"
+
+
+# ──────────────────────────────────────────────────────────────
+# train_classifier — dataset surgery must live in the builder
+# ──────────────────────────────────────────────────────────────
+
+
+def _script(name):
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(root, "scripts", name), encoding="utf-8") as fh:
+        return fh.read()
+
+
+def test_train_classifier_help_runs():
+    import subprocess
+
+    r = subprocess.run(
+        [sys.executable, "scripts/train_classifier.py", "--help"],
+        capture_output=True, text=True,
+        cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    )
+    assert r.returncode == 0, r.stderr
+    for flag in ("--arch", "--resume", "--epochs", "--batch"):
+        assert flag in r.stdout
+
+
+def test_train_classifier_has_no_dataset_surgery():
+    """Flattening, capping and splitting belong to build_dataset.py. Doing them
+    at train time is what put duplicate images on both sides of the split."""
+    src = _script("train_classifier.py")
+    assert "def prepare_dataset" not in src
+    assert "max_per_class" not in src
+    assert "shutil.copy" not in src
+
+
+def test_train_classifier_has_no_hardcoded_aggregate_skiplist():
+    """The structural fix in restructure.py replaced this band-aid."""
+    src = _script("train_classifier.py")
+    assert '"Animal", "Military_Aircraft", "Two_Wheeler"' not in src
+    assert '("Animal",' not in src
+
+
+def test_train_classifier_resume_restores_optimizer_and_scheduler():
+    """Weights alone are not a resume: without optimizer moments and the LR
+    schedule position, continuing mid-cosine restarts at the wrong LR."""
+    src = _script("train_classifier.py")
+    for key in ('"opt"', '"sched"', '"scaler"', '"epoch"'):
+        assert "opt.load_state_dict" in src or key in src
+    assert "opt.load_state_dict" in src
+    assert "sched.load_state_dict" in src
+    assert "scaler.load_state_dict" in src
+
+
+def test_train_classifier_loads_checkpoints_safely():
+    src = _script("train_classifier.py")
+    assert "weights_only=True" in src, "torch.load must not allow arbitrary unpickling"
+
+
+def test_conflicting_labels_on_identical_bytes_drop_both():
+    """Every Forklift image is also filed as Car, every Bus image also as Car.
+    Resolving that alphabetically could teach the model a forklift is a car."""
+    a = _agg("Vehicles/Car/x.jpg", "same")
+    b = _agg("Vehicles/Forklift/x.jpg", "same")
+    kept, removed = dedup([a, b], conflict_key=dedup_group)
+    assert kept == []
+    assert {r[2] for r in removed} == {"conflict"}
+
+
+def test_aggregate_vs_child_is_a_duplicate_not_a_conflict():
+    """The aggregate loses on priority before the conflict check, so the
+    specifically-labelled child survives rather than both being discarded."""
+    agg = _agg("Two_Wheeler/x.jpg", "same")
+    child = _agg("Vehicles/Bicycle/x.jpg", "same")
+    kept, removed = dedup([agg, child], priority=specificity, conflict_key=dedup_group)
+    assert [r.rel for r in kept] == ["Vehicles/Bicycle/x.jpg"]
+    assert removed[0][2] == "exact"
+
+
+def test_same_class_identical_bytes_is_a_plain_duplicate():
+    a = _agg("Military/F16/a.jpg", "same")
+    b = _agg("Military/F16/b.jpg", "same")
+    kept, removed = dedup([a, b], conflict_key=dedup_group)
+    assert len(kept) == 1
+    assert removed[0][2] == "exact"

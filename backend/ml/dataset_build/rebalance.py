@@ -38,6 +38,18 @@ RARE_CLASS_NAMES = (
 RARE_CLASS_IDS = frozenset(COARSE_ID[n] for n in RARE_CLASS_NAMES)
 
 
+def rare_first_priority(labels: dict[str, list[int]]):
+    """Dedup tie-break for detector images: a rare-class image outranks a
+    person-only one. Two near-identical frames should not cost us the only
+    military_ground_vehicle instance just because the other sorted first.
+    """
+
+    def priority(rec) -> int:
+        return 1 if RARE_CLASS_IDS & set(labels.get(rec.path, ())) else 0
+
+    return priority
+
+
 def _jitter(path: str, seed: int) -> float:
     """Stable per-path pseudo-random value; keeps selection order-independent."""
     h = hashlib.md5(f"{seed}:{path}".encode()).hexdigest()
