@@ -1,3 +1,11 @@
+-- ============================================================================
+-- NOTE (ADR-001, 2026-09-09): the cameras/tracks/events/alerts/zones tables and
+-- the realtime publication below are VESTIGIAL. The application datastore is
+-- SQLite (backend/src/database/models.py); nothing writes these Postgres tables.
+-- Only `user_profiles` (auth identity / RBAC) is used at runtime. Kept for
+-- reference / a possible future migration. Do not build on Supabase realtime.
+-- ============================================================================
+
 -- Create cameras table
 CREATE TABLE cameras (
     id SERIAL PRIMARY KEY,
