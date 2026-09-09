@@ -25,7 +25,7 @@ def download_dataset(api_key):
     os.makedirs(output_path, exist_ok=True)
     
     print(f"Downloading dataset to {os.path.abspath(output_path)} ...")
-    dataset = project.version(4).download("yolov8", location=output_path)
+    project.version(4).download("yolov8", location=output_path)
     
     print(f"\nSuccess! Dataset downloaded and arranged perfectly for YOLOv8 training at: {output_path}")
     print("You can now run the training script!")

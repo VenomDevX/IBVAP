@@ -7,9 +7,7 @@ Accumulates position data from tracked objects over time to generate a live heat
 import time
 import numpy as np
 import cv2
-from typing import Dict, List, Tuple
 from collections import deque
-from loguru import logger
 
 class HeatmapTracker:
     """

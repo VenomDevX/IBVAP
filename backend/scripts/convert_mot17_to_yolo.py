@@ -1,6 +1,5 @@
 import os
 import shutil
-import cv2
 from tqdm import tqdm
 
 def convert_mot17_to_yolo(mot_path, output_path):

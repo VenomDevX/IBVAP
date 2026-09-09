@@ -3,7 +3,7 @@ IBVAP — Face Detector
 Face detection using InsightFace/RetinaFace.
 """
 
-from typing import List, Optional, Tuple
+from typing import List
 import numpy as np
 from loguru import logger
 

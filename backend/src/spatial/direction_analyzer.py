@@ -4,7 +4,7 @@ Estimates movement direction using object trajectory history.
 """
 
 import math
-from typing import Dict, List, Optional, Tuple
+from typing import Optional, Tuple
 from src.tracking.track import Track
 
 

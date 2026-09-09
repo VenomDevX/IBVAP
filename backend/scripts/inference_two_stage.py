@@ -10,12 +10,9 @@ Usage:
 """
 
 import argparse
-import os
 import json
 import cv2
 import torch
-import numpy as np
-from pathlib import Path
 from torchvision import models, transforms
 from ultralytics import YOLO
 

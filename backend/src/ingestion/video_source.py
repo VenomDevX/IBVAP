@@ -7,7 +7,7 @@ import cv2
 import time
 import threading
 from typing import Optional, Tuple
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from loguru import logger
 

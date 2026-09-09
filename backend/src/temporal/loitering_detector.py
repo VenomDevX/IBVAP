@@ -4,7 +4,7 @@ Identifies objects dwelling in a zone beyond configured thresholds.
 """
 
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 from dataclasses import dataclass
 from loguru import logger
 

@@ -20,11 +20,9 @@ jobs:
         run: |
           pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
           pip install -r requirements.txt -r requirements-dev.txt
-      # Advisory only: the legacy modules carry a large pre-existing style/import
-      # backlog (see ruff.toml). Errors show as annotations but don't fail CI
-      # until a dedicated cleanup PR widens ruff.toml's `select`.
-      - name: Lint (advisory)
-        continue-on-error: true
+      # Bug-class ruleset only (see backend/ruff.toml) — style/line-length are
+      # not yet enforced. Widen `select` in a follow-up once those are cleaned.
+      - name: Lint
         run: ruff check --output-format=github src scripts ml
       - name: Tests
         run: pytest -q

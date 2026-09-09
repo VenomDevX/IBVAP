@@ -8,7 +8,6 @@ from collections import deque
 from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 from enum import Enum
-from loguru import logger
 
 from src.tracking.track import Track
 
@@ -86,7 +85,6 @@ class BehaviorEngine:
             List of behavior events detected
         """
         events = []
-        now = time.time()
 
         # --- Check: Restricted Zone Entry ---
         if zone_context.get("in_restricted", False):

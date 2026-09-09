@@ -186,7 +186,7 @@ def main():
         raise SystemExit("could not resolve class names (ml.taxonomy import failed)")
     out_yaml = os.path.join(CONFIG_DIR, f"dataset_{args.tag}.yaml")
     with open(out_yaml, "w", encoding="utf-8") as fh:
-        fh.write(f"# Leak-free, clip-aware split — scripts/make_clean_split.py\n")
+        fh.write("# Leak-free, clip-aware split — scripts/make_clean_split.py\n")
         fh.write(f"# grouped by source image + MOT/VIRAT clip; val_fraction={args.val_fraction} seed={args.seed}\n\n")
         fh.write(f"path: {root.replace(chr(92), '/')}\n")
         fh.write(f"train: {train_txt.replace(chr(92), '/')}\n")

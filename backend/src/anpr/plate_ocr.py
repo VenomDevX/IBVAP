@@ -3,7 +3,7 @@ IBVAP — Plate OCR
 OCR engine for license plate text extraction using PaddleOCR.
 """
 
-from typing import Optional, Tuple
+from typing import Tuple
 import numpy as np
 import cv2
 from loguru import logger

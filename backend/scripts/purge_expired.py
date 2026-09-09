@@ -18,7 +18,6 @@ import yaml
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.database.db import get_database
-from src.database.repository import Repository
 from src.database.models import (
     AlertModel, EventModel, TrackModel, IdentityResultModel, ANPRResultModel, AuditLogModel,
 )
@@ -46,7 +45,6 @@ def main():
     days = yaml.safe_load(open(args.config, encoding="utf-8"))["retention_days"]
     now = datetime.utcnow()
     session = get_database().get_session()
-    repo = Repository(session)
 
     try:
         for name, (model, field) in MODELS.items():

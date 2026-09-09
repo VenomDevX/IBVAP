@@ -76,8 +76,8 @@ def main():
 
     yaml_path = os.path.join(OUT_DIR, "dataset_coarse.yaml")
     with open(yaml_path, "w", encoding="utf-8", newline="\n") as fh:
-        fh.write("# portable — path is the root of the extracted tar\n")
-        fh.write("path: .\n")
+        fh.write("# portable — path is the Colab extraction directory\n")
+        fh.write("path: /content/ibvap_data\n")
         fh.write("train: train_coarse.txt\n")
         fh.write("val: val_coarse.txt\n\n")
         fh.write(f"nc: {len(NAMES)}\n")

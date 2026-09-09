@@ -5,7 +5,6 @@ ArcFace embedding generation for face recognition.
 
 import numpy as np
 from typing import Optional
-from loguru import logger
 
 
 class FaceEmbedder:

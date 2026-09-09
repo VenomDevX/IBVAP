@@ -5,7 +5,7 @@ SQLAlchemy ORM models matching TRD Section 17 schema.
 
 from datetime import datetime
 from sqlalchemy import (
-    Column, Integer, String, Float, Boolean, Text, DateTime, ForeignKey, JSON
+    Column, Integer, String, Float, Boolean, DateTime, ForeignKey, JSON
 )
 from sqlalchemy.orm import declarative_base, relationship
 

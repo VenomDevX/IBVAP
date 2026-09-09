@@ -44,8 +44,7 @@ def extract_license_plate(crop: np.ndarray) -> str:
         return "Unknown"
         
     mask = np.zeros(gray.shape, np.uint8)
-    new_image = cv2.drawContours(mask, [location], 0, 255, -1)
-    new_image = cv2.bitwise_and(crop, crop, mask=mask)
+    cv2.drawContours(mask, [location], 0, 255, -1)
     
     (x, y) = np.where(mask == 255)
     (x1, y1) = (np.min(x), np.min(y))
