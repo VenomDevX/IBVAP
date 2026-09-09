@@ -1,5 +1,6 @@
-import urllib.request
 import os
+import urllib.request
+
 from loguru import logger
 
 os.makedirs("data/custom", exist_ok=True)
@@ -8,7 +9,7 @@ samples = {
     "street_traffic.mp4": "https://github.com/intel-iot-devkit/sample-videos/raw/master/person-bicycle-car-detection.mp4",
     "people_walking.mp4": "https://github.com/intel-iot-devkit/sample-videos/raw/master/head-pose-face-detection-female-and-male.mp4",
     "highway_border.mp4": "https://github.com/intel-iot-devkit/sample-videos/raw/master/car-detection.mp4",
-    "indoor_checkpoint.mp4": "https://github.com/intel-iot-devkit/sample-videos/raw/master/classroom.mp4"
+    "indoor_checkpoint.mp4": "https://github.com/intel-iot-devkit/sample-videos/raw/master/classroom.mp4",
 }
 
 for name, url in samples.items():

@@ -21,6 +21,7 @@ Usage:
 
 import os
 import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # backend/ on path for `ml.*`
 import argparse
 import glob
@@ -30,6 +31,7 @@ from collections import defaultdict
 
 try:
     from ml.taxonomy import COARSE_ID
+
     PLATE_CLASS_ID = COARSE_ID["license_plate"]
 except Exception:  # taxonomy import may fail if run oddly; fall back to the known id
     PLATE_CLASS_ID = 6
@@ -110,7 +112,8 @@ def purge_old_plates(dst_root: str):
     for split in ("train", "valid"):
         for ext in IMG_EXTS:
             for p in glob.glob(os.path.join(dst_root, "images", split, f"plate_*{ext}")):
-                os.remove(p); removed += 1
+                os.remove(p)
+                removed += 1
         for p in glob.glob(os.path.join(dst_root, "labels", split, "plate_*.txt")):
             os.remove(p)
     for c in glob.glob(os.path.join(dst_root, "**", "*.cache"), recursive=True):
@@ -121,10 +124,12 @@ def purge_old_plates(dst_root: str):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", required=True, help="Roboflow-style YOLOv8 plate dataset root")
-    ap.add_argument("--dst", default=os.path.join(BACKEND, "data", "detector_yolo"),
-                    help="target dataset root (default: backend/data/detector_yolo)")
-    ap.add_argument("--limit", type=int, default=0,
-                    help="cap images added (whole aug-groups kept together); 0 = all")
+    ap.add_argument(
+        "--dst",
+        default=os.path.join(BACKEND, "data", "detector_yolo"),
+        help="target dataset root (default: backend/data/detector_yolo)",
+    )
+    ap.add_argument("--limit", type=int, default=0, help="cap images added (whole aug-groups kept together); 0 = all")
     ap.add_argument("--purge-old", action="store_true")
     ap.add_argument("--prefix", default="plate")
     ap.add_argument("--dry-run", action="store_true")
@@ -149,8 +154,7 @@ def main():
     for img_path, out_split in pairs:
         fn = os.path.basename(img_path)
         out_img = os.path.join(dst_root, "images", out_split, f"{args.prefix}_{fn}")
-        out_lbl = os.path.join(dst_root, "labels", out_split,
-                               f"{args.prefix}_{os.path.splitext(fn)[0]}.txt")
+        out_lbl = os.path.join(dst_root, "labels", out_split, f"{args.prefix}_{os.path.splitext(fn)[0]}.txt")
         lbl_src = label_path_for(img_path)
         if args.dry_run:
             no_label += not os.path.exists(lbl_src)
@@ -167,8 +171,7 @@ def main():
             open(out_lbl, "w").close()
             continue
         n_box = 0
-        with open(lbl_src, "r", encoding="utf-8", errors="ignore") as fin, \
-             open(out_lbl, "w", encoding="utf-8") as fout:
+        with open(lbl_src, encoding="utf-8", errors="ignore") as fin, open(out_lbl, "w", encoding="utf-8") as fout:
             for line in fin:
                 p = line.split()
                 if len(p) < 5:
@@ -177,7 +180,7 @@ def main():
                 fout.write(" ".join(p[:5]) + "\n")
                 n_box += 1
         copied_box += n_box
-        empty_label += (n_box == 0)
+        empty_label += n_box == 0
 
     print(f"\n{'DRY RUN — ' if args.dry_run else ''}summary:")
     print(f"  images written        : {copied_img:,}")

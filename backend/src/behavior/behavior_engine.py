@@ -5,7 +5,6 @@ Combines detection, tracking, spatial, and temporal signals to classify behavior
 
 import time
 from collections import deque
-from typing import Dict, List, Optional
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -14,6 +13,7 @@ from src.tracking.track import Track
 
 class BehaviorType(Enum):
     """Classified behavior types."""
+
     NORMAL = "normal"
     RESTRICTED_ZONE_ENTRY = "restricted_zone_entry"
     FENCE_CROSSING = "fence_crossing"
@@ -28,6 +28,7 @@ class BehaviorType(Enum):
 @dataclass
 class BehaviorEvent:
     """A classified behavior event for a track."""
+
     event_id: str
     track_id: int
     camera_id: str
@@ -35,7 +36,7 @@ class BehaviorEvent:
     timestamp: float
     confidence: float = 1.0
     details: dict = field(default_factory=dict)
-    contributing_factors: List[str] = field(default_factory=list)
+    contributing_factors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -60,7 +61,7 @@ class BehaviorEngine:
         self._event_counter: int = 0
         self._recent_events = deque(maxlen=2000)
         # Cooldown: (track_id, behavior_type) -> last_event_time
-        self._cooldowns: Dict[tuple, float] = {}
+        self._cooldowns: dict[tuple, float] = {}
         self._cooldown_seconds: float = 30.0
 
     def analyze_track(
@@ -70,7 +71,7 @@ class BehaviorEngine:
         temporal_context: dict,
         direction_context: dict,
         fence_context: dict,
-    ) -> List[BehaviorEvent]:
+    ) -> list[BehaviorEvent]:
         """
         Analyze a track's behavior using all available context.
 
@@ -89,7 +90,8 @@ class BehaviorEngine:
         # --- Check: Restricted Zone Entry ---
         if zone_context.get("in_restricted", False):
             event = self._create_event(
-                track, BehaviorType.RESTRICTED_ZONE_ENTRY,
+                track,
+                BehaviorType.RESTRICTED_ZONE_ENTRY,
                 details={
                     "zones": zone_context.get("zones", []),
                     "object_type": track.object_type,
@@ -102,7 +104,8 @@ class BehaviorEngine:
         # --- Check: Fence Crossing ---
         if fence_context.get("crossed", False):
             event = self._create_event(
-                track, BehaviorType.FENCE_CROSSING,
+                track,
+                BehaviorType.FENCE_CROSSING,
                 details={
                     "fence_id": fence_context.get("fence_id", ""),
                     "direction": fence_context.get("crossing_direction", ""),
@@ -116,7 +119,8 @@ class BehaviorEngine:
         if temporal_context.get("is_loitering", False):
             duration = temporal_context.get("loiter_duration", 0)
             event = self._create_event(
-                track, BehaviorType.LOITERING,
+                track,
+                BehaviorType.LOITERING,
                 details={
                     "duration_seconds": round(duration, 1),
                     "zone": temporal_context.get("loiter_zone", ""),
@@ -129,7 +133,8 @@ class BehaviorEngine:
         # --- Check: Night Movement ---
         if temporal_context.get("is_night", False) and track.is_active:
             event = self._create_event(
-                track, BehaviorType.NIGHT_MOVEMENT,
+                track,
+                BehaviorType.NIGHT_MOVEMENT,
                 details={
                     "brightness": temporal_context.get("brightness", 0),
                     "is_night_time": temporal_context.get("is_night_time", False),
@@ -142,7 +147,8 @@ class BehaviorEngine:
         # --- Check: Approaching Boundary ---
         if fence_context.get("approaching", False):
             event = self._create_event(
-                track, BehaviorType.APPROACHING_BOUNDARY,
+                track,
+                BehaviorType.APPROACHING_BOUNDARY,
                 details={
                     "distance": fence_context.get("distance", 0),
                     "fence_name": fence_context.get("fence_name", ""),
@@ -155,7 +161,8 @@ class BehaviorEngine:
         # --- Check: Wrong/Unexpected Direction ---
         if direction_context.get("toward_restricted", False):
             event = self._create_event(
-                track, BehaviorType.WRONG_DIRECTION,
+                track,
+                BehaviorType.WRONG_DIRECTION,
                 details={
                     "direction": direction_context.get("direction", ""),
                     "moving_toward": "restricted zone",
@@ -172,7 +179,8 @@ class BehaviorEngine:
                 combined_factors.extend(e.contributing_factors)
 
             combined = self._create_event(
-                track, BehaviorType.COMBINED_SUSPICIOUS,
+                track,
+                BehaviorType.COMBINED_SUSPICIOUS,
                 details={"individual_events": len(events)},
                 factors=combined_factors,
                 force=True,
@@ -188,9 +196,9 @@ class BehaviorEngine:
         track: Track,
         behavior_type: BehaviorType,
         details: dict = None,
-        factors: List[str] = None,
+        factors: list[str] = None,
         force: bool = False,
-    ) -> Optional[BehaviorEvent]:
+    ) -> BehaviorEvent | None:
         """Create a behavior event with cooldown check."""
         now = time.time()
         key = (track.track_id, behavior_type.value)
@@ -217,11 +225,12 @@ class BehaviorEngine:
             contributing_factors=factors or [],
         )
 
-    def get_recent_events(self, limit: int = 100) -> List[dict]:
+    def get_recent_events(self, limit: int = 100) -> list[dict]:
         return [e.to_dict() for e in list(self._recent_events)[-limit:]]
 
     def get_statistics(self) -> dict:
         from collections import Counter
+
         type_counts = Counter(e.behavior_type.value for e in self._recent_events)
         return {
             "total_events": len(self._recent_events),

@@ -25,14 +25,24 @@ import subprocess
 import sys
 
 BACKEND = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_ROOT = os.path.join(BACKEND, "data", "detector_yolo")   # holds images/ labels/
+DATA_ROOT = os.path.join(BACKEND, "data", "detector_yolo")  # holds images/ labels/
 SPLIT_DIR = os.path.join(BACKEND, "data", "splits")
 OUT_DIR = os.path.join(BACKEND, "data", "colab_pack")
 
 NAMES = [
-    "person", "car", "bus", "truck", "motorcycle", "bicycle", "license_plate",
-    "military_ground_vehicle", "aircraft", "helicopter", "drone_uav",
-    "night_vision_object", "animal",
+    "person",
+    "car",
+    "bus",
+    "truck",
+    "motorcycle",
+    "bicycle",
+    "license_plate",
+    "military_ground_vehicle",
+    "aircraft",
+    "helicopter",
+    "drone_uav",
+    "night_vision_object",
+    "animal",
 ]
 
 
@@ -45,7 +55,7 @@ def _rel_lines(src_txt: str) -> list[str]:
             if not p:
                 continue
             if p.startswith(root):
-                p = "./" + p[len(root):]
+                p = "./" + p[len(root) :]
             elif not p.startswith("./"):
                 # already relative or a different layout — keep as-is
                 p = "./" + p.lstrip("/")
@@ -106,13 +116,17 @@ def main():
     if args.tar:
         print(f"\nBuilding {tar_path} (this takes a while)...")
         subprocess.run(["tar", "-C", DATA_ROOT, "-cf", tar_path, "images", "labels"], check=True)
-        subprocess.run(["tar", "-C", OUT_DIR, "-rf", tar_path,
-                        "train_coarse.txt", "val_coarse.txt", "dataset_coarse.yaml"], check=True)
+        subprocess.run(
+            ["tar", "-C", OUT_DIR, "-rf", tar_path, "train_coarse.txt", "val_coarse.txt", "dataset_coarse.yaml"],
+            check=True,
+        )
         gb = os.path.getsize(tar_path) / 1e9
         print(f"done: {tar_path}  ({gb:.1f} GB)")
     else:
-        print("\nPortable split files written. Re-run with --tar to build the upload archive,\n"
-              "or follow data/colab_pack/UPLOAD.md.")
+        print(
+            "\nPortable split files written. Re-run with --tar to build the upload archive,\n"
+            "or follow data/colab_pack/UPLOAD.md."
+        )
 
 
 if __name__ == "__main__":

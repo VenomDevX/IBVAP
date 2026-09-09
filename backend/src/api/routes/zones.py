@@ -5,9 +5,8 @@ Virtual zone management endpoints.
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from typing import List, Optional
 
-from src.api.auth import require_auth, require_admin
+from src.api.auth import require_admin, require_auth
 from src.database.db import get_database
 from src.database.repository import Repository
 
@@ -19,14 +18,13 @@ class ZoneCreate(BaseModel):
     camera_id: str
     name: str
     type: str = "restricted"
-    points: List[List[int]]
-    color: List[int] = [255, 0, 0]
+    points: list[list[int]]
+    color: list[int] = [255, 0, 0]
     enabled: bool = True
 
 
 @router.get("")
-async def list_zones(camera_id: Optional[str] = None,
-                     user: dict = Depends(require_auth)):
+async def list_zones(camera_id: str | None = None, user: dict = Depends(require_auth)):
     """Get all zones, optionally filtered by camera."""
     db = get_database()
     session = db.get_session()
@@ -48,6 +46,7 @@ async def list_zones(camera_id: Optional[str] = None,
 
     # Also include runtime zones from zone manager
     from src.api.app import get_pipeline
+
     pipeline = get_pipeline()
     if pipeline and not result:
         result = pipeline.zone_manager.get_all_zones()
@@ -59,6 +58,7 @@ async def list_zones(camera_id: Optional[str] = None,
 async def get_camera_zones(camera_id: str, user: dict = Depends(require_auth)):
     """Get zones for a specific camera."""
     from src.api.app import get_pipeline
+
     pipeline = get_pipeline()
     if pipeline:
         zones = pipeline.zone_manager.get_camera_zones(camera_id)
@@ -75,13 +75,13 @@ async def create_zone(zone: ZoneCreate, user: dict = Depends(require_admin)):
 
     repo.create_zone(zone.dict())
     actor = user.get("email") or user.get("user_id") or "unknown"
-    repo.create_audit_log("create_zone", actor,
-                          {"zone_id": zone.zone_id, "camera_id": zone.camera_id})
+    repo.create_audit_log("create_zone", actor, {"zone_id": zone.zone_id, "camera_id": zone.camera_id})
     session.close()
 
     # Add to runtime zone manager
     from src.api.app import get_pipeline
     from src.spatial.zone_manager import Zone
+
     pipeline = get_pipeline()
     if pipeline:
         new_zone = Zone(
@@ -110,6 +110,7 @@ async def delete_zone(zone_id: str, user: dict = Depends(require_admin)):
     session.close()
 
     from src.api.app import get_pipeline
+
     pipeline = get_pipeline()
     if pipeline:
         pipeline.zone_manager.remove_zone(zone_id)

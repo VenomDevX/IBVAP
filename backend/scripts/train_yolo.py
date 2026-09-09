@@ -54,19 +54,20 @@ def train(args):
         return
 
     if not os.path.exists(data_yaml):
-        raise SystemExit(f"data config not found: {data_yaml} "
-                         f"(run scripts/make_clean_split.py first)")
+        raise SystemExit(f"data config not found: {data_yaml} (run scripts/make_clean_split.py first)")
 
-    print(f"data={data_yaml}  epochs={args.epochs}  imgsz={args.imgsz}  "
-          f"batch={args.batch}  workers={args.workers}  optimizer={args.optimizer}")
+    print(
+        f"data={data_yaml}  epochs={args.epochs}  imgsz={args.imgsz}  "
+        f"batch={args.batch}  workers={args.workers}  optimizer={args.optimizer}"
+    )
     model.train(
         data=data_yaml,
         epochs=args.epochs,
         imgsz=args.imgsz,
-        batch=args.batch,            # -1 = auto-fit VRAM
+        batch=args.batch,  # -1 = auto-fit VRAM
         patience=args.patience,
         device=args.device,
-        workers=args.workers,        # 2 is Windows-safe; use 0 on "shared file mapping" errors
+        workers=args.workers,  # 2 is Windows-safe; use 0 on "shared file mapping" errors
         cache=args.cache,
         # --- optimizer: explicit SGD with the well-tuned YOLO fine-tuning schedule
         #     (beats the auto-picked AdamW @ lr~6e-4, which converges very slowly) ---
@@ -83,7 +84,7 @@ def train(args):
         copy_paste=0.15,
         degrees=5.0,
         scale=0.5,
-        deterministic=False,         # cuDNN STREAM_MISMATCH workaround
+        deterministic=False,  # cuDNN STREAM_MISMATCH workaround
         project=args.project,
         name=args.name,
         exist_ok=True,
@@ -91,8 +92,7 @@ def train(args):
     )
     print("\nDone.")
     print(f"  best: {args.project}/{args.name}/weights/best.pt")
-    print(f"\nEvaluate:  python -m ml.eval_detector "
-          f"--weights outputs/training/{RUN_NAME}/weights/best.pt")
+    print(f"\nEvaluate:  python -m ml.eval_detector --weights outputs/training/{RUN_NAME}/weights/best.pt")
 
 
 if __name__ == "__main__":
@@ -106,8 +106,9 @@ if __name__ == "__main__":
     p.add_argument("--device", default="0", help="0 / 0,1 / cpu")
     p.add_argument("--project", default="outputs/training", help="output dir (point at Drive on Colab)")
     p.add_argument("--name", default=RUN_NAME)
-    p.add_argument("--workers", type=int, default=2,
-                   help="dataloader workers; use 0 on Windows 'shared file mapping' errors")
+    p.add_argument(
+        "--workers", type=int, default=2, help="dataloader workers; use 0 on Windows 'shared file mapping' errors"
+    )
     p.add_argument("--optimizer", default="SGD", choices=["SGD", "AdamW", "auto"])
     p.add_argument("--lr0", type=float, default=0.01, help="initial LR (0.01 SGD / 0.001 AdamW)")
     p.add_argument("--cache", default="disk", choices=["disk", "ram", "False"])

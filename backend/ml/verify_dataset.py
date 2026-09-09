@@ -31,6 +31,7 @@ try:
     from ml.make_clean_split import group_key  # type: ignore
 except Exception:
     import sys
+
     sys.path.insert(0, os.path.join(BACKEND, "scripts"))
     from make_clean_split import group_key  # type: ignore
 
@@ -40,11 +41,10 @@ def resolve_images(spec: str, base: str) -> list[str]:
     p = spec if os.path.isabs(spec) else os.path.join(base, spec)
     p = os.path.normpath(p)
     if os.path.isfile(p) and p.lower().endswith(".txt"):
-        with open(p, "r", encoding="utf-8") as fh:
+        with open(p, encoding="utf-8") as fh:
             return [ln.strip().replace("\\", "/") for ln in fh if ln.strip()]
     if os.path.isdir(p):
-        return [os.path.join(p, f).replace("\\", "/")
-                for f in os.listdir(p) if f.lower().endswith(IMG_EXTS)]
+        return [os.path.join(p, f).replace("\\", "/") for f in os.listdir(p) if f.lower().endswith(IMG_EXTS)]
     raise SystemExit(f"cannot resolve images from: {spec} -> {p}")
 
 
@@ -63,7 +63,7 @@ def scan(images: list[str]):
         if not os.path.exists(lbl):
             n_missing += 1
             continue
-        with open(lbl, "r", encoding="utf-8", errors="ignore") as fh:
+        with open(lbl, encoding="utf-8", errors="ignore") as fh:
             lines = [ln for ln in fh if ln.strip()]
         if not lines:
             n_empty += 1
@@ -74,7 +74,9 @@ def scan(images: list[str]):
             if len(p) < 5:
                 continue
             try:
-                cid = int(float(p[0])); w = float(p[3]); h = float(p[4])
+                cid = int(float(p[0]))
+                w = float(p[3])
+                h = float(p[4])
             except ValueError:
                 continue
             hist[cid] += 1
@@ -91,7 +93,7 @@ def main():
     args = ap.parse_args()
 
     data_path = os.path.abspath(args.data)
-    with open(data_path, "r", encoding="utf-8") as fh:
+    with open(data_path, encoding="utf-8") as fh:
         cfg = yaml.safe_load(fh)
     base = cfg.get("path", os.path.dirname(data_path))
     names = [cfg["names"][i] for i in range(cfg["nc"])] if isinstance(cfg["names"], dict) else cfg["names"]
@@ -109,8 +111,7 @@ def main():
     tr_keys = {group_key(os.path.basename(p)) for p in train_imgs}
     va_keys = {group_key(os.path.basename(p)) for p in val_imgs}
     overlap = tr_keys & va_keys
-    print(f"[leak]  train groups {len(tr_keys):,}  val groups {len(va_keys):,}  "
-          f"overlap {len(overlap)}")
+    print(f"[leak]  train groups {len(tr_keys):,}  val groups {len(va_keys):,}  overlap {len(overlap)}")
     if overlap:
         problems.append(f"{len(overlap)} groups in both train and val")
         for k in list(overlap)[:5]:
@@ -119,8 +120,10 @@ def main():
     # --- per split scan ---
     for label, imgs in (("train", train_imgs), ("val", val_imgs)):
         hist, n_ok, n_empty, n_missing, total_box, small = scan(imgs)
-        print(f"\n[{label}]  labelled {n_ok:,} | empty(neg) {n_empty:,} | "
-              f"missing-label {n_missing:,} | boxes {total_box:,} | tiny(<16px@640) {small:,}")
+        print(
+            f"\n[{label}]  labelled {n_ok:,} | empty(neg) {n_empty:,} | "
+            f"missing-label {n_missing:,} | boxes {total_box:,} | tiny(<16px@640) {small:,}"
+        )
         print(f"  {'class':24s} {'instances':>12s}")
         for cid in range(len(names)):
             n = hist.get(cid, 0)
@@ -139,7 +142,7 @@ def main():
         if not os.path.exists(lbl):
             print(f"  {os.path.basename(img)}  -> MISSING LABEL")
             continue
-        with open(lbl, "r", encoding="utf-8") as fh:
+        with open(lbl, encoding="utf-8") as fh:
             body = fh.read().strip().replace("\n", " | ")
         print(f"  {os.path.basename(img)[:60]:60s} -> {body[:90] or '(empty/neg)'}")
 

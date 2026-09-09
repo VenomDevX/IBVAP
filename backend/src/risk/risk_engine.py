@@ -4,8 +4,6 @@ Weighted risk scoring: R = w1*S + w2*T + w3*B + w4*I + w5*V
 Produces explainable risk scores with human-readable reasons.
 """
 
-from typing import List, Tuple
-
 from src.fusion.context_fusion import FusedEvent
 
 
@@ -45,7 +43,7 @@ class RiskEngine:
         # Minimum behavioural risk implied by the detected object class itself
         self.object_scores = config.get("object_scores", {})
 
-    def calculate_risk(self, fused_event: FusedEvent) -> Tuple[float, str, List[str]]:
+    def calculate_risk(self, fused_event: FusedEvent) -> tuple[float, str, list[str]]:
         """
         Calculate risk score for a fused event.
 
@@ -64,7 +62,8 @@ class RiskEngine:
 
         # --- B: Behavioral Risk ---
         b_score, b_reasons = self._calculate_behavioral_risk(
-            fused_event.event_type, fused_event.contributing_factors,
+            fused_event.event_type,
+            fused_event.contributing_factors,
             fused_event.object_type,
         )
         reasons.extend(b_reasons)
@@ -79,11 +78,11 @@ class RiskEngine:
 
         # Weighted combination
         risk_score = (
-            self.w_spatial * s_score +
-            self.w_temporal * t_score +
-            self.w_behavioral * b_score +
-            self.w_identity * i_score +
-            self.w_vehicle * v_score
+            self.w_spatial * s_score
+            + self.w_temporal * t_score
+            + self.w_behavioral * b_score
+            + self.w_identity * i_score
+            + self.w_vehicle * v_score
         )
 
         # Clamp to 0-100
@@ -105,7 +104,7 @@ class RiskEngine:
                 fused_event.contributing_factors.append(reason)
         return fused_event
 
-    def _calculate_spatial_risk(self, ctx: dict) -> Tuple[float, List[str]]:
+    def _calculate_spatial_risk(self, ctx: dict) -> tuple[float, list[str]]:
         """Calculate spatial component of risk."""
         score = 0.0
         reasons = []
@@ -128,7 +127,7 @@ class RiskEngine:
 
         return score, reasons
 
-    def _calculate_temporal_risk(self, ctx: dict) -> Tuple[float, List[str]]:
+    def _calculate_temporal_risk(self, ctx: dict) -> tuple[float, list[str]]:
         """Calculate temporal component of risk."""
         score = 0.0
         reasons = []
@@ -150,9 +149,9 @@ class RiskEngine:
 
         return score, reasons
 
-    def _calculate_behavioral_risk(self, event_type: str,
-                                    factors: List[str],
-                                    object_type: str = "") -> Tuple[float, List[str]]:
+    def _calculate_behavioral_risk(
+        self, event_type: str, factors: list[str], object_type: str = ""
+    ) -> tuple[float, list[str]]:
         """Calculate behavioral component of risk."""
         score = 0.0
         reasons = []
@@ -196,7 +195,7 @@ class RiskEngine:
 
         return score, reasons
 
-    def _calculate_identity_risk(self, ctx: dict) -> Tuple[float, List[str]]:
+    def _calculate_identity_risk(self, ctx: dict) -> tuple[float, list[str]]:
         """Calculate identity component of risk."""
         score = 0.0
         reasons = []
@@ -214,7 +213,7 @@ class RiskEngine:
 
         return score, reasons
 
-    def _calculate_vehicle_risk(self, ctx: dict) -> Tuple[float, List[str]]:
+    def _calculate_vehicle_risk(self, ctx: dict) -> tuple[float, list[str]]:
         """Calculate vehicle component of risk."""
         score = 0.0
         reasons = []

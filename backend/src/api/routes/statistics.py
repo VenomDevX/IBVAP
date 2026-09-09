@@ -16,6 +16,7 @@ router = APIRouter()
 async def get_statistics(user: dict = Depends(require_auth)):
     """Get comprehensive dashboard statistics."""
     from src.api.app import get_pipeline
+
     pipeline = get_pipeline()
 
     result = {
@@ -46,6 +47,7 @@ async def get_statistics(user: dict = Depends(require_auth)):
 async def get_summary(user: dict = Depends(require_auth)):
     """Get a quick summary for the dashboard header."""
     from src.api.app import get_pipeline
+
     pipeline = get_pipeline()
 
     summary = {
@@ -60,16 +62,14 @@ async def get_summary(user: dict = Depends(require_auth)):
     if pipeline:
         summary["total_cameras"] = len(pipeline.camera_pipelines)
         summary["online_cameras"] = sum(
-            1 for p in pipeline.camera_pipelines.values()
-            if p.video_source.status.value == "online"
+            1 for p in pipeline.camera_pipelines.values() if p.video_source.status.value == "online"
         )
         alert_stats = pipeline.alert_engine.get_statistics()
         summary["total_alerts"] = alert_stats.get("total_alerts", 0)
         summary["unreviewed_alerts"] = alert_stats.get("unreviewed", 0)
         summary["critical_alerts"] = alert_stats.get("by_level", {}).get("critical", 0)
         summary["active_tracks"] = sum(
-            p.get_stats().get("active_tracks", 0)
-            for p in pipeline.camera_pipelines.values()
+            p.get_stats().get("active_tracks", 0) for p in pipeline.camera_pipelines.values()
         )
 
     return summary
@@ -78,9 +78,10 @@ async def get_summary(user: dict = Depends(require_auth)):
 @router.get("/timeseries")
 async def get_timeseries(user: dict = Depends(require_auth)):
     """Get alert counts bucketed by hour for the last 24 hours."""
-    from src.api.app import get_pipeline
     import time
     from datetime import datetime
+
+    from src.api.app import get_pipeline
 
     pipeline = get_pipeline()
     if not pipeline:
@@ -116,8 +117,9 @@ async def get_timeseries(user: dict = Depends(require_auth)):
 async def get_threats(user: dict = Depends(require_auth)):
     """Get active threats and risk scores across all cameras."""
     from src.api.app import get_pipeline
+
     pipeline = get_pipeline()
-    
+
     if not pipeline:
         return {"top_threats": [], "camera_distribution": {}}
 
@@ -127,24 +129,26 @@ async def get_threats(user: dict = Depends(require_auth)):
     for cam_id, p in pipeline.camera_pipelines.items():
         tracks = p.track_manager.get_active_tracks()
         distribution[cam_id] = 0
-        
+
         for tid, track in tracks.items():
             if track.risk_score > 0:
                 distribution[cam_id] += 1
-                all_tracks.append({
-                    "track_id": f"{cam_id}-{tid}",
-                    "camera_id": cam_id,
-                    "object_type": track.object_type,
-                    "risk_score": round(track.risk_score, 1),
-                    "risk_level": track.risk_level,
-                    "risk_factors": track.risk_factors,
-                    "duration": round(track.duration, 1),
-                })
+                all_tracks.append(
+                    {
+                        "track_id": f"{cam_id}-{tid}",
+                        "camera_id": cam_id,
+                        "object_type": track.object_type,
+                        "risk_score": round(track.risk_score, 1),
+                        "risk_level": track.risk_level,
+                        "risk_factors": track.risk_factors,
+                        "duration": round(track.duration, 1),
+                    }
+                )
 
     # Sort by risk score descending
     all_tracks.sort(key=lambda x: x["risk_score"], reverse=True)
 
     return {
         "top_threats": all_tracks[:10],  # Top 10 current threats
-        "camera_distribution": distribution
+        "camera_distribution": distribution,
     }

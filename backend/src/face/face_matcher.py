@@ -5,7 +5,7 @@ Matches face embeddings against an authorized gallery.
 
 import json
 import os
-from typing import Dict, List
+
 import numpy as np
 from loguru import logger
 
@@ -18,23 +18,26 @@ class FaceMatcher:
     Results: known / unknown / uncertain.
     """
 
-    def __init__(self, gallery_path: str = "./models/face/gallery.json",
-                 similarity_threshold: float = 0.45,
-                 uncertain_threshold: float = 0.35):
+    def __init__(
+        self,
+        gallery_path: str = "./models/face/gallery.json",
+        similarity_threshold: float = 0.45,
+        uncertain_threshold: float = 0.35,
+    ):
         self.gallery_path = gallery_path
         self.similarity_threshold = similarity_threshold
         self.uncertain_threshold = uncertain_threshold
         self.embedder = FaceEmbedder()
 
         # Gallery: {identity_label: [embeddings]}
-        self._gallery: Dict[str, List[np.ndarray]] = {}
+        self._gallery: dict[str, list[np.ndarray]] = {}
         self._load_gallery()
 
     def _load_gallery(self):
         """Load authorized face gallery from file."""
         if os.path.exists(self.gallery_path):
             try:
-                with open(self.gallery_path, "r") as f:
+                with open(self.gallery_path) as f:
                     data = json.load(f)
                 for label, embs in data.items():
                     self._gallery[label] = [np.array(e, dtype=np.float32) for e in embs]

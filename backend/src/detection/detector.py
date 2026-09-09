@@ -5,10 +5,9 @@ Wrapper around Ultralytics YOLO for person/vehicle detection.
 
 import time
 from collections import deque
-from typing import List, Optional, Dict
 
-import numpy as np
 import cv2
+import numpy as np
 from loguru import logger
 
 try:
@@ -19,9 +18,8 @@ except ImportError:
 
 from src.detection.detection_result import DetectionResult, FrameDetections
 
-
 # COCO class names for the classes we care about (stock yolov8n fallback)
-COCO_TARGET_CLASSES: Dict[int, str] = {
+COCO_TARGET_CLASSES: dict[int, str] = {
     0: "person",
     1: "bicycle",
     2: "car",
@@ -33,6 +31,7 @@ COCO_TARGET_CLASSES: Dict[int, str] = {
 try:
     from ml.taxonomy import normalize as _normalize_class
 except Exception:  # ml package not importable (e.g. isolated tests)
+
     def _normalize_class(name: str) -> str:  # type: ignore
         return (name or "unknown").strip().lower().replace(" ", "_")
 
@@ -52,7 +51,7 @@ class ObjectDetector:
         model_path: str = "yolov8n.pt",
         confidence_threshold: float = 0.40,
         nms_threshold: float = 0.45,
-        target_classes: Optional[List[int]] = None,
+        target_classes: list[int] | None = None,
         device: str = "auto",
         imgsz: int = 640,
         detect_all: bool = False,
@@ -66,9 +65,7 @@ class ObjectDetector:
         self._device = device
         self._model_path = model_path
         # id -> canonical class name; populated from the model after load
-        self._id2name: Dict[int, str] = {
-            k: _normalize_class(v) for k, v in COCO_TARGET_CLASSES.items()
-        }
+        self._id2name: dict[int, str] = {k: _normalize_class(v) for k, v in COCO_TARGET_CLASSES.items()}
 
         # Performance tracking
         self._inference_times = deque(maxlen=200)
@@ -89,26 +86,23 @@ class ObjectDetector:
             # Auto-detect device
             if self._device == "auto":
                 import torch
+
                 self._device = "cuda" if torch.cuda.is_available() else "cpu"
 
             # Prefer the model's own class names (custom coarse model)
             model_names = getattr(self._model, "names", None)
             if model_names:
-                self._id2name = {
-                    int(k): _normalize_class(v) for k, v in dict(model_names).items()
-                }
+                self._id2name = {int(k): _normalize_class(v) for k, v in dict(model_names).items()}
 
             logger.success(
-                f"Detection model loaded on {self._device} "
-                f"({len(self._id2name)} classes, detect_all={self.detect_all})"
+                f"Detection model loaded on {self._device} ({len(self._id2name)} classes, detect_all={self.detect_all})"
             )
 
         except Exception as e:
             logger.error(f"Failed to load detection model: {e}")
             self._model = None
 
-    def detect(self, frame: np.ndarray, frame_id: int = 0,
-               camera_id: str = "") -> FrameDetections:
+    def detect(self, frame: np.ndarray, frame_id: int = 0, camera_id: str = "") -> FrameDetections:
         """
         Run object detection on a single frame.
 
@@ -121,15 +115,10 @@ class ObjectDetector:
             FrameDetections containing all detected objects
         """
         timestamp = time.time()
-        detections: List[DetectionResult] = []
+        detections: list[DetectionResult] = []
 
         if self._model is None:
-            return FrameDetections(
-                frame_id=frame_id,
-                camera_id=camera_id,
-                timestamp=timestamp,
-                detections=detections
-            )
+            return FrameDetections(frame_id=frame_id, camera_id=camera_id, timestamp=timestamp, detections=detections)
 
         try:
             start_time = time.time()
@@ -174,12 +163,7 @@ class ObjectDetector:
         except Exception as e:
             logger.error(f"Detection error on frame {frame_id}: {e}")
 
-        return FrameDetections(
-            frame_id=frame_id,
-            camera_id=camera_id,
-            timestamp=timestamp,
-            detections=detections
-        )
+        return FrameDetections(frame_id=frame_id, camera_id=camera_id, timestamp=timestamp, detections=detections)
 
     def get_average_inference_time(self) -> float:
         """Get average inference time in milliseconds."""
@@ -194,18 +178,19 @@ class ObjectDetector:
         return 1000.0 / avg_ms if avg_ms > 0 else 0.0
 
     @staticmethod
-    def draw_detections(frame: np.ndarray, frame_detections: FrameDetections,
-                        show_confidence: bool = True) -> np.ndarray:
+    def draw_detections(
+        frame: np.ndarray, frame_detections: FrameDetections, show_confidence: bool = True
+    ) -> np.ndarray:
         """Draw bounding boxes and labels on frame."""
         annotated = frame.copy()
 
         colors = {
-            "person": (0, 255, 0),      # Green
-            "car": (255, 165, 0),        # Orange
-            "motorcycle": (255, 255, 0), # Yellow
-            "bus": (0, 165, 255),         # Orange-blue
-            "truck": (0, 0, 255),         # Red
-            "bicycle": (255, 0, 255),     # Magenta
+            "person": (0, 255, 0),  # Green
+            "car": (255, 165, 0),  # Orange
+            "motorcycle": (255, 255, 0),  # Yellow
+            "bus": (0, 165, 255),  # Orange-blue
+            "truck": (0, 0, 255),  # Red
+            "bicycle": (255, 0, 255),  # Magenta
         }
 
         for det in frame_detections.detections:
@@ -220,15 +205,8 @@ class ObjectDetector:
             if show_confidence:
                 label += f" {det.confidence:.2f}"
 
-            (label_w, label_h), _ = cv2.getTextSize(
-                label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1
-            )
-            cv2.rectangle(
-                annotated, (x1, y1 - label_h - 8), (x1 + label_w, y1), color, -1
-            )
-            cv2.putText(
-                annotated, label, (x1, y1 - 4),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1
-            )
+            (label_w, label_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+            cv2.rectangle(annotated, (x1, y1 - label_h - 8), (x1 + label_w, y1), color, -1)
+            cv2.putText(annotated, label, (x1, y1 - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
         return annotated

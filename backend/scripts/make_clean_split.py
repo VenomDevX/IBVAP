@@ -28,6 +28,7 @@ Usage:
 
 import os
 import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # backend/ on path for `ml.*`
 import argparse
 import hashlib
@@ -48,8 +49,8 @@ TRAILING_FRAME = re.compile(r"_\d{3,}$")
 
 def source_key(filename: str) -> str:
     base = RF_HASH.sub("", filename)
-    if base == filename:                       # not a Roboflow-augmented name
-        base = os.path.splitext(filename)[0]   # ...so just drop the extension
+    if base == filename:  # not a Roboflow-augmented name
+        base = os.path.splitext(filename)[0]  # ...so just drop the extension
     return re.sub(r"_jpe?g$", "", base, flags=re.I)
 
 
@@ -79,6 +80,7 @@ def label_for(abs_img: str) -> str:
 def coarse_names():
     try:
         from ml.taxonomy import COARSE_NAMES
+
         return list(COARSE_NAMES)
     except Exception:
         return None
@@ -86,15 +88,19 @@ def coarse_names():
 
 def fine_names():
     import yaml
-    with open(os.path.join(CONFIG_DIR, "dataset.yaml"), "r", encoding="utf-8") as fh:
+
+    with open(os.path.join(CONFIG_DIR, "dataset.yaml"), encoding="utf-8") as fh:
         src = yaml.safe_load(fh)
     return [src["names"][i] for i in range(src["nc"])]
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--src", default=os.path.join(BACKEND, "data", "detector_yolo"),
-                    help="dataset root containing images/ and labels/")
+    ap.add_argument(
+        "--src",
+        default=os.path.join(BACKEND, "data", "detector_yolo"),
+        help="dataset root containing images/ and labels/",
+    )
     ap.add_argument("--tag", default="coarse", help="suffix for the output files")
     ap.add_argument("--names", choices=["coarse", "fine"], default="coarse")
     ap.add_argument("--val-fraction", type=float, default=0.10)
@@ -199,12 +205,14 @@ def main():
     # 8. report
     tf = Counter(family(os.path.basename(p)) for p in train_paths)
     vf = Counter(family(os.path.basename(p)) for p in val_paths)
-    print(f"\nSplit:  train {len(train_paths):,}  |  val {len(val_paths):,} "
-          f"({100*len(val_paths)/len(all_files):.1f}% val)")
+    print(
+        f"\nSplit:  train {len(train_paths):,}  |  val {len(val_paths):,} "
+        f"({100 * len(val_paths) / len(all_files):.1f}% val)"
+    )
     print("Per-family (train / val):")
     for fam in sorted(set(tf) | set(vf), key=lambda k: -(tf[k] + vf[k])):
         n_t, n_v = tf.get(fam, 0), vf.get(fam, 0)
-        print(f"  {fam:12s} {n_t:>8,} / {n_v:>6,}   ({100*n_v/max(1,n_t+n_v):4.1f}% val)")
+        print(f"  {fam:12s} {n_t:>8,} / {n_v:>6,}   ({100 * n_v / max(1, n_t + n_v):4.1f}% val)")
     print(f"\nWrote:\n  {train_txt}\n  {val_txt}\n  {out_yaml}")
     print(f"\nNext: python scripts/train_yolo.py --data configs/dataset_{args.tag}.yaml --model yolo11s.pt")
 

@@ -53,8 +53,7 @@ def main():
 
     names = model.names  # {id: name}
     print("\n" + "=" * 78)
-    print(f"{'id':>3}  {'class':22s} {'images':>7} {'inst':>8} {'P':>7} {'R':>7} "
-          f"{'mAP50':>8} {'mAP50-95':>9}")
+    print(f"{'id':>3}  {'class':22s} {'images':>7} {'inst':>8} {'P':>7} {'R':>7} {'mAP50':>8} {'mAP50-95':>9}")
     print("-" * 78)
     # per-class arrays live on m.box; ap_class_index maps row -> class id
     try:
@@ -62,13 +61,14 @@ def main():
         p, r = m.box.p, m.box.r
         ap50, ap = m.box.ap50, m.box.ap
         for row, cid in enumerate(idx):
-            print(f"{cid:>3}  {str(names[cid]):22s} {'-':>7} "
-                  f"{'-':>8} {p[row]:7.3f} {r[row]:7.3f} {ap50[row]:8.3f} {ap[row]:9.3f}")
+            print(
+                f"{cid:>3}  {str(names[cid]):22s} {'-':>7} "
+                f"{'-':>8} {p[row]:7.3f} {r[row]:7.3f} {ap50[row]:8.3f} {ap[row]:9.3f}"
+            )
     except Exception as e:
         print(f"(per-class array unpack failed: {e}; see the CSV/plots in {out_dir}/{run})")
     print("-" * 78)
-    print(f"{'':3}  {'ALL':22s} {'':>7} {'':>8} "
-          f"{m.box.mp:7.3f} {m.box.mr:7.3f} {m.box.map50:8.3f} {m.box.map:9.3f}")
+    print(f"{'':3}  {'ALL':22s} {'':>7} {'':>8} {m.box.mp:7.3f} {m.box.mr:7.3f} {m.box.map50:8.3f} {m.box.map:9.3f}")
     print("=" * 78)
     print(f"\nplots + confusion matrix + predictions.json -> {os.path.join(out_dir, run)}")
     print("Weak classes (low mAP50): add data / raise imgsz / bump copy_paste, then retrain.")

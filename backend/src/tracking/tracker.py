@@ -3,10 +3,8 @@ IBVAP — ByteTrack Multi-Object Tracker
 Integrates ByteTrack for persistent object tracking across frames.
 """
 
-from typing import Dict, Optional
-
-import numpy as np
 import cv2
+import numpy as np
 from loguru import logger
 
 try:
@@ -40,19 +38,19 @@ class MultiObjectTracker:
         self._tracker = self._make_bytetrack(max_age, iou_threshold)
 
         # Active tracks
-        self._tracks: Dict[int, Track] = {}
+        self._tracks: dict[int, Track] = {}
         self._next_id: int = 1
 
     @property
-    def active_tracks(self) -> Dict[int, Track]:
+    def active_tracks(self) -> dict[int, Track]:
         """Get all currently active tracks."""
         return {tid: t for tid, t in self._tracks.items() if t.is_active}
 
     @property
-    def all_tracks(self) -> Dict[int, Track]:
+    def all_tracks(self) -> dict[int, Track]:
         return self._tracks
 
-    def update(self, frame_detections: FrameDetections) -> Dict[int, Track]:
+    def update(self, frame_detections: FrameDetections) -> dict[int, Track]:
         """
         Update tracker with new frame detections.
 
@@ -107,9 +105,7 @@ class MultiObjectTracker:
                     cls_id = int(tracked.class_id[i])
 
                     # Map class ID to name — detector first, COCO fallback
-                    class_name = id2name.get(
-                        cls_id, COCO_TARGET_CLASSES.get(cls_id, f"class_{cls_id}")
-                    )
+                    class_name = id2name.get(cls_id, COCO_TARGET_CLASSES.get(cls_id, f"class_{cls_id}"))
 
                     if tid in self._tracks:
                         # Update existing track
@@ -155,7 +151,7 @@ class MultiObjectTracker:
         for tid in dead:
             del self._tracks[tid]
 
-    def get_track(self, track_id: int) -> Optional[Track]:
+    def get_track(self, track_id: int) -> Track | None:
         """Get a specific track by ID."""
         return self._tracks.get(track_id)
 
@@ -181,9 +177,9 @@ class MultiObjectTracker:
         self._tracker = self._make_bytetrack(self.max_age, self.iou_threshold)
 
     @staticmethod
-    def draw_tracks(frame: np.ndarray, tracks: Dict[int, Track],
-                    show_trajectory: bool = True,
-                    trail_length: int = 30) -> np.ndarray:
+    def draw_tracks(
+        frame: np.ndarray, tracks: dict[int, Track], show_trajectory: bool = True, trail_length: int = 30
+    ) -> np.ndarray:
         """Draw tracking information on frame."""
         annotated = frame.copy()
 
@@ -211,10 +207,7 @@ class MultiObjectTracker:
             label = f"ID:{tid} {track.object_type}"
             (lw, lh), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
             cv2.rectangle(annotated, (x1, y1 - lh - 8), (x1 + lw, y1), color, -1)
-            cv2.putText(
-                annotated, label, (x1, y1 - 4),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1
-            )
+            cv2.putText(annotated, label, (x1, y1 - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
             # Trajectory trail
             if show_trajectory and len(track.trajectory) > 1:

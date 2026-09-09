@@ -19,7 +19,12 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from src.database.db import get_database
 from src.database.models import (
-    AlertModel, EventModel, TrackModel, IdentityResultModel, ANPRResultModel, AuditLogModel,
+    AlertModel,
+    ANPRResultModel,
+    AuditLogModel,
+    EventModel,
+    IdentityResultModel,
+    TrackModel,
 )
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -62,11 +67,14 @@ def main():
         # orphaned snapshot files
         snap_dir = os.getenv("IBVAP_SNAPSHOTS_DIR", os.path.join(BACKEND, "outputs", "snapshots"))
         referenced = {
-            os.path.basename(p) for (p,) in
-            session.query(AlertModel.snapshot_path).filter(AlertModel.snapshot_path.isnot(None)).all()
+            os.path.basename(p)
+            for (p,) in session.query(AlertModel.snapshot_path).filter(AlertModel.snapshot_path.isnot(None)).all()
         }
-        orphans = [f for f in os.listdir(snap_dir)
-                   if f.lower().endswith(".jpg") and f not in referenced] if os.path.isdir(snap_dir) else []
+        orphans = (
+            [f for f in os.listdir(snap_dir) if f.lower().endswith(".jpg") and f not in referenced]
+            if os.path.isdir(snap_dir)
+            else []
+        )
         print(f"orphaned snapshot files: {len(orphans)}")
         if not args.dry_run:
             for f in orphans:

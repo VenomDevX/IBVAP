@@ -1,4 +1,5 @@
 """Every route requires auth; admin routes require the admin role; JWT hardening."""
+
 import pytest
 
 from tests.conftest import make_token
@@ -54,7 +55,9 @@ def test_audit_route_rejects_operator(client, monkeypatch):
 def test_jwt_rejects_alg_none_and_bad_sig(monkeypatch):
     monkeypatch.setenv("SUPABASE_JWT_SECRET", "s3cret")
     import importlib
+
     import src.api.auth as auth
+
     importlib.reload(auth)
     import jwt as pyjwt
     from fastapi import HTTPException

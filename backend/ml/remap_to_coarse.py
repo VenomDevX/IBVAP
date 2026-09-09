@@ -30,7 +30,7 @@ import os
 import shutil
 from collections import Counter
 
-from ml.taxonomy import FINE_TO_COARSE, COARSE_NAMES, NUM_COARSE
+from ml.taxonomy import COARSE_NAMES, FINE_TO_COARSE, NUM_COARSE
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BACKEND = os.path.dirname(HERE)
@@ -73,7 +73,10 @@ def clean_and_remap(lines: list[str]) -> tuple[list[str], Counter, int]:
         if w <= 0 or h <= 0 or x < 0 or y < 0:
             dropped += 1
             continue
-        x = min(1.0, x); y = min(1.0, y); w = min(1.0, w); h = min(1.0, h)
+        x = min(1.0, x)
+        y = min(1.0, y)
+        w = min(1.0, w)
+        h = min(1.0, h)
         cid = FINE_TO_COARSE[fid]
         out.append(f"{cid} {x:.6f} {y:.6f} {w:.6f} {h:.6f}\n")
         hist[cid] += 1
@@ -105,7 +108,7 @@ def process_split(src_root: str, dst_root: str, split: str, copy: bool):
         if not os.path.exists(lbl_in):
             n_nolabel += 1
             continue
-        with open(lbl_in, "r", encoding="utf-8", errors="ignore") as fh:
+        with open(lbl_in, encoding="utf-8", errors="ignore") as fh:
             raw = fh.readlines()
         for ln in raw:
             p = ln.split()
@@ -126,8 +129,10 @@ def process_split(src_root: str, dst_root: str, split: str, copy: bool):
         if (i + 1) % 10000 == 0:
             print(f"    {split}: {i + 1:,}/{len(imgs):,}")
 
-    print(f"  {split}: {len(imgs):,} images  |  {n_nolabel:,} without a label  |  "
-          f"{n_empty:,} empty(neg)  |  {n_dropped:,} boxes dropped in cleaning")
+    print(
+        f"  {split}: {len(imgs):,} images  |  {n_nolabel:,} without a label  |  "
+        f"{n_empty:,} empty(neg)  |  {n_dropped:,} boxes dropped in cleaning"
+    )
     return before_hist, after_hist, n_dropped, n_empty, n_nolabel
 
 
@@ -162,8 +167,10 @@ def main():
         if zero == ["license_plate"]:
             print("     (expected — plates are added next by scripts/add_plates.py)")
     print(f"\nTotal boxes:  before {sum(total_before.values()):,}  ->  after {sum(total_after.values()):,}")
-    print("\nNext:  python scripts/add_plates.py --src \"<...v13i.yolov8>\" "
-          "--dst data/detector_yolo --purge-old --limit 18000")
+    print(
+        '\nNext:  python scripts/add_plates.py --src "<...v13i.yolov8>" '
+        "--dst data/detector_yolo --purge-old --limit 18000"
+    )
 
 
 if __name__ == "__main__":
