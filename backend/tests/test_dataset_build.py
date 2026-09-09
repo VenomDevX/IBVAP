@@ -639,3 +639,21 @@ def test_verify_clean_dataset_returns_no_problems(tmp_path):
     emit_detector(tr, va, out)
     write_dataset_yaml(out)
     assert verify(out) == []
+
+
+# ──────────────────────────────────────────────────────────────
+# CLI orchestrator
+# ──────────────────────────────────────────────────────────────
+
+
+def test_build_dataset_cli_help_runs():
+    import subprocess
+
+    r = subprocess.run(
+        [sys.executable, "scripts/build_dataset.py", "--help"],
+        capture_output=True, text=True,
+        cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    )
+    assert r.returncode == 0, r.stderr
+    for flag in ("--target-detector", "--threshold", "--cap", "--force", "--dry-run"):
+        assert flag in r.stdout
