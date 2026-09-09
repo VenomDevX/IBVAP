@@ -31,45 +31,17 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # backend/ on path for `ml.*`
 import argparse
-import hashlib
 import re
 from collections import Counter, defaultdict
+
+# Grouping helpers are shared with ml.dataset_build.split — see ml/grouping.py.
+# IMG_EXTS is re-exported here because the scanning code below still uses it.
+from ml.grouping import IMG_EXTS, family, group_key, source_key, stable_bucket  # noqa: F401
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BACKEND = os.path.dirname(HERE)
 SPLIT_DIR = os.path.join(BACKEND, "data", "splits")
 CONFIG_DIR = os.path.join(BACKEND, "configs")
-
-IMG_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
-RF_HASH = re.compile(r"\.rf\.[0-9a-fA-F]{6,}\.(?:jpg|jpeg|png|bmp|webp)$", re.I)
-# our own frame-sequence prefixes (from convert_mot17 / convert_virat)
-CLIP_PREFIXES = ("mot_", "virat_")
-TRAILING_FRAME = re.compile(r"_\d{3,}$")
-
-
-def source_key(filename: str) -> str:
-    base = RF_HASH.sub("", filename)
-    if base == filename:  # not a Roboflow-augmented name
-        base = os.path.splitext(filename)[0]  # ...so just drop the extension
-    return re.sub(r"_jpe?g$", "", base, flags=re.I)
-
-
-def group_key(filename: str) -> str:
-    """Twin-safe grouping key: source image, or source clip for MOT/VIRAT frames."""
-    k = source_key(filename)
-    if k.startswith(CLIP_PREFIXES):
-        k = TRAILING_FRAME.sub("", k)  # drop the frame number -> clip id
-    return k
-
-
-def family(filename: str) -> str:
-    m = re.match(r"([a-zA-Z]+)", filename)
-    return m.group(1) if m else "misc"
-
-
-def stable_bucket(key: str, seed: int) -> float:
-    h = hashlib.md5(f"{seed}:{key}".encode()).hexdigest()
-    return int(h[:8], 16) / 0xFFFFFFFF
 
 
 def label_for(abs_img: str) -> str:
