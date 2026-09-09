@@ -1,41 +1,31 @@
 import { useEffect, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { useAuth } from '../context/AuthContext';
-import { useNavigate } from 'react-router-dom';
 
 const TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
 export function useSessionTimeout() {
   const { isAuthenticated, logout } = useAuth();
-  const navigate = useNavigate();
+  const router = useRouter();
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const resetTimeout = () => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-    }
-    timeoutRef.current = setTimeout(() => {
-      if (isAuthenticated) {
-        logout();
-        navigate('/login?timeout=1');
-      }
-    }, TIMEOUT_MS);
-  };
 
   useEffect(() => {
     if (!isAuthenticated) return;
 
-    // Set initial timeout
-    resetTimeout();
+    const reset = () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      timeoutRef.current = setTimeout(() => {
+        logout().finally(() => router.replace('/login?timeout=1'));
+      }, TIMEOUT_MS);
+    };
 
-    // Add event listeners
     const events = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll'];
-    const handleActivity = () => resetTimeout();
-
-    events.forEach(event => window.addEventListener(event, handleActivity));
+    events.forEach(e => window.addEventListener(e, reset, { passive: true }));
+    reset();
 
     return () => {
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      events.forEach(event => window.removeEventListener(event, handleActivity));
+      events.forEach(e => window.removeEventListener(e, reset));
     };
-  }, [isAuthenticated, logout, navigate]);
+  }, [isAuthenticated, logout, router]);
 }

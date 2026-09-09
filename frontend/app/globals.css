@@ -1,0 +1,214 @@
+@import "tailwindcss";
+
+/* Light theme is opt-in via a class on <html>; dark is the default (no class). */
+@custom-variant light (&:where(.light-theme, .light-theme *));
+
+/* =============================================================================
+   Design tokens — IBVAP border-surveillance console
+   Dark palette is unchanged from the original build. Runtime-switchable, so
+   they live as CSS custom properties and are mapped into Tailwind below.
+   ========================================================================== */
+:root {
+  --bg-primary: #121212;
+  --bg-secondary: #1a1a1a;
+  --bg-card: #222222;
+  --bg-card-hover: #2a2a2a;
+  --bg-input: #2a2a2a;
+  --border-color: #333333;
+  --border-hover: #444444;
+  --text-primary: #f5f5f5;
+  --text-secondary: #a0a0a0;
+  --text-muted: #666666;
+  --accent-primary: #2563eb;
+  --accent-secondary: #1d4ed8;
+  --success: #16a34a;
+  --warning: #d97706;
+  --danger: #dc2626;
+  --critical: #991b1b;
+  --info: #0891b2;
+
+  /* coded risk scale — replaces the emoji indicators */
+  --risk-low: #16a34a;
+  --risk-medium: #d97706;
+  --risk-high: #ea580c;
+  --risk-critical: #dc2626;
+  --risk-unknown: #6b7280;
+
+  --skeleton-start: #2a2a2a;
+  --skeleton-end: #3f3f3f;
+
+  /* layered stacking context — one ladder, no ad-hoc z-index */
+  --z-topbar: 50;
+  --z-overlay: 90;
+  --z-sidebar: 100;
+  --z-toast: 1000;
+  --z-banner: 9999;
+
+  color-scheme: dark;
+}
+
+.light-theme {
+  --bg-primary: #f8fafc;
+  --bg-secondary: #ffffff;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f1f5f9;
+  --bg-input: #f1f5f9;
+  --border-color: #e2e8f0;
+  --border-hover: #cbd5e1;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #94a3b8;
+  --accent-primary: #2563eb;
+  --accent-secondary: #1e3a8a;
+  --skeleton-start: #e2e8f0;
+  --skeleton-end: #cbd5e1;
+
+  color-scheme: light;
+}
+
+/* Map tokens to Tailwind utilities (bg-card, text-fg-muted, border-default, …). */
+@theme inline {
+  --color-base: var(--bg-primary);
+  --color-surface: var(--bg-secondary);
+  --color-card: var(--bg-card);
+  --color-elevated: var(--bg-card-hover);
+  --color-input: var(--bg-input);
+
+  --color-default: var(--border-color);
+  --color-strong: var(--border-hover);
+
+  --color-fg: var(--text-primary);
+  --color-fg-muted: var(--text-secondary);
+  --color-fg-subtle: var(--text-muted);
+
+  --color-accent: var(--accent-primary);
+  --color-accent-hover: var(--accent-secondary);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-critical: var(--critical);
+  --color-info: var(--info);
+
+  --color-risk-low: var(--risk-low);
+  --color-risk-medium: var(--risk-medium);
+  --color-risk-high: var(--risk-high);
+  --color-risk-critical: var(--risk-critical);
+  --color-risk-unknown: var(--risk-unknown);
+
+  --radius-sm: 2px;
+  --radius-md: 2px;
+  --radius-lg: 3px;
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, "JetBrains Mono", "Fira Code", monospace;
+
+  --default-transition-duration: 150ms;
+}
+
+@layer base {
+  html {
+    font-size: 14px;
+  }
+  body {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  /* preflight resets borders to currentColor; keep the token default instead */
+  *,
+  ::before,
+  ::after {
+    border-color: var(--border-color);
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 1px;
+  }
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 2px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+  }
+}
+
+/* --- Keyframes (all four are referenced by components) --- */
+@keyframes skeleton-loading {
+  0% { background-color: var(--skeleton-start); }
+  100% { background-color: var(--skeleton-end); }
+}
+@keyframes slide-in {
+  from { transform: translateX(12px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+@keyframes fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes pulse-ring {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+@utility skeleton {
+  animation: skeleton-loading 1s linear infinite alternate;
+  border-radius: 2px;
+  color: transparent !important;
+  user-select: none;
+  pointer-events: none;
+}
+
+/* --- Leaflet: match the console surfaces --- */
+.leaflet-container {
+  background: var(--bg-secondary);
+  font-family: var(--font-sans);
+}
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  background: var(--bg-card);
+  color: var(--text-primary);
+  box-shadow: none;
+  border: 1px solid var(--border-color);
+  border-radius: 2px;
+}
+.leaflet-popup-content {
+  margin: 12px 14px;
+  font-size: 0.85rem;
+}
+.leaflet-bar a {
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+}
+.leaflet-bar a:hover {
+  background: var(--bg-card-hover);
+}
+
+/* --- ApexCharts: tooltip + crosshair on the dark surface --- */
+.apexcharts-tooltip,
+.apexcharts-tooltip.apexcharts-theme-dark {
+  background: var(--bg-card) !important;
+  border: 1px solid var(--border-color) !important;
+  color: var(--text-primary) !important;
+  box-shadow: none !important;
+}
+.apexcharts-tooltip-title {
+  background: var(--bg-secondary) !important;
+  border-bottom: 1px solid var(--border-color) !important;
+}
+.apexcharts-xaxistooltip,
+.apexcharts-yaxistooltip {
+  background: var(--bg-card) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-primary) !important;
+}
