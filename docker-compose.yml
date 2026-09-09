@@ -45,8 +45,8 @@ services:
     build:
       context: ./frontend
       args:
-        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:?set VITE_SUPABASE_URL in a .env next to docker-compose.yml}
-        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:?set VITE_SUPABASE_ANON_KEY}
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-${VITE_SUPABASE_URL:?set NEXT_PUBLIC_SUPABASE_URL in a .env next to docker-compose.yml}}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:-${VITE_SUPABASE_ANON_KEY:?set NEXT_PUBLIC_SUPABASE_ANON_KEY}}
     container_name: ibvap_frontend
     restart: unless-stopped
     ports:

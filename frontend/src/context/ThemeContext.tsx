@@ -1,38 +1,42 @@
+'use client';
+
 import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
 
 interface ThemeState {
   isLight: boolean;
   toggleTheme: () => void;
+  setTheme: (light: boolean) => void;
 }
 
 const ThemeContext = createContext<ThemeState | null>(null);
+const STORAGE_KEY = 'ibvap_theme';
+
+function readInitial(): boolean {
+  if (typeof document !== 'undefined') {
+    return document.documentElement.classList.contains('light-theme');
+  }
+  return false;
+}
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [isLight, setIsLight] = useState(() => {
-    return localStorage.getItem('ibvap_theme') === 'light';
-  });
+  const [isLight, setIsLight] = useState<boolean>(readInitial);
 
   useEffect(() => {
-    if (isLight) {
-      document.documentElement.classList.add('light-theme');
-    } else {
-      document.documentElement.classList.remove('light-theme');
+    document.documentElement.classList.toggle('light-theme', isLight);
+    try {
+      localStorage.setItem(STORAGE_KEY, isLight ? 'light' : 'dark');
+    } catch {
+      /* private mode / storage disabled — theme still applies for this session */
     }
   }, [isLight]);
 
-  const toggleTheme = () => {
-    setIsLight(prev => {
-      const next = !prev;
-      localStorage.setItem('ibvap_theme', next ? 'light' : 'dark');
-      return next;
-    });
+  const value: ThemeState = {
+    isLight,
+    toggleTheme: () => setIsLight(v => !v),
+    setTheme: setIsLight,
   };
 
-  return (
-    <ThemeContext.Provider value={{ isLight, toggleTheme }}>
-      {children}
-    </ThemeContext.Provider>
-  );
+  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
 
 export function useTheme() {

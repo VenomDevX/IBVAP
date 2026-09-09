@@ -1,3 +1,5 @@
+'use client';
+
 import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
 import { supabase } from '../api/supabase';
 import { apiFetch } from '../api/client';
@@ -23,7 +25,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Get initial session
     supabase.auth.getSession()
       .then(({ data: { session } }) => {
         setSession(session);
@@ -32,7 +33,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .catch((e) => console.error('getSession failed:', e))
       .finally(() => setLoading(false));
 
-    // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       setUser(session?.user ?? null);
@@ -61,7 +61,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider value={{ isAuthenticated, user, session, role, loading, logout }}>
-      {!loading && children}
+      {children}
     </AuthContext.Provider>
   );
 }
