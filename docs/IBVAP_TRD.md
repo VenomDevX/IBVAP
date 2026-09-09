@@ -589,7 +589,7 @@ Spatial Analysis   Temporal Analysis
 | Auth | **Supabase Auth** — JWT issued by Supabase, verified locally in `src/api/auth.py` with `SUPABASE_JWT_SECRET` (HS256); Supabase API fallback |
 | User profiles / RBAC | `user_profiles` table + Row-Level Security policies in `supabase/migrations/`. Route guards: `require_auth`, `require_admin` |
 | Local `users` / `audit_logs` tables | SQLAlchemy tables used for the seeded `admin`/`operator` rows and audit logging. API request auth itself is Supabase JWT, not these rows |
-| Postgres | The `supabase/migrations` schema also defines `cameras/tracks/events/alerts/zones` mirrors + realtime publication. **Not currently written by the pipeline** — consolidation is an open decision (§17) |
+| Postgres | Holds **only** `user_profiles` (auth identity / RBAC). The `cameras/tracks/events/alerts/zones` tables + realtime publication in `supabase/migrations/` are **vestigial** — nothing writes them (ADR-001) |
 
 ## 9.5 Evaluation / Visualisation
 
@@ -1090,7 +1090,7 @@ This allows the same platform to behave differently according to camera purpose.
 > capture time — NFR event-integrity), `cameras.latitude/longitude` (Map view), and local
 > `users` / `audit_logs` tables. A parallel Postgres schema exists in `supabase/migrations/`
 > (adds `user_profiles` + RLS + a realtime publication) but the pipeline does not write to it yet.
-> **Open decision:** consolidate on SQLite, on Supabase/Postgres, or define SQLite = local-dev only.
+> **Decided (ADR-001, 2026-09-09):** SQLite is the single application datastore; Postgres holds auth identity only (`user_profiles`). The Postgres `cameras/events/…` tables in `supabase/migrations/` are vestigial.
 
 ## Cameras
 
@@ -1758,7 +1758,7 @@ Legend: ✅ done · 🟡 partial / experimental · ⛔ not started.
    now grouped by source image **and** MOT/VIRAT clip via `scripts/make_clean_split.py`.
 4. ~~License Plate has no training data~~ **Done.** 19,828 label-less `plate_*` images purged and
    18,000 correctly-labelled images (19,270 boxes) merged from the v13 Roboflow set.
-5. Decide the data-store story (SQLite vs Supabase/Postgres — §17).
+5. ~~Decide the data-store story~~ **Done (ADR-001):** SQLite canonical, Postgres = auth only.
 6. Either integrate face + a real OCR engine (PaddleOCR/EasyOCR) into the pipeline, or mark
    FR-09/FR-10 explicitly as "modules delivered, not demo-active" in the PRD.
 7. `night_vision_object` is a legacy catch-all (12 IR sub-classes were collapsed upstream).

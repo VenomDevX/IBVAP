@@ -112,7 +112,7 @@ SIH 26187/
 | Frontend libs | ApexCharts, Grid.js, Leaflet / react-leaflet, `@supabase/supabase-js` |
 | Containers | Docker / docker-compose (backend + frontend + nginx) |
 
-> **Data-store note.** The running pipeline persists cameras/tracks/events/alerts/audit logs to **SQLite** through the SQLAlchemy repository, and the frontend reads them through the FastAPI REST API. The `supabase/migrations` schema currently backs **authentication and user profiles**; the mirrored `events`/`alerts` tables there are not written by the backend pipeline yet. Consolidating on one store is an open decision (TRD §17).
+> **Data-store note (ADR-001).** SQLite is the single application datastore — the pipeline persists cameras/tracks/events/alerts/zones/audit through the SQLAlchemy repository and the frontend reads them via the FastAPI REST API. Postgres (`supabase/migrations`) holds **only** `user_profiles` for auth/RBAC; the mirrored `events`/`alerts` tables and realtime publication there are vestigial. See `docs/ADR-001-datastore.md`.
 
 ## Quick Start
 
