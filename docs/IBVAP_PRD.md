@@ -1448,15 +1448,15 @@ design lives in **TRD §9A**; this is the product-level summary.
 
 | Capability | Approach | Status |
 |---|---|---|
-| Fine-grained object class | YOLOv8 (91-class border/military taxonomy) → ResNet-50 stage-2 classifier on the crop | Trained, not yet in the live pipeline |
+| Border/military object class | YOLO **13-class coarse** taxonomy (person, vehicles, plate, military-ground-vehicle, aircraft, helicopter, drone, animal — `backend/ml/taxonomy.py`). The earlier 91-class / 73-airframe design was dropped (see TRD §9A). Fine-grained airframe ID is Phase 2. | Dataset built & verified; training run pending |
 | Attribute extraction (e.g. "white SUV", "red shirt") | Crop → colour histogram / lightweight attribute model | Dominant-colour extraction implemented; richer attributes pending |
 | Number-plate reading | Vehicle crop → plate detector → OCR, attached to the track | `pytesseract` helper with mock fallback; PaddleOCR/EasyOCR is the target |
 | Semantic description | Template generator combining class + colour + zone/event ("a white car loitering in a restricted zone") | Basic template implemented in the fusion engine |
 | Rich descriptions (optional) | Lightweight VLM (Moondream / Florence-2) over the alert snapshot | Not started — optional stretch |
 | Evidence snapshots | On high-risk event/alert, save the annotated frame; thumbnail on Events/Alerts pages, click for full-res | Implemented (with SHA-256 hashing) |
 
-Model-size caveat: the original plan named `yolov8m`; training currently uses `yolov8n`
-(6 GB VRAM). Benchmark a larger variant before the demo (TRD §9A.5).
+Model-size caveat: the original plan named `yolov8m`; the coarse detector trains on
+`yolo11s` (6 GB VRAM). Benchmark a larger variant before the demo (TRD §9A.5).
 
 ---
 
@@ -1497,6 +1497,6 @@ Full dataset plan is in §11 and TRD §10. Quick reference for the evaluation/be
 | MOT17 | Multi-object pedestrian tracking benchmark (IDF1 / HOTA / MOTA) | High |
 | BDD100K | Outdoor vehicle/person generalisation | Supporting |
 
-> The **detector in training** uses a separate merged 91-class border/military dataset,
-> not these sets — see TRD §9A and §10. The sets above are for evaluation and the
-> person/vehicle generalisation baseline.
+> The **detector in training** uses a separate merged **13-class coarse** border/military
+> dataset, not these sets — see TRD §9A and §10. The sets above are for evaluation and
+> the person/vehicle generalisation baseline.
