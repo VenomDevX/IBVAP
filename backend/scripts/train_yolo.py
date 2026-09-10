@@ -126,6 +126,21 @@ def train(args):
             "         On a 6GB card use --batch 4."
         )
 
+    # These three were sized for a 150-epoch Colab run. At 30 epochs the fixed
+    # values are actively wrong, so scale them unless the caller was explicit.
+    if args.close_mosaic is None:
+        # last ~10% mosaic-free. Fixed at 15 it would disable mosaic for HALF a
+        # 30-epoch run, discarding the augmentation that lifts the rare classes.
+        args.close_mosaic = max(3, round(args.epochs * 0.10))
+    if args.patience is None:
+        # fixed at 40 it can never fire on a sub-40-epoch run: early stopping
+        # would be silently inert.
+        args.patience = max(10, round(args.epochs / 3))
+    print(
+        f"schedule: epochs={args.epochs}  warmup=3  "
+        f"close_mosaic={args.close_mosaic}  patience={args.patience}"
+    )
+
     _preflight(args)
 
     if args.benchmark:
@@ -155,7 +170,7 @@ def train(args):
         weight_decay=0.0005,
         warmup_epochs=3.0,
         cos_lr=True,
-        close_mosaic=15,
+        close_mosaic=args.close_mosaic,
         # augmentation — copy_paste/mixup specifically lift the rare military classes
         mixup=0.10,
         copy_paste=0.15,
@@ -213,7 +228,21 @@ if __name__ == "__main__":
         action="store_true",
         help="train exactly one epoch, report min/epoch, and exit",
     )
-    p.add_argument("--patience", type=int, default=40)
+    p.add_argument(
+        "--patience",
+        type=int,
+        default=None,
+        help="early-stopping patience; default scales as epochs/3 (min 10). "
+        "A fixed 40 can never fire on a shorter run.",
+    )
+    p.add_argument(
+        "--close-mosaic",
+        type=int,
+        default=None,
+        dest="close_mosaic",
+        help="epochs at the end to train without mosaic; default is 10%% of "
+        "--epochs (min 3).",
+    )
     p.add_argument("--device", default="0", help="0 / 0,1 / cpu")
     p.add_argument("--project", default="outputs/training", help="output dir (point at Drive on Colab)")
     p.add_argument("--name", default=RUN_NAME)
