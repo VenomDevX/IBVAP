@@ -10,8 +10,8 @@
 #   .\scripts\run_training.ps1 -Epochs 60 -Workers 0    # page-file error 1455
 
 param(
-    [int]$Epochs = 48,
-    [int]$Batch = 8,
+    [int]$Epochs = 50,
+    [int]$Batch = 0,      # 0 = let train_yolo.py choose (its default is 4)
     [int]$Imgsz = 640,
     [int]$Workers = 2,
     [int]$MaxRetries = 20,
@@ -46,8 +46,17 @@ for ($i = 1; $i -le $MaxRetries; $i++) {
     }
     else {
         Write-Host "=== attempt $i/$MaxRetries : fresh start, $Epochs epochs ==="
-        & $python scripts/train_yolo.py --epochs $Epochs --batch $Batch `
-            --imgsz $Imgsz --workers $Workers
+        # Only override batch when explicitly asked. Hardcoding 8 here silently
+        # contradicted train_yolo.py's own default of 4 and changed the run
+        # behind the operator's back - visible only in the iteration count.
+        if ($Batch -gt 0) {
+            & $python scripts/train_yolo.py --epochs $Epochs --batch $Batch `
+                --imgsz $Imgsz --workers $Workers
+        }
+        else {
+            & $python scripts/train_yolo.py --epochs $Epochs `
+                --imgsz $Imgsz --workers $Workers
+        }
     }
 
     if ($LASTEXITCODE -eq 0) {
