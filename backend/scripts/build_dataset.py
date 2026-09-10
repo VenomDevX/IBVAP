@@ -294,13 +294,43 @@ def main() -> None:
         ds = emit_mod.emit_detector(d_tr, d_va, OUT, progress=10000)
         print("      copying classifier crops...")
         cs = emit_mod.emit_classifier(plan, c_tr, c_va, OUT, progress=10000)
+
+        # Remove anything an earlier build left behind. Resumable copies skip
+        # same-size destinations, so stale output survives into the new tree and
+        # verify() cannot spot it — those files carry valid labels too.
+        print("      pruning stale files from earlier builds...")
+        expected = {
+            "detector/images/train": {Path(r.path).name for r in d_tr},
+            "detector/images/val": {Path(r.path).name for r in d_va},
+            "detector/labels/train": {Path(r.path).with_suffix(".txt").name for r in d_tr},
+            "detector/labels/val": {Path(r.path).with_suffix(".txt").name for r in d_va},
+            "classifier/train/": set(plan.classes),
+            "classifier/val/": set(plan.classes),
+        }
+        for split, recs in (("train", c_tr), ("val", c_va)):
+            for r in recs:
+                cls = plan.assignments.get(r.path)
+                if cls:
+                    expected.setdefault(f"classifier/{split}/{cls}", set()).add(
+                        Path(r.path).name
+                    )
+        pruned = emit_mod.prune_unexpected(OUT, expected)
+        if any(pruned.values()):
+            print(f"      pruned {pruned['images']:,} images, {pruned['labels']:,} labels, "
+                  f"{pruned['dirs']} stale class folders")
+
         emit_mod.write_dataset_yaml(OUT)
         (OUT / "classes.json").write_text(
             json.dumps({"coarse": COARSE_NAMES, "fine": plan.classes}, indent=2),
             encoding="utf-8",
         )
         print("      verifying...")
-        problems = emit_mod.verify(OUT)
+        problems = emit_mod.verify(OUT, expected_counts={
+            "detector/images/train": len(d_tr),
+            "detector/images/val": len(d_va),
+            "detector/labels/train": len(d_tr),
+            "detector/labels/val": len(d_va),
+        })
         if problems:
             for p in problems[:20]:
                 print("      PROBLEM:", p)

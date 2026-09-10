@@ -109,6 +109,43 @@ def emit_classifier(
     return stats
 
 
+def prune_unexpected(out_root: Path, expected: dict[str, set[str]]) -> dict:
+    """Delete anything in the output tree that this build did not put there.
+
+    Copies are resumable — an existing same-size destination is skipped — which
+    means output from an EARLIER build survives into the new one. The first run
+    of this builder had a dedup defect that destroyed whole classes; its 7,757
+    stale detector images were still sitting in the tree afterwards, and
+    verify() could not see the problem because those files have valid labels
+    too. Only the expected set distinguishes them.
+
+    `expected` maps a relative directory ("detector/images/train") to the set of
+    filenames that belong in it. Directories absent from `expected` are ignored.
+    """
+    out_root = Path(out_root)
+    removed = {"images": 0, "labels": 0, "dirs": 0}
+    for rel, names in expected.items():
+        d = out_root / rel
+        if not d.is_dir():
+            continue
+        for f in d.iterdir():
+            if f.is_file() and f.name not in names:
+                f.unlink()
+                removed["labels" if f.suffix == ".txt" else "images"] += 1
+
+    # class folders the current plan no longer contains
+    for split in ("train", "val"):
+        d = out_root / "classifier" / split
+        if not d.is_dir():
+            continue
+        keep = expected.get(f"classifier/{split}/", set())
+        for sub in d.iterdir():
+            if sub.is_dir() and sub.name not in keep:
+                shutil.rmtree(sub, ignore_errors=True)
+                removed["dirs"] += 1
+    return removed
+
+
 def write_dataset_yaml(out_root: Path) -> Path:
     out_root = Path(out_root)
     det = (out_root / "detector").resolve()
@@ -130,12 +167,26 @@ def write_dataset_yaml(out_root: Path) -> Path:
     return p
 
 
-def verify(out_root: Path) -> list[str]:
-    """Return a list of integrity problems; empty means healthy."""
+def verify(out_root: Path, expected_counts: dict[str, int] | None = None) -> list[str]:
+    """Return a list of integrity problems; empty means healthy.
+
+    expected_counts maps a relative dir to how many files should be in it. Pass
+    it: per-file checks alone cannot detect stale output from an earlier build,
+    because those files are individually valid — only the count gives it away.
+    """
     out_root = Path(out_root)
     problems: list[str] = []
     det = out_root / "detector"
     seen: dict[str, str] = {}
+
+    for rel, n in (expected_counts or {}).items():
+        d = out_root / rel
+        actual = sum(1 for f in d.iterdir() if f.is_file()) if d.is_dir() else 0
+        if actual != n:
+            problems.append(
+                f"{rel}: expected {n:,} files, found {actual:,} "
+                f"({actual - n:+,} — stale output from an earlier build?)"
+            )
 
     for split in ("train", "val"):
         img_dir = det / "images" / split

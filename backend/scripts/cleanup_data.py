@@ -36,9 +36,11 @@ TARGETS: list[tuple[str, str, str]] = [
     ("colab_pack", "safe", "Empty."),
     ("custom", "safe", "Empty."),
     ("plates", "safe", "Empty."),
-    ("unified_yolo", "verify",
-     "Older parallel copy of the detector set (101,434 images). Confirm it is "
-     "a strict subset of detector_yolo before removing."),
+    ("unified_yolo", "safe",
+     "Superseded by detector_yolo. Verified 2026-09-10: of its 101,434 images, "
+     "81,606 are already in detector_yolo and the other 19,828 are plate_* "
+     "images with NO label file (0 of 400 sampled had one) - the label-less "
+     "plate merge bug. Nothing trainable is unique to it."),
     ("cropped_classes", "keep",
      "Sole copy of the ~500k crops not selected. Needed to re-tune the prune "
      "threshold or per-class cap."),

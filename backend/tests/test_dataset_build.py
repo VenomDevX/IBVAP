@@ -15,6 +15,7 @@ from PIL import Image  # noqa: E402
 from ml.dataset_build.dedup import dedup, hamming  # noqa: E402
 from ml.dataset_build.emit import (  # noqa: E402
     emit_detector,
+    prune_unexpected,
     verify,
     write_dataset_yaml,
 )
@@ -841,3 +842,45 @@ def test_same_class_identical_bytes_is_a_plain_duplicate():
     kept, removed = dedup([a, b], conflict_key=dedup_group)
     assert len(kept) == 1
     assert removed[0][2] == "exact"
+
+
+def test_prune_removes_stale_output_from_an_earlier_build(tmp_path):
+    """Resumable copies skip same-size destinations, so a previous build's files
+    survive into the new tree. They carry valid labels, so only the expected set
+    can tell them apart."""
+    out = tmp_path / "dataset"
+    keep = _make_det(tmp_path, "keep.jpg", [0])
+    stale = _make_det(tmp_path, "stale.jpg", [0])
+    emit_detector([keep, stale], [], out)          # simulate the earlier build
+    assert (out / "detector" / "images" / "train" / "stale.jpg").exists()
+
+    expected = {
+        "detector/images/train": {"keep.jpg"},
+        "detector/labels/train": {"keep.txt"},
+    }
+    removed = prune_unexpected(out, expected)
+    assert removed["images"] == 1 and removed["labels"] == 1
+    assert (out / "detector" / "images" / "train" / "keep.jpg").exists()
+    assert not (out / "detector" / "images" / "train" / "stale.jpg").exists()
+
+
+def test_prune_removes_class_folders_no_longer_in_the_plan(tmp_path):
+    out = tmp_path / "dataset"
+    for cls in ("F16", "Forklift"):
+        d = out / "classifier" / "train" / cls
+        d.mkdir(parents=True)
+        Image.new("RGB", (8, 8)).save(d / "a.jpg")
+    removed = prune_unexpected(out, {"classifier/train/": {"F16"}})
+    assert removed["dirs"] == 1
+    assert (out / "classifier" / "train" / "F16").exists()
+    assert not (out / "classifier" / "train" / "Forklift").exists()
+
+
+def test_verify_flags_a_file_count_mismatch(tmp_path):
+    """Per-file checks pass on stale output; only the count betrays it."""
+    out = tmp_path / "dataset"
+    emit_detector([_make_det(tmp_path, "a.jpg", [0]), _make_det(tmp_path, "b.jpg", [0])],
+                  [], out)
+    problems = verify(out, expected_counts={"detector/images/train": 1})
+    assert any("expected 1" in p and "found 2" in p for p in problems)
+    assert verify(out) == [], "without counts the stale file is invisible"
