@@ -102,7 +102,7 @@ CLASSES = {
 
 def extract_crops():
     base_dir = os.path.abspath(r"backend\data\unified_yolo")
-    out_dir = os.path.abspath(r"backend\data\cropped_classes")
+    out_dir = os.path.abspath(r"backend\data\raw_dataset\cropped_classes")
 
     # Create class folders
     for cls_name in CLASSES.values():

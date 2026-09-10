@@ -24,7 +24,7 @@ Usage (from backend/):
   python scripts/add_class_dataset.py --src "J:/Data set/drone detection.v2i.yolov8" --class drone_uav --src-classes 0 --prefix drone --limit 5000
 
 Then:
-  python scripts/make_clean_split.py --src data/detector_yolo
+  python scripts/make_clean_split.py --src data/raw_dataset/detector_yolo
   python scripts/pack_dataset_for_colab.py --tar
 """
 
@@ -169,7 +169,7 @@ def main():
     ap.add_argument("--class", dest="cls", default="", help=f"one of: {', '.join(COARSE_ID)}")
     ap.add_argument("--map", default="", help='"srcid:coarse,srcid:coarse,..."')
     ap.add_argument("--taxonomy", action="store_true", help="map via <src>/data.yaml names -> ml.taxonomy")
-    ap.add_argument("--dst", default=os.path.join(BACKEND, "data", "detector_yolo"))
+    ap.add_argument("--dst", default=os.path.join(BACKEND, "data", "raw_dataset", "detector_yolo"))
     ap.add_argument("--src-classes", default="", help="keep only these source ids (with --class)")
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--prefix", default="")
@@ -292,7 +292,7 @@ def main():
     print(f"  images w/ empty label  : {n_empty:,}")
     if not args.dry_run:
         print(
-            "\nNext:\n  python scripts/make_clean_split.py --src data/detector_yolo"
+            "\nNext:\n  python scripts/make_clean_split.py --src data/raw_dataset/detector_yolo"
             "\n  python scripts/pack_dataset_for_colab.py --tar"
         )
 

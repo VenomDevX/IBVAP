@@ -15,8 +15,8 @@ What it does:
 
 Usage:
   python scripts/add_plates.py --src "F:/Projects/SIH 26187/License Plate Recognition.v13i.yolov8" \
-         --dst data/detector_yolo --purge-old --limit 18000
-  python scripts/make_clean_split.py --src data/detector_yolo
+         --dst data/raw_dataset/detector_yolo --purge-old --limit 18000
+  python scripts/make_clean_split.py --src data/raw_dataset/detector_yolo
 """
 
 import os
@@ -126,8 +126,8 @@ def main():
     ap.add_argument("--src", required=True, help="Roboflow-style YOLOv8 plate dataset root")
     ap.add_argument(
         "--dst",
-        default=os.path.join(BACKEND, "data", "detector_yolo"),
-        help="target dataset root (default: backend/data/detector_yolo)",
+        default=os.path.join(BACKEND, "data", "raw_dataset", "detector_yolo"),
+        help="target dataset root (default: backend/data/raw_dataset/detector_yolo)",
     )
     ap.add_argument("--limit", type=int, default=0, help="cap images added (whole aug-groups kept together); 0 = all")
     ap.add_argument("--purge-old", action="store_true")
@@ -188,7 +188,7 @@ def main():
     print(f"  images w/o source label: {no_label:,}")
     print(f"  images w/ empty label  : {empty_label:,}")
     if not args.dry_run:
-        print("\nNext:  python scripts/make_clean_split.py --src data/detector_yolo")
+        print("\nNext:  python scripts/make_clean_split.py --src data/raw_dataset/detector_yolo")
 
 
 if __name__ == "__main__":

@@ -16,7 +16,7 @@ after seeing the first training results.
 
 Usage:
   python scripts/cleanup_data.py                 # report only
-  python scripts/cleanup_data.py --delete safe   # ~34 GB, tar + empty dirs
+  python scripts/cleanup_data.py --delete safe   # reclaim the safe entries
 """
 
 from __future__ import annotations
@@ -32,19 +32,21 @@ DATA = ROOT / "data"
 TARGETS: list[tuple[str, str, str]] = [
     ("ibvap_coarse_dataset.tar", "safe",
      "Colab packing artifact. Colab is no longer used and it is rebuildable "
-     "from detector_yolo via scripts/pack_dataset_for_colab.py."),
-    ("colab_pack", "safe", "Empty."),
-    ("custom", "safe", "Empty."),
-    ("plates", "safe", "Empty."),
-    ("unified_yolo", "safe",
-     "Superseded by detector_yolo. Verified 2026-09-10: of its 101,434 images, "
-     "81,606 are already in detector_yolo and the other 19,828 are plate_* "
-     "images with NO label file (0 of 400 sampled had one) - the label-less "
-     "plate merge bug. Nothing trainable is unique to it."),
-    ("cropped_classes", "keep",
+     "from raw_dataset/detector_yolo via scripts/pack_dataset_for_colab.py."),
+    ("colab_pack", "safe",
+     "Colab upload staging: a yaml, two split lists and UPLOAD.md. All "
+     "regenerable by scripts/pack_dataset_for_colab.py."),
+    ("custom", "keep",
+     "NOT dataset material. Holds the four demo videos every camera in "
+     "configs/cameras.yaml reads (street_traffic, people_walking, "
+     "highway_border, indoor_checkpoint). Deleting it breaks the live demo "
+     "to save 37 MB. Re-downloadable via scripts/download_samples.py, but "
+     "there is no reason to."),
+    ("plates", "safe", "Empty (0 files)."),
+    ("raw_dataset/cropped_classes", "keep",
      "Sole copy of the ~500k crops not selected. Needed to re-tune the prune "
      "threshold or per-class cap."),
-    ("detector_yolo", "keep",
+    ("raw_dataset/detector_yolo", "keep",
      "Sole copy of the source imagery. data/dataset/ holds only the curated "
      "~50k subset."),
 ]

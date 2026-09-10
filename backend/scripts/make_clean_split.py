@@ -22,8 +22,8 @@ Output (default --tag coarse):
   backend/configs/dataset_coarse.yaml
 
 Usage:
-  python scripts/make_clean_split.py --src data/detector_yolo
-  python scripts/make_clean_split.py --src data/detector_yolo --val-fraction 0.15
+  python scripts/make_clean_split.py --src data/raw_dataset/detector_yolo
+  python scripts/make_clean_split.py --src data/raw_dataset/detector_yolo --val-fraction 0.15
 """
 
 import os
@@ -70,7 +70,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--src",
-        default=os.path.join(BACKEND, "data", "detector_yolo"),
+        default=os.path.join(BACKEND, "data", "raw_dataset", "detector_yolo"),
         help="dataset root containing images/ and labels/",
     )
     ap.add_argument("--tag", default="coarse", help="suffix for the output files")
