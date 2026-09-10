@@ -36,7 +36,7 @@ TARGETS: list[tuple[str, str, str]] = [
     ("colab_pack", "safe",
      "Colab upload staging: a yaml, two split lists and UPLOAD.md. All "
      "regenerable by scripts/pack_dataset_for_colab.py."),
-    ("custom", "keep",
+    ("demo", "keep",
      "NOT dataset material. Holds the four demo videos every camera in "
      "configs/cameras.yaml reads (street_traffic, people_walking, "
      "highway_border, indoor_checkpoint). Deleting it breaks the live demo "
