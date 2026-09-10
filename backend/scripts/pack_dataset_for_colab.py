@@ -102,7 +102,7 @@ def main():
             "# Upload the dataset to Google Drive\n\n"
             "## 1. Build the tar (from backend/)\n\n"
             "```bash\n"
-            "tar -C data/detector_yolo -cf data/ibvap_coarse_dataset.tar images labels\n"
+            "tar -C data/raw_dataset/detector_yolo -cf data/ibvap_coarse_dataset.tar images labels\n"
             "tar -C data/colab_pack   -rf data/ibvap_coarse_dataset.tar "
             "train_coarse.txt val_coarse.txt dataset_coarse.yaml\n"
             "```\n\n"

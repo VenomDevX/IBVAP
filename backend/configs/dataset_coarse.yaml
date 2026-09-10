@@ -1,7 +1,7 @@
 # Leak-free, clip-aware split — scripts/make_clean_split.py
 # grouped by source image + MOT/VIRAT clip; val_fraction=0.1 seed=42
 
-path: F:/Projects/SIH 26187/backend/data/detector_yolo
+path: F:/Projects/SIH 26187/backend/data/raw_dataset/detector_yolo
 train: F:/Projects/SIH 26187/backend/data/splits/train_coarse.txt
 val: F:/Projects/SIH 26187/backend/data/splits/val_coarse.txt
 

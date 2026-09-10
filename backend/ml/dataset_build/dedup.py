@@ -1,7 +1,7 @@
 """Stage 2 — remove exact and near-duplicate images.
 
 Runs BEFORE any train/val split, which is the whole point. A 33,478-image
-sample of data/cropped_classes measured 14.5% byte-identical and 17.7%
+sample of data/raw_dataset/cropped_classes measured 14.5% byte-identical and 17.7%
 near-duplicate images, concentrated in exactly the classes that can least
 afford it (P3 20.1%, WZ7 21.6%, Su57 18.6%, AH64 18.6%). Splitting first
 places identical images on both sides and inflates validation accuracy —

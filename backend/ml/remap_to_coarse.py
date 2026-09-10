@@ -15,8 +15,8 @@ Also cleans labels while remapping:
   * keep empty label files (legitimate background negatives)
 
 After this, run:
-  python scripts/add_plates.py --src "<...v13i.yolov8>" --dst data/detector_yolo --purge-old --limit 18000
-  python scripts/make_clean_split.py --src data/detector_yolo
+  python scripts/add_plates.py --src "<...v13i.yolov8>" --dst data/raw_dataset/detector_yolo --purge-old --limit 18000
+  python scripts/make_clean_split.py --src data/raw_dataset/detector_yolo
 
 Usage:
   python -m ml.remap_to_coarse                       # from backend/
@@ -139,7 +139,7 @@ def process_split(src_root: str, dst_root: str, split: str, copy: bool):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", default=os.path.join(BACKEND, "data", "unified_yolo"))
-    ap.add_argument("--dst", default=os.path.join(BACKEND, "data", "detector_yolo"))
+    ap.add_argument("--dst", default=os.path.join(BACKEND, "data", "raw_dataset", "detector_yolo"))
     ap.add_argument("--copy", action="store_true", help="copy images instead of hard-linking")
     args = ap.parse_args()
 
@@ -169,7 +169,7 @@ def main():
     print(f"\nTotal boxes:  before {sum(total_before.values()):,}  ->  after {sum(total_after.values()):,}")
     print(
         '\nNext:  python scripts/add_plates.py --src "<...v13i.yolov8>" '
-        "--dst data/detector_yolo --purge-old --limit 18000"
+        "--dst data/raw_dataset/detector_yolo --purge-old --limit 18000"
     )
 
 

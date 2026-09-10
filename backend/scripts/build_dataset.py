@@ -10,9 +10,8 @@ re-runs that stage and everything after it.
   5 split       group-aware leak-free train/val        (~10 s)
   6 emit        copy files, write configs, verify      (~20-40 min)
 
-NON-DESTRUCTIVE: never modifies or deletes anything under data/detector_yolo,
-data/unified_yolo or data/cropped_classes. Use scripts/cleanup_data.py for
-that, and only after training has succeeded.
+NON-DESTRUCTIVE: never modifies or deletes anything under data/raw_dataset/.
+Use scripts/cleanup_data.py for that, and only after training has succeeded.
 
 Usage:
   python scripts/build_dataset.py
@@ -50,7 +49,8 @@ from ml.taxonomy import COARSE_NAMES  # noqa: E402
 STAGES = ["index", "dedup", "rebalance", "restructure", "split", "emit"]
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data"
-OUT = DATA / "dataset"
+RAW = DATA / "raw_dataset"   # untouched source imagery
+OUT = DATA / "dataset"       # the built release
 BUILD = OUT / ".build"
 
 
@@ -112,12 +112,12 @@ def main() -> None:
         t = time.time()
         print("[1/6] index — hashing every source image (slow, once)")
         n1 = write_index(
-            scan_tree(DATA / "detector_yolo", "detector", args.workers, progress=20000),
+            scan_tree(RAW / "detector_yolo", "detector", args.workers, progress=20000),
             det_idx,
         )
         print(f"      detector: {n1:,}")
         n2 = write_index(
-            scan_tree(DATA / "cropped_classes", "crops", args.workers, progress=50000),
+            scan_tree(RAW / "cropped_classes", "crops", args.workers, progress=50000),
             crop_idx,
         )
         print(f"      crops:    {n2:,}")

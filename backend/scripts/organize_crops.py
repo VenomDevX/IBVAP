@@ -90,7 +90,7 @@ CATEGORIES = {
 
 
 def organize_crops():
-    base_dir = os.path.abspath(r"backend\data\cropped_classes")
+    base_dir = os.path.abspath(r"backend\data\raw_dataset\cropped_classes")
 
     if not os.path.exists(base_dir):
         print(f"Error: {base_dir} does not exist.")
