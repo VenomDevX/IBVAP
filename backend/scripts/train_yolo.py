@@ -5,8 +5,11 @@ Trains the 13-class coarse detector (see backend/ml/taxonomy.py) on the
 deduplicated, rare-class-preserving release set built by
 `python scripts/build_dataset.py` -> data/dataset/detector/dataset.yaml.
 
-Tuned for a ~6 GB RTX 40-series (RTX 4050 Laptop): yolo11s @ 640, batch 8,
-explicit SGD, disk cache, AMP. Warm-starts from models/ibvap_coarse.pt.
+Tuned for a ~6 GB RTX 40-series (RTX 4050 Laptop): yolo11s @ 640, batch 4,
+explicit SGD, AMP, no image cache. Warm-starts from models/ibvap_coarse.pt.
+
+Measured on that card: batch 8 CUDA-OOMs (only ~5.2 GB is free once Windows
+takes its share), and `--cache disk` wants 140 GB for this 47.5k train split.
 
 Measure before you commit a night to it:
     python scripts/train_yolo.py --benchmark
@@ -19,7 +22,7 @@ worker processes. Either:
   * run with `--workers 0`  (no worker processes; a bit slower), or
   * raise the Windows page file: System > Advanced system settings > Performance
     Settings > Advanced > Virtual memory > set a custom size (e.g. 32768 MB).
-`--cache disk` (default) also keeps RAM use low; do NOT use `--cache ram` here.
+Image caching is OFF by default here; `--cache ram` will not fit either.
 
 Usage:
   python scripts/train_yolo.py --benchmark             # 1 epoch, report min/epoch
@@ -38,10 +41,60 @@ import time
 # cuDNN STREAM_MISMATCH workaround for RTX 40-series
 os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
+# 6 GB is small enough that allocator fragmentation, not total size, is what
+# kills a run: a batch-8 attempt died trying to allocate 14 MiB while 3.45 GiB
+# was still free. Expandable segments let the allocator grow a block instead of
+# demanding one contiguous span.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 from ultralytics import YOLO
 
 DEFAULT_DATA = "data/dataset/detector/dataset.yaml"
 RUN_NAME = "ibvap_coarse"
+
+
+def _preflight(args) -> None:
+    """Report free VRAM and system RAM before committing to a long run.
+
+    Both have already broken this training: batch=8 hit a CUDA OOM with 5.2GB
+    free (fragmentation), and label scanning hit a plain MemoryError with 2GB
+    of system RAM left because other applications were holding the rest.
+    """
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            free_b, total_b = torch.cuda.mem_get_info()
+            free, total = free_b / 2**30, total_b / 2**30
+            print(f"GPU: {torch.cuda.get_device_name(0)}  {free:.1f}/{total:.1f} GiB free")
+            need = {4: 2.6, 6: 3.6, 8: 4.6}.get(args.batch, 0.55 * args.batch)
+            if free < need:
+                print(
+                    f"  WARNING: batch={args.batch} needs roughly {need:.1f} GiB and only "
+                    f"{free:.1f} GiB is free. Close other GPU apps or lower --batch."
+                )
+        else:
+            print("GPU: none visible — training on CPU would take weeks. Stopping.")
+            raise SystemExit(1)
+    except ImportError:
+        pass
+
+    try:
+        import shutil
+
+        import psutil
+
+        ram = psutil.virtual_memory().available / 2**30
+        print(f"RAM: {ram:.1f} GiB available")
+        if ram < 4:
+            print(
+                "  WARNING: under 4 GiB free. Label scanning raises a plain MemoryError "
+                "at this level — close other applications before starting."
+            )
+        free_disk = shutil.disk_usage(".").free / 2**30
+        print(f"Disk: {free_disk:.0f} GiB free")
+    except ImportError:
+        pass
 
 
 def train(args):
@@ -70,8 +123,10 @@ def train(args):
         print(
             "WARNING: --batch -1 (autobatch) probes VRAM at startup and can pick a size\n"
             "         that OOMs later once activations peak, killing an overnight run.\n"
-            "         On a 6GB card use --batch 8."
+            "         On a 6GB card use --batch 4."
         )
+
+    _preflight(args)
 
     if args.benchmark:
         args.epochs = 1
@@ -107,7 +162,9 @@ def train(args):
         degrees=5.0,
         scale=0.5,
         deterministic=False,  # cuDNN STREAM_MISMATCH workaround
-        project=args.project,
+        # Absolute, or ultralytics resolves it under its own settings runs_dir
+        # and results land in runs/detect/outputs/training/... instead.
+        project=os.path.abspath(args.project),
         name=args.name,
         exist_ok=True,
         plots=True,
@@ -146,9 +203,10 @@ if __name__ == "__main__":
     p.add_argument(
         "--batch",
         type=int,
-        default=8,
+        default=4,
         help="explicit batch size. Do NOT use -1 on a 6GB card: autobatch probes "
-        "VRAM at startup and can pick a size that OOMs hours later.",
+        "VRAM at startup and can pick a size that OOMs hours later. batch=8 was "
+        "measured to OOM on a 6GB RTX 4050 (only ~5.2GB free after Windows).",
     )
     p.add_argument(
         "--benchmark",
@@ -164,7 +222,15 @@ if __name__ == "__main__":
     )
     p.add_argument("--optimizer", default="SGD", choices=["SGD", "AdamW", "auto"])
     p.add_argument("--lr0", type=float, default=0.01, help="initial LR (0.01 SGD / 0.001 AdamW)")
-    p.add_argument("--cache", default="disk", choices=["disk", "ram", "False"])
+    p.add_argument(
+        "--cache",
+        default="False",
+        choices=["disk", "ram", "False"],
+        help="disk caching wants 140GB for this 47.5k-image train split "
+        "(measured) and only ~82GB is free, so it silently declines for train "
+        "while still writing 8.7GB for val. Off by default; the source images "
+        "are already on a local SSD.",
+    )
     p.add_argument("--resume", action="store_true")
     args = p.parse_args()
     if args.cache == "False":
