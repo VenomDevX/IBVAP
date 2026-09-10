@@ -24,6 +24,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import os
 import sys
@@ -126,55 +127,82 @@ def main() -> None:
     print(f"[1/6] index       OK  ({manifest.get('index', {}).get('detector', '?')} det, "
           f"{manifest.get('index', {}).get('crops', '?')} crops)")
 
-    det = read_index(det_idx)
-    crops = read_index(crop_idx)
-
     # ───────────────── 2. dedup ─────────────────
+    # Detector and crops are handled one at a time and freed between, and
+    # removals stream straight to disk. Holding 677k records plus a ~365k-entry
+    # removal list plus the label dict at once got this process OOM-killed.
     dd, dc = BUILD / "dedup_detector.jsonl", BUILD / "dedup_crops.jsonl"
     if not done("dedup"):
         t = time.time()
-        # Tie-breaks decide which copy of a duplicate SURVIVES, and getting them
-        # wrong silently destroys whole classes — see the docstrings on
-        # restructure.specificity and rebalance.rare_first_priority.
-        print("      reading detector labels (for rare-class dedup priority)...")
-        det_labels = {r.path: read_label_classes(r.path) for r in det}
-        det_k, det_r = dedup_mod.dedup(
-            det, priority=rebal_mod.rare_first_priority(det_labels)
-        )
-        crop_k, crop_r = dedup_mod.dedup(
-            crops,
-            priority=restruct_mod.specificity,
-            group_by=restruct_mod.dedup_group,
-            conflict_key=restruct_mod.dedup_group,
-        )
-        write_index(det_k, dd)
-        write_index(crop_k, dc)
+        counts: dict[str, int] = {"conflict": 0}
         with open(BUILD / "duplicates.jsonl", "w", encoding="utf-8") as fh:
-            for a, b, c in det_r + crop_r:
-                fh.write(json.dumps({"dropped": a, "kept": b, "reason": c}) + "\n")
+
+            def emit(dropped: str, kept: str, reason: str) -> None:
+                counts[reason] = counts.get(reason, 0) + 1
+                fh.write(
+                    json.dumps({"dropped": dropped, "kept": kept, "reason": reason}) + "\n"
+                )
+
+            # Tie-breaks decide which copy of a duplicate SURVIVES, and getting
+            # them wrong silently destroys whole classes — see the docstrings on
+            # restructure.specificity and rebalance.rare_first_priority.
+            print("      detector: reading labels for rare-class dedup priority...")
+            det = read_index(det_idx)
+            n_det_in = len(det)
+            det_labels = {r.path: read_label_classes(r.path) for r in det}
+            before = sum(counts.values())
+            det_k, _ = dedup_mod.dedup(
+                det,
+                priority=rebal_mod.rare_first_priority(det_labels),
+                on_removed=emit,
+            )
+            det_removed = sum(counts.values()) - before
+            write_index(det_k, dd)
+            n_det_out = len(det_k)
+            del det, det_labels, det_k
+            gc.collect()
+
+            print("      crops: deduping per class...")
+            crops = read_index(crop_idx)
+            n_crop_in = len(crops)
+            before = sum(counts.values())
+            crop_k, _ = dedup_mod.dedup(
+                crops,
+                priority=restruct_mod.specificity,
+                group_by=restruct_mod.dedup_group,
+                conflict_key=restruct_mod.dedup_group,
+                on_removed=emit,
+            )
+            crop_removed = sum(counts.values()) - before
+            write_index(crop_k, dc)
+            n_crop_out = len(crop_k)
+            del crops, crop_k
+            gc.collect()
+
         manifest["dedup"] = {
-            "detector_kept": len(det_k), "detector_removed": len(det_r),
-            "crops_kept": len(crop_k), "crops_removed": len(crop_r),
-            "crops_removed_pct": round(100 * len(crop_r) / max(1, len(crops)), 2),
-            "crops_label_conflicts": sum(1 for x in crop_r if x[2] == "conflict"),
+            "detector_in": n_det_in, "detector_kept": n_det_out,
+            "detector_removed": det_removed,
+            "crops_in": n_crop_in, "crops_kept": n_crop_out,
+            "crops_removed": crop_removed,
+            "crops_removed_pct": round(100 * crop_removed / max(1, n_crop_in), 2),
+            "label_conflicts": counts.get("conflict", 0),
+            "by_reason": counts,
             "seconds": round(time.time() - t),
         }
         save()
         mark("dedup")
     m = manifest["dedup"]
-    print(f"[2/6] dedup       OK  detector {len(det):,} -> {m['detector_kept']:,}   "
-          f"crops {len(crops):,} -> {m['crops_kept']:,} (-{m['crops_removed_pct']}%)")
-    if m.get("crops_label_conflicts"):
-        print(f"      {m['crops_label_conflicts']:,} images dropped as LABEL CONFLICTS "
-              f"(identical bytes filed under two classes)")
-
-    det = read_index(dd)
-    crops = read_index(dc)
+    print(f"[2/6] dedup       OK  detector {m['detector_in']:,} -> {m['detector_kept']:,}   "
+          f"crops {m['crops_in']:,} -> {m['crops_kept']:,} (-{m['crops_removed_pct']}%)")
+    if m.get("label_conflicts"):
+        print(f"      {m['label_conflicts']:,} images dropped as LABEL CONFLICTS "
+              f"(identical bytes filed under two different classes)")
 
     # ───────────────── 3. rebalance ─────────────────
     sel_path = BUILD / "detector_selected.jsonl"
     if not done("rebalance"):
         t = time.time()
+        det = read_index(dd)
         print("      reading labels...")
         labels = {r.path: read_label_classes(r.path) for r in det}
         labelled = {r.path for r in det if has_label_file(r.path)}
@@ -188,15 +216,17 @@ def main() -> None:
         manifest["rebalance"] = stats
         save()
         mark("rebalance")
+        del det, labels, labelled, sel
+        gc.collect()
     st = manifest["rebalance"]
     print(f"[3/6] rebalance   OK  {st['n_selected']:,} images "
           f"(rare {st['n_rare_kept']:,}, bg {st['background_pct']}%, "
           f"dropped-unlabelled {st['n_dropped_unlabelled']:,})")
-    sel = read_index(sel_path)
 
     # ───────────────── 4. restructure ─────────────────
     plan_path = BUILD / "class_plan.json"
     if not done("restructure"):
+        crops = read_index(dc)
         plan = restruct_mod.build_class_plan(
             crops, threshold=args.threshold, cap=args.cap, seed=args.seed
         )
@@ -213,6 +243,8 @@ def main() -> None:
         }
         save()
         mark("restructure")
+        del crops, plan
+        gc.collect()
     raw = json.loads(plan_path.read_text(encoding="utf-8"))
     plan = restruct_mod.ClassPlan(**raw)
     print(f"[4/6] restructure OK  {len(plan.classes)} classes, "
@@ -220,9 +252,14 @@ def main() -> None:
 
     # ───────────────── 5. split ─────────────────
     if not done("split"):
+        sel = read_index(sel_path)
         d_tr, d_va = split_mod.split_records(sel, args.val_fraction, args.seed)
         split_mod.assert_no_leak(d_tr, d_va)
+        del sel
+        crops = read_index(dc)
         c_recs = [r for r in crops if r.path in plan.assignments]
+        del crops
+        gc.collect()
         c_tr, c_va = split_mod.split_records(c_recs, args.val_fraction, args.seed)
         split_mod.assert_no_leak(c_tr, c_va)
         for name, recs in (("det_train", d_tr), ("det_val", d_va),
@@ -230,6 +267,8 @@ def main() -> None:
             write_index(recs, BUILD / f"{name}.jsonl")
         manifest["split"] = {"det_train": len(d_tr), "det_val": len(d_va),
                              "cls_train": len(c_tr), "cls_val": len(c_va)}
+        del d_tr, d_va, c_tr, c_va, c_recs
+        gc.collect()
         save()
         mark("split")
     sp = manifest["split"]
