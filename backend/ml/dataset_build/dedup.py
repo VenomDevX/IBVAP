@@ -53,12 +53,11 @@ def _make_rank(priority: Callable[[ImageRecord], int]):
 
 
 def _near_pass(
-    survivors: list[ImageRecord], max_distance: int
-) -> tuple[list[ImageRecord], list[tuple[str, str, str]]]:
+    survivors: list[ImageRecord], max_distance: int, emit
+) -> list[ImageRecord]:
     """Multi-index-hashing near-duplicate pass over one already-ranked group."""
     band_index: list[dict[int, list[int]]] = [defaultdict(list) for _ in range(BANDS)]
     kept: list[ImageRecord] = []
-    removed: list[tuple[str, str, str]] = []
 
     for r in survivors:
         bands = [(r.dhash >> (i * BAND_BITS)) & BAND_MASK for i in range(BANDS)]
@@ -75,14 +74,14 @@ def _near_pass(
             if match is not None:
                 break
         if match is not None:
-            removed.append((r.path, match.path, "near"))
+            emit(r.path, match.path, "near")
             continue
         pos = len(kept)
         kept.append(r)
         for i, b in enumerate(bands):
             band_index[i][b].append(pos)
 
-    return kept, removed
+    return kept
 
 
 def dedup(
@@ -91,6 +90,7 @@ def dedup(
     priority: Callable[[ImageRecord], int] | None = None,
     group_by: Callable[[ImageRecord], str] | None = None,
     conflict_key: Callable[[ImageRecord], str] | None = None,
+    on_removed: Callable[[str, str, str], None] | None = None,
 ) -> tuple[list[ImageRecord], list[tuple[str, str, str]]]:
     """Return (kept, removed) where removed is (dropped_path, kept_path, reason).
 
@@ -110,10 +110,18 @@ def dedup(
     members disagree on this key is DROPPED ENTIRELY (reason 'conflict')
     rather than resolved arbitrarily. Use the class: identical bytes under two
     different labels mean at least one label is wrong.
+
+    on_removed — when given, each removal is streamed to this callback and the
+    returned `removed` list stays empty. The full corpus produces ~365k
+    removals, each holding two long path strings; accumulating them alongside
+    677k records is what pushed the build into an OS out-of-memory kill.
     """
     prio = priority or (lambda _r: 0)
     _rank = _make_rank(prio)
     removed: list[tuple[str, str, str]] = []
+    emit = on_removed if on_removed is not None else (
+        lambda a, b, c: removed.append((a, b, c))
+    )
 
     # ---- pass 1: exact, by md5 (always global) ----
     by_md5: dict[str, list[ImageRecord]] = defaultdict(list)
@@ -135,12 +143,12 @@ def dedup(
             contenders = {conflict_key(r) for r in group if prio(r) == top}
             if len(contenders) > 1:
                 for r in group:
-                    removed.append((r.path, "", "conflict"))
+                    emit(r.path, "", "conflict")
                 continue
 
         survivors.append(group[0])
         for dup in group[1:]:
-            removed.append((dup.path, group[0].path, "exact"))
+            emit(dup.path, group[0].path, "exact")
 
     survivors.sort(key=_rank)  # best representatives get indexed first
     if max_distance <= 0:
@@ -148,18 +156,15 @@ def dedup(
 
     # ---- pass 2: near, per group ----
     if group_by is None:
-        kept, near_removed = _near_pass(survivors, max_distance)
-        removed.extend(near_removed)
-        return kept, removed
+        return _near_pass(survivors, max_distance, emit), removed
 
     buckets: dict[str, list[ImageRecord]] = defaultdict(list)
     for r in survivors:
         buckets[group_by(r)].append(r)
 
+    survivors.clear()  # buckets hold the only references we still need
     kept = []
     for key in sorted(buckets):
-        k, near_removed = _near_pass(buckets[key], max_distance)
-        kept.extend(k)
-        removed.extend(near_removed)
+        kept.extend(_near_pass(buckets.pop(key), max_distance, emit))
     kept.sort(key=_rank)
     return kept, removed

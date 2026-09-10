@@ -22,8 +22,11 @@ from PIL import Image
 IMG_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ImageRecord:
+    # slots is not a micro-optimisation here: the corpus is 677k records held in
+    # memory at once, and dropping the per-instance __dict__ saves ~100 bytes
+    # each. Without it the build was killed by the OS for memory exhaustion.
     path: str  # absolute, resolved
     source: str  # "detector" | "crops"
     rel: str  # path relative to its source root, forward slashes
