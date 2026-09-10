@@ -15,7 +15,8 @@ param(
     [int]$Imgsz = 640,
     [int]$Workers = 2,
     [int]$MaxRetries = 20,
-    [int]$RetryDelaySeconds = 30
+    [int]$RetryDelaySeconds = 30,
+    [switch]$Resume    # continue an existing run rather than starting a new one
 )
 
 $ErrorActionPreference = "Continue"
@@ -25,6 +26,17 @@ $last = "outputs/training/ibvap_coarse/weights/last.pt"
 if (-not (Test-Path $python)) {
     Write-Host "venv python not found at $python - run from the backend/ directory."
     exit 1
+}
+
+# A leftover checkpoint from a DIFFERENT run (a --benchmark, or a run with a
+# different --epochs) would be resumed and declared finished immediately. Make
+# the operator confirm rather than silently doing nothing.
+if ((Test-Path $last) -and -not $Resume) {
+    Write-Host "Found an existing checkpoint: $last"
+    Write-Host "  Resuming it continues THAT run with ITS epoch count, not -Epochs $Epochs."
+    Write-Host "  * to continue it:      .\scripts\run_training.ps1 -Resume"
+    Write-Host "  * to start fresh:      Remove-Item -Recurse -Force outputs/training/ibvap_coarse"
+    exit 2
 }
 
 for ($i = 1; $i -le $MaxRetries; $i++) {

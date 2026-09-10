@@ -145,7 +145,12 @@ def train(args):
 
     if args.benchmark:
         args.epochs = 1
+        # Separate run dir. Sharing it with the real run leaves a last.pt that
+        # records epochs=1, and a later --resume would "finish" instantly
+        # without training anything.
+        args.name = f"{args.name}_bench"
         print("BENCHMARK: one epoch, then report minutes/epoch and exit.")
+        print(f"           writing to {args.project}/{args.name} (separate from the real run)")
     t0 = time.time()
 
     print(
