@@ -6,12 +6,15 @@ IBVAP — Security Middleware
 - Request ID tracking for audit trails
 """
 
+import os
 import time
 import uuid
+
+import jwt as _jwt
+from loguru import logger
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
-from loguru import logger
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -44,13 +47,18 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             response.headers["Pragma"] = "no-cache"
 
         # Remove server identification header
-        response.headers.pop("server", None)
+        # MutableHeaders has no .pop() in Starlette >=1.x — and uvicorn writes the
+        # Server header at the protocol layer anyway, so this is best-effort.
+        try:
+            del response.headers["server"]
+        except KeyError:
+            pass
 
         # Content Security Policy for any HTML responses
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
             "img-src 'self' data: blob:; "
-            "script-src 'self' 'unsafe-inline'; "
+            "script-src 'self'; "
             "style-src 'self' 'unsafe-inline'; "
             "connect-src 'self' ws: wss:;"
         )
@@ -72,6 +80,42 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
     # Paths to skip logging (noisy health checks, static files)
     SKIP_PATHS = {"/api/health", "/favicon.ico"}
 
+    _AUDIT_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+    @staticmethod
+    def _actor(request) -> str:
+        auth = request.headers.get("authorization", "")
+        if auth.lower().startswith("bearer "):
+            try:
+                claims = _jwt.decode(auth[7:], options={"verify_signature": False})
+                return claims.get("email") or claims.get("sub") or "unknown"
+            except Exception:
+                return "unknown"
+        return "anonymous"
+
+    def _write_audit(self, request, status_code: int, client_ip: str, request_id: str):
+        path = request.url.path
+        is_mutation = request.method in self._AUDIT_METHODS and path.startswith("/api/")
+        is_evidence = request.method == "GET" and path.startswith("/snapshots/")
+        if not (is_mutation or is_evidence) or status_code >= 400:
+            return
+        try:
+            from src.database.db import get_database
+            from src.database.repository import Repository
+
+            session = get_database().get_session()
+            try:
+                Repository(session).create_audit_log(
+                    action=f"{request.method} {path}",
+                    username=self._actor(request),
+                    details={"status": status_code, "request_id": request_id},
+                    ip_address=client_ip,
+                )
+            finally:
+                session.close()
+        except Exception as e:
+            logger.error(f"audit write failed: {e}")
+
     async def dispatch(self, request: Request, call_next) -> Response:
         # Skip noisy endpoints
         if request.url.path in self.SKIP_PATHS:
@@ -86,10 +130,12 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         method = request.method
         path = request.url.path
 
-        # Forward headers for proxy deployments
-        forwarded_for = request.headers.get("x-forwarded-for", "")
-        if forwarded_for:
-            client_ip = forwarded_for.split(",")[0].strip()
+        # X-Forwarded-For is client-controlled unless we sit behind a known proxy
+        if os.getenv("TRUSTED_PROXY", "").lower() in ("1", "true", "yes"):
+            forwarded_for = request.headers.get("x-forwarded-for", "")
+            if forwarded_for:
+                client_ip = forwarded_for.split(",")[0].strip()
+                client_ip = "".join(client_ip.split())[:64]
 
         start_time = time.time()
 
@@ -113,12 +159,12 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             else:
                 logger.info(log_msg)
 
+            self._write_audit(request, response.status_code, client_ip, request_id)
             return response
 
         except Exception as e:
             elapsed_ms = (time.time() - start_time) * 1000
             logger.error(
-                f"[{request_id}] {method} {path} → EXCEPTION ({elapsed_ms:.0f}ms) "
-                f"| IP: {client_ip} | Error: {e}"
+                f"[{request_id}] {method} {path} → EXCEPTION ({elapsed_ms:.0f}ms) | IP: {client_ip} | Error: {e}"
             )
             raise

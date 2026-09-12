@@ -1,29 +1,30 @@
-import ReactApexChart from 'react-apexcharts';
+'use client';
+
 import type { ApexOptions } from 'apexcharts';
+import ApexChart from './ApexChart';
+import { useThemeColors } from '../../hooks/useThemeColors';
 import { formatEventType } from '../../api/client';
+import { EmptyState } from '../ui/States';
 
-interface AlertTypeChartProps {
-  byType: Record<string, number>;
-}
-
-export default function AlertTypeChart({ byType }: AlertTypeChartProps) {
+export default function AlertTypeChart({ byType }: { byType: Record<string, number> }) {
+  const c = useThemeColors();
   const labels = Object.keys(byType).map(formatEventType);
   const series = Object.values(byType);
 
-  const options: ApexOptions = {
-    chart: { type: 'donut', height: 260, background: 'transparent', fontFamily: 'Inter, sans-serif' },
-    labels,
-    colors: ['#2563eb', '#16a34a', '#d97706', '#dc2626', '#0891b2', '#9333ea'],
-    plotOptions: { pie: { donut: { size: '75%' } } },
-    dataLabels: { enabled: false },
-    stroke: { show: false },
-    legend: { position: 'right', labels: { colors: '#94a3b8' } },
-    tooltip: { theme: 'dark' },
-  };
-
   if (series.length === 0) {
-    return <div className="empty-state"><i className="fas fa-chart-pie" /><p>No data</p></div>;
+    return <EmptyState icon="chart-pie" message="No alert data yet" />;
   }
 
-  return <ReactApexChart options={options} series={series} type="donut" height={260} />;
+  const options: ApexOptions = {
+    chart: { type: 'donut', height: 260, background: 'transparent', fontFamily: 'inherit' },
+    labels,
+    colors: c.series,
+    plotOptions: { pie: { donut: { size: '72%' } } },
+    dataLabels: { enabled: false },
+    stroke: { colors: [c.card], width: 2 },
+    legend: { position: 'right', labels: { colors: c.fgMuted }, fontSize: '12px' },
+    tooltip: { theme: c.isLight ? 'light' : 'dark' },
+  };
+
+  return <ApexChart options={options} series={series} type="donut" height={260} />;
 }

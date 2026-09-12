@@ -5,8 +5,10 @@ This is the CORE NOVELTY of IBVAP.
 """
 
 import time
-from typing import Dict, List, Optional
+import uuid
+from collections import deque
 from dataclasses import dataclass, field
+
 from loguru import logger
 
 from src.behavior.behavior_engine import BehaviorEvent, BehaviorType
@@ -18,6 +20,7 @@ class FusedEvent:
     A fused security event combining multiple low-level observations.
     Instead of 5 separate alerts, we produce 1 coherent event.
     """
+
     event_id: str
     camera_id: str
     track_id: int
@@ -30,8 +33,8 @@ class FusedEvent:
     risk_level: str = "low"
 
     # Contributing factors (for explainability)
-    contributing_factors: List[str] = field(default_factory=list)
-    behavior_events: List[str] = field(default_factory=list)  # behavior event IDs
+    contributing_factors: list[str] = field(default_factory=list)
+    behavior_events: list[str] = field(default_factory=list)  # behavior event IDs
 
     # Context signals
     spatial_context: dict = field(default_factory=dict)
@@ -41,9 +44,9 @@ class FusedEvent:
 
     # Evidence
     duration: float = 0.0
-    evidence_path: Optional[str] = None
-    evidence_hash: Optional[str] = None
-    snapshot_path: Optional[str] = None
+    evidence_path: str | None = None
+    evidence_hash: str | None = None
+    snapshot_path: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -61,6 +64,7 @@ class FusedEvent:
             "identity_context": self.identity_context,
             "vehicle_context": self.vehicle_context,
             "evidence_path": self.evidence_path,
+            "evidence_hash": self.evidence_hash,
             "duration": round(self.duration, 1),
         }
 
@@ -87,9 +91,9 @@ class ContextFusion:
 
     def __init__(self):
         self._event_counter: int = 0
-        self._fused_events: List[FusedEvent] = []
+        self._fused_events = deque(maxlen=5000)
         # Deduplication: track_id -> last fused event time
-        self._last_fusion: Dict[int, float] = {}
+        self._last_fusion: dict[tuple, tuple[float, tuple]] = {}
         self._fusion_cooldown: float = 30.0  # seconds
 
     def fuse_events(
@@ -97,13 +101,13 @@ class ContextFusion:
         track_id: int,
         camera_id: str,
         object_type: str,
-        behavior_events: List[BehaviorEvent],
+        behavior_events: list[BehaviorEvent],
         spatial_context: dict,
         temporal_context: dict,
-        identity_context: Optional[dict] = None,
-        vehicle_context: Optional[dict] = None,
+        identity_context: dict | None = None,
+        vehicle_context: dict | None = None,
         track_duration: float = 0.0,
-    ) -> Optional[FusedEvent]:
+    ) -> FusedEvent | None:
         """
         Fuse multiple behavior events and context signals for a single track.
 
@@ -111,11 +115,6 @@ class ContextFusion:
         or None if they don't warrant a fused event.
         """
         now = time.time()
-
-        # Check cooldown
-        if track_id in self._last_fusion:
-            if now - self._last_fusion[track_id] < self._fusion_cooldown:
-                return None
 
         if not behavior_events:
             return None
@@ -158,13 +157,13 @@ class ContextFusion:
         if plate and plate != "unknown":
             desc += f" (Plate: {plate})"
         desc += " was detected"
-        
+
         if spatial_context.get("in_restricted"):
-            desc += f" in restricted zone"
+            desc += " in restricted zone"
         elif spatial_context.get("fence_crossed"):
-            desc += f" crossing a fence"
+            desc += " crossing a fence"
         elif temporal_context.get("is_loitering"):
-            desc += f" loitering"
+            desc += " loitering"
         temporal_context["semantic_description"] = desc
 
         # Deduplicate factors
@@ -176,7 +175,7 @@ class ContextFusion:
 
         self._event_counter += 1
         fused = FusedEvent(
-            event_id=f"EVT_{int(now)}_{self._event_counter:04d}",
+            event_id=f"EVT_{uuid.uuid4().hex}",
             camera_id=camera_id,
             track_id=track_id,
             timestamp=now,
@@ -191,15 +190,25 @@ class ContextFusion:
             duration=track_duration,
         )
 
-        self._fused_events.append(fused)
-        self._last_fusion[track_id] = now
-
-        logger.info(
-            f"Fused event: {event_type} | Track {track_id} | "
-            f"Factors: {len(all_factors)} | Camera: {camera_id}"
-        )
-
         return fused
+
+    @staticmethod
+    def _signature(event: FusedEvent) -> tuple:
+        return (event.event_type, event.risk_level, event.spatial_context.get("fence_crossed", False))
+
+    def should_record(self, event: FusedEvent) -> bool:
+        """Throttle unchanged records, never live scoring or a changed incident."""
+        now = time.time()
+        cutoff = now - self._fusion_cooldown * 4
+        self._last_fusion = {k: v for k, v in self._last_fusion.items() if v[0] > cutoff}
+        previous = self._last_fusion.get((event.camera_id, event.track_id))
+        return (previous is None or previous[1] != self._signature(event)
+                or now - previous[0] >= self._fusion_cooldown)
+
+    def mark_recorded(self, event: FusedEvent) -> None:
+        self._last_fusion[(event.camera_id, event.track_id)] = (time.time(), self._signature(event))
+        self._fused_events.append(event)
+        logger.info(f"Recorded event: {event.event_type} | Camera: {event.camera_id} | Track: {event.track_id}")
 
     def _classify_fused_event(
         self,
@@ -254,16 +263,13 @@ class ContextFusion:
 
         return "general_activity"
 
-    def get_recent_events(self, limit: int = 100) -> List[dict]:
-        return [e.to_dict() for e in self._fused_events[-limit:]]
+    def get_recent_events(self, limit: int = 100) -> list[dict]:
+        return [e.to_dict() for e in list(self._fused_events)[-limit:]]
 
-    def get_events_by_camera(self, camera_id: str, limit: int = 50) -> List[dict]:
-        return [
-            e.to_dict() for e in self._fused_events
-            if e.camera_id == camera_id
-        ][-limit:]
+    def get_events_by_camera(self, camera_id: str, limit: int = 50) -> list[dict]:
+        return [e.to_dict() for e in self._fused_events if e.camera_id == camera_id][-limit:]
 
-    def get_event(self, event_id: str) -> Optional[dict]:
+    def get_event(self, event_id: str) -> dict | None:
         for e in self._fused_events:
             if e.event_id == event_id:
                 return e.to_dict()
@@ -271,6 +277,7 @@ class ContextFusion:
 
     def get_statistics(self) -> dict:
         from collections import Counter
+
         type_counts = Counter(e.event_type for e in self._fused_events)
         level_counts = Counter(e.risk_level for e in self._fused_events)
         return {

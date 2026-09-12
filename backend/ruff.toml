@@ -1,0 +1,17 @@
+# Backend lint config.
+#
+# `ruff format` owns layout (120 cols). This enforces real errors, import order,
+# and PEP 585/604 modernisation. Add "B" / "SIM" / "PTH" in a later pass.
+line-length = 120
+target-version = "py311"
+
+[format]
+quote-style = "double"
+
+[lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "W"]
+ignore = ["E402", "E741"]
+
+[lint.per-file-ignores]
+"scripts/*" = ["E402"]
+"tests/*" = ["E402"]

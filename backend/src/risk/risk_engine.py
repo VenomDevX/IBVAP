@@ -4,9 +4,6 @@ Weighted risk scoring: R = w1*S + w2*T + w3*B + w4*I + w5*V
 Produces explainable risk scores with human-readable reasons.
 """
 
-from typing import Dict, List, Optional, Tuple
-from loguru import logger
-
 from src.fusion.context_fusion import FusedEvent
 
 
@@ -43,8 +40,10 @@ class RiskEngine:
         self.behavioral_scores = config.get("behavioral_scores", {})
         self.identity_scores = config.get("identity_scores", {})
         self.vehicle_scores = config.get("vehicle_scores", {})
+        # Minimum behavioural risk implied by the detected object class itself
+        self.object_scores = config.get("object_scores", {})
 
-    def calculate_risk(self, fused_event: FusedEvent) -> Tuple[float, str, List[str]]:
+    def calculate_risk(self, fused_event: FusedEvent) -> tuple[float, str, list[str]]:
         """
         Calculate risk score for a fused event.
 
@@ -63,7 +62,9 @@ class RiskEngine:
 
         # --- B: Behavioral Risk ---
         b_score, b_reasons = self._calculate_behavioral_risk(
-            fused_event.event_type, fused_event.contributing_factors
+            fused_event.event_type,
+            fused_event.contributing_factors,
+            fused_event.object_type,
         )
         reasons.extend(b_reasons)
 
@@ -77,11 +78,11 @@ class RiskEngine:
 
         # Weighted combination
         risk_score = (
-            self.w_spatial * s_score +
-            self.w_temporal * t_score +
-            self.w_behavioral * b_score +
-            self.w_identity * i_score +
-            self.w_vehicle * v_score
+            self.w_spatial * s_score
+            + self.w_temporal * t_score
+            + self.w_behavioral * b_score
+            + self.w_identity * i_score
+            + self.w_vehicle * v_score
         )
 
         # Clamp to 0-100
@@ -103,7 +104,7 @@ class RiskEngine:
                 fused_event.contributing_factors.append(reason)
         return fused_event
 
-    def _calculate_spatial_risk(self, ctx: dict) -> Tuple[float, List[str]]:
+    def _calculate_spatial_risk(self, ctx: dict) -> tuple[float, list[str]]:
         """Calculate spatial component of risk."""
         score = 0.0
         reasons = []
@@ -126,7 +127,7 @@ class RiskEngine:
 
         return score, reasons
 
-    def _calculate_temporal_risk(self, ctx: dict) -> Tuple[float, List[str]]:
+    def _calculate_temporal_risk(self, ctx: dict) -> tuple[float, list[str]]:
         """Calculate temporal component of risk."""
         score = 0.0
         reasons = []
@@ -148,8 +149,9 @@ class RiskEngine:
 
         return score, reasons
 
-    def _calculate_behavioral_risk(self, event_type: str,
-                                    factors: List[str]) -> Tuple[float, List[str]]:
+    def _calculate_behavioral_risk(
+        self, event_type: str, factors: list[str], object_type: str = ""
+    ) -> tuple[float, list[str]]:
         """Calculate behavioral component of risk."""
         score = 0.0
         reasons = []
@@ -180,17 +182,25 @@ class RiskEngine:
         if "Virtual fence crossed" in factors:
             reasons.append("Boundary violation detected")
 
+        # Object-class floor — a tank or aircraft near a monitored boundary is
+        # inherently higher-risk than a pedestrian doing the same thing.
+        obj_scores = self.object_scores or {}
+        obj_floor = obj_scores.get((object_type or "").lower())
+        if obj_floor:
+            score = max(score, float(obj_floor))
+            reasons.append(f"High-interest object class: {object_type.replace('_', ' ')}")
+
         if not reasons:
             reasons.append(f"Behavioral pattern: {event_type.replace('_', ' ')}")
 
         return score, reasons
 
-    def _calculate_identity_risk(self, ctx: dict) -> Tuple[float, List[str]]:
+    def _calculate_identity_risk(self, ctx: dict) -> tuple[float, list[str]]:
         """Calculate identity component of risk."""
         score = 0.0
         reasons = []
 
-        identity = ctx.get("identity", "not_checked")
+        identity = ctx.get("identity_status", ctx.get("identity", "not_checked"))
 
         if identity == "unknown":
             score = self.identity_scores.get("unknown_person", 60)
@@ -203,12 +213,12 @@ class RiskEngine:
 
         return score, reasons
 
-    def _calculate_vehicle_risk(self, ctx: dict) -> Tuple[float, List[str]]:
+    def _calculate_vehicle_risk(self, ctx: dict) -> tuple[float, list[str]]:
         """Calculate vehicle component of risk."""
         score = 0.0
         reasons = []
 
-        plate = ctx.get("plate", "not_checked")
+        plate = ctx.get("plate_status", str(ctx.get("plate", "not_checked")).lower())
 
         if plate == "unknown":
             score = self.vehicle_scores.get("unknown_plate", 50)
@@ -216,6 +226,9 @@ class RiskEngine:
         elif plate == "low_confidence":
             score = self.vehicle_scores.get("plate_read_low_confidence", 35)
             reasons.append("Low confidence plate reading")
+        elif plate == "not_detected":
+            score = self.vehicle_scores.get("no_plate_detected", 30)
+            reasons.append("No plate detected")
 
         return score, reasons
 
@@ -239,15 +252,15 @@ class RiskEngine:
             f"  Event Type: {fused_event.event_type.replace('_', ' ').title()}",
             f"  Object: {fused_event.object_type} (Track ID: {fused_event.track_id})",
             f"  Camera: {fused_event.camera_id}",
-            f"",
-            f"  Contributing Factors:",
+            "",
+            "  Contributing Factors:",
         ]
 
         for factor in fused_event.contributing_factors:
             lines.append(f"    ✓ {factor}")
 
         if fused_event.duration > 0:
-            lines.append(f"")
+            lines.append("")
             lines.append(f"  Duration: {fused_event.duration:.0f} seconds")
 
         lines.append(f"{'=' * 50}")

@@ -3,17 +3,19 @@ IBVAP — Video Source Handler
 Handles RTSP streams and video file input with reconnection logic.
 """
 
-import cv2
-import time
 import threading
-from typing import Optional, Tuple
-from dataclasses import dataclass, field
+import time
+from dataclasses import dataclass
 from enum import Enum
+from typing import Any
+
+import cv2
 from loguru import logger
 
 
 class CameraStatus(Enum):
     """Camera connection status."""
+
     ONLINE = "online"
     OFFLINE = "offline"
     CONNECTING = "connecting"
@@ -24,13 +26,14 @@ class CameraStatus(Enum):
 @dataclass
 class CameraInfo:
     """Camera metadata and configuration."""
+
     camera_id: str
     name: str
     source: str
     camera_type: str = "general"
     enabled: bool = True
     fps_limit: int = 15
-    resolution: Optional[Tuple[int, int]] = None
+    resolution: tuple[int, int] | None = None
 
 
 class VideoSource:
@@ -39,17 +42,16 @@ class VideoSource:
     Provides reconnection logic for stream interruptions.
     """
 
-    def __init__(self, camera_info: CameraInfo, reconnect_delay: float = 5.0,
-                 max_reconnect_attempts: int = 10):
+    def __init__(self, camera_info: CameraInfo, reconnect_delay: float = 5.0, max_reconnect_attempts: int = 10):
         self.camera_info = camera_info
         self.reconnect_delay = reconnect_delay
         self.max_reconnect_attempts = max_reconnect_attempts
 
-        self._cap: Optional[cv2.VideoCapture] = None
+        self._cap: cv2.VideoCapture | None = None
         self._status = CameraStatus.OFFLINE
         self._lock = threading.Lock()
         self._running = False
-        self._frame: Optional[any] = None
+        self._frame: Any | None = None
         self._frame_id: int = 0
         self._fps: float = 0.0
         self._last_frame_time: float = 0.0
@@ -57,6 +59,7 @@ class VideoSource:
         self._source_fps: float = 30.0
         self._source_width: int = 0
         self._source_height: int = 0
+        self._is_file: bool = False
 
     @property
     def status(self) -> CameraStatus:
@@ -71,7 +74,7 @@ class VideoSource:
         return self._fps
 
     @property
-    def source_resolution(self) -> Tuple[int, int]:
+    def source_resolution(self) -> tuple[int, int]:
         return (self._source_width, self._source_height)
 
     def connect(self) -> bool:
@@ -84,10 +87,12 @@ class VideoSource:
 
             # Determine if RTSP or file
             if source.startswith("rtsp://") or source.startswith("http://"):
+                self._is_file = False
                 self._cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
                 # Set buffer size for RTSP to reduce latency
                 self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             else:
+                self._is_file = True
                 self._cap = cv2.VideoCapture(source)
 
             if not self._cap.isOpened():
@@ -113,7 +118,7 @@ class VideoSource:
             self._status = CameraStatus.ERROR
             return False
 
-    def read_frame(self) -> Tuple[bool, Optional[any]]:
+    def read_frame(self) -> tuple[bool, Any | None]:
         """
         Read a single frame from the video source.
         Returns (success, frame) tuple.
@@ -133,8 +138,15 @@ class VideoSource:
             ret, frame = self._cap.read()
 
             if not ret:
-                self._status = CameraStatus.ERROR
-                return False, None
+                # A file source that ran out of frames is not an error — loop it
+                # (the demo cameras are looping clips). Only a live stream that
+                # stops delivering frames is a genuine fault.
+                if self._is_file:
+                    self._cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    ret, frame = self._cap.read()
+                if not ret:
+                    self._status = CameraStatus.ERROR if not self._is_file else CameraStatus.OFFLINE
+                    return False, None
 
             # Resize if configured
             if self.camera_info.resolution:
@@ -149,27 +161,31 @@ class VideoSource:
             self._last_frame_time = now
             self._frame = frame
             self._frame_id += 1
+            if self._status != CameraStatus.ONLINE:
+                self._status = CameraStatus.ONLINE
 
             return True, frame
 
-    def reconnect(self) -> bool:
+    def reconnect(self, stop_event: threading.Event | None = None) -> bool:
         """Attempt to reconnect to the video source."""
         if self._reconnect_count >= self.max_reconnect_attempts:
             logger.error(
-                f"[{self.camera_info.camera_id}] Max reconnect attempts "
-                f"({self.max_reconnect_attempts}) reached"
+                f"[{self.camera_info.camera_id}] Max reconnect attempts ({self.max_reconnect_attempts}) reached"
             )
             self._status = CameraStatus.OFFLINE
             return False
 
         self._reconnect_count += 1
         logger.warning(
-            f"[{self.camera_info.camera_id}] Reconnect attempt "
-            f"{self._reconnect_count}/{self.max_reconnect_attempts}"
+            f"[{self.camera_info.camera_id}] Reconnect attempt {self._reconnect_count}/{self.max_reconnect_attempts}"
         )
 
         self.release()
-        time.sleep(self.reconnect_delay)
+        if stop_event is not None:
+            if stop_event.wait(self.reconnect_delay):
+                return False
+        else:
+            time.sleep(self.reconnect_delay)
         return self.connect()
 
     def release(self):

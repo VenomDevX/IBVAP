@@ -4,13 +4,19 @@
 
 detection:
   confidence_threshold: 0.40
-  nms_threshold: 0.45
-  # Classes to detect (COCO class IDs)
-  # 0=person, 1=bicycle, 2=car, 3=motorcycle, 5=bus, 7=truck
+  nms_threshold: 0.45            # NOTE: currently read by ObjectDetector default only
+  # Custom coarse detector weights (backend/ml/taxonomy.py, 13 classes).
+  # When set and the file exists, the pipeline loads it and emits ALL its classes
+  # (detect_all=True) and target_classes below is ignored. Leave "" for the stock model.
+  # 3-epoch smoke-test model (person/car/plate/bike solid; aerial classes pending
+  # the full Colab run -> notebooks/train_colab.ipynb). Swap in ibvap_coarse_best.pt.
+  weights_path: "models/ibvap_coarse.pt"
+  # target_classes only applies to the STOCK model (COCO ids):
+  # 0=person, 2=car, 3=motorcycle, 5=bus, 7=truck
   target_classes: [0, 2, 3, 5, 7]
-  # Model variant: yolov8n, yolov8s, yolov8m
-  model_variant: "yolov8n"
-  # Input size
+  # Stock model variant if weights_path is empty: yolov8n / yolov8s / yolo11s
+  model_variant: "yolo11s"
+  # Input size (train and infer at the same size; coarse model trained at 640)
   imgsz: 640
 
 tracking:
@@ -37,6 +43,20 @@ behavior:
   # Speed calculation: pixels per second threshold for "stationary"
   stationary_speed_threshold: 5.0
 
+face:
+  # Face recognition needs `insightface` + the buffalo_l model (~300 MB).
+  # Leave false unless the dependency is installed and a gallery exists.
+  enabled: false
+  gallery_path: "./models/face/gallery.json"
+  similarity_threshold: 0.45   # >= this => "known"
+  uncertain_threshold: 0.35    # >= this => "uncertain"
+  min_face_confidence: 0.6     # detector score floor
+
+anpr:
+  # OCR engine cascade: easyocr -> paddleocr -> pytesseract -> mock.
+  # Override with the IBVAP_OCR_ENGINE env var.
+  ocr_engine: "auto"
+
 alerts:
   # Cooldown: seconds before re-alerting on same track + same event type
   cooldown_seconds: 60
@@ -44,3 +64,16 @@ alerts:
   max_alerts_per_minute: 10
   # Minimum risk score to generate an alert
   min_alert_risk_score: 20
+
+classifier:
+  # Stage 2: names the specific type of a military detection (F16 rather than
+  # "aircraft"). Runs only on aircraft / helicopter / drone_uav /
+  # military_ground_vehicle crops - see src/classification/fine_classifier.py.
+  # Unlike `face`, this is on by default: the weights are produced locally by
+  # scripts/train_classifier.py, not pulled as a large third-party dependency.
+  # If the file is absent the classifier disables itself and the pipeline runs
+  # single-stage exactly as before.
+  enabled: true
+  weights: "./models/classifier/ibvap_fine.pt"
+  min_confidence: 0.55   # below this, keep the coarse label rather than guess
+  recheck_seconds: 2.0   # a track's airframe does not change; do not run per frame

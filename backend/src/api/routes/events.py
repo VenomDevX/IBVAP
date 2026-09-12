@@ -4,9 +4,8 @@ Event querying and detail endpoints.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from typing import Optional
 
-from src.api.auth import require_auth
+from src.api.auth import require_auth, require_camera_access, scoped_cameras
 from src.database.db import get_database
 from src.database.repository import Repository
 
@@ -15,18 +14,18 @@ router = APIRouter()
 
 @router.get("")
 async def list_events(
-    camera_id: Optional[str] = None,
-    event_type: Optional[str] = None,
-    risk_level: Optional[str] = None,
-    limit: int = Query(default=100, le=500),
-    offset: int = 0,
+    camera_id: str | None = None,
+    event_type: str | None = None,
+    risk_level: str | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0, le=100_000),
     user: dict = Depends(require_auth),
 ):
     """Get events with optional filters."""
     db = get_database()
     session = db.get_session()
     repo = Repository(session)
-    events = repo.get_events(camera_id, event_type, risk_level, limit, offset)
+    events = repo.get_events(camera_id, event_type, risk_level, limit, offset, allowed_cameras=scoped_cameras(user))
     result = [
         {
             "event_id": e.event_id,
@@ -50,14 +49,14 @@ async def list_events(
 
 @router.get("/count")
 async def get_event_count(
-    camera_id: Optional[str] = None,
+    camera_id: str | None = None,
     user: dict = Depends(require_auth),
 ):
     """Get total event count."""
     db = get_database()
     session = db.get_session()
     repo = Repository(session)
-    count = repo.get_event_count(camera_id)
+    count = repo.get_event_count(camera_id, allowed_cameras=scoped_cameras(user))
     session.close()
     return {"count": count}
 
@@ -73,6 +72,8 @@ async def get_event(event_id: str, user: dict = Depends(require_auth)):
 
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
+
+    require_camera_access(user, event.camera_id)
 
     return {
         "event_id": event.event_id,

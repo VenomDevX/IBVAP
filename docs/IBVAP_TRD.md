@@ -442,6 +442,35 @@ The platform shall:
 - Log administrative actions.
 - Avoid unnecessary storage of personal information.
 
+**As built:**
+
+- Supabase JWT auth on every `/api/*` route and on the alert WebSocket; role guards
+  (`require_auth`, `require_role(...)`, `require_admin`). Per-user camera scoping via
+  `user_profiles.allowed_areas` (`scoped_cameras`).
+- The alert WebSocket takes the JWT via the `Sec-WebSocket-Protocol: bearer, <jwt>`
+  handshake (kept out of URLs / access logs); `?token=` is a legacy fallback. The socket
+  is dropped once the token's own `exp` passes.
+- Middleware: TrustedHost + CORS allow-lists, `slowapi` rate limiting (`600/min` + a
+  `20/s` burst cap, keyed on the real client IP — `X-Forwarded-For` first hop only when
+  `TRUSTED_PROXY=1`), security headers (XSS / clickjacking / MIME-sniffing), request
+  logging with client IP, input validation (path traversal + injection patterns matched
+  against the raw **and** URL-decoded query, path, **and** JSON/form request bodies;
+  upload-size cap). Tighter per-route limits on `/stream`, `/heatmap`, `/snapshot`,
+  `/auth/logout`.
+- No fixed default credentials — seed passwords come from `IBVAP_ADMIN_PASSWORD` /
+  `IBVAP_OPERATOR_PASSWORD`, else a random password is generated and logged once.
+- Evidence integrity: SHA-256 of every snapshot **plus** an append-only HMAC hash chain over the `events` and `alerts` rows (`src/alerts/evidence.py`) — each row commits to the previous row's hash, so altering or reordering any row breaks every later link. `scripts/verify_evidence_chain.py` walks the chain and re-hashes each snapshot file. **Tamper-EVIDENT, not tamper-PROOF**: an attacker who also holds `EVIDENCE_HMAC_KEY` can rewrite the whole chain — for production the key belongs in a KMS and the chain head should be periodically anchored to external WORM storage.
+- Audit log (`/api/audit`, admin-only): action, username, IP, timestamp.
+- **Server-side logout**: `POST /api/auth/logout` records a SHA-256 of the token in
+  `revoked_tokens` (SQLite, swept on expiry) + an in-process set; `require_auth`,
+  `require_auth_media` and the WS handshake reject revoked tokens. The frontend calls
+  it before `supabase.auth.signOut()`. Client-side idle timeout after 30 min still applies.
+- API docs (`/docs`, `/openapi.json`) disabled in `production` mode.
+- Production **fails to start** (`_assert_production_config`) unless `SUPABASE_JWT_SECRET`,
+  `SUPABASE_SERVICE_KEY`, and a non-placeholder `EVIDENCE_HMAC_KEY` are all set — no
+  silent RBAC downgrade or forgeable evidence chain.
+- Secrets read from environment only; DB URL passwords masked in logs.
+
 ## NFR-06 Privacy
 
 Face recognition shall use only lawfully obtained/consented enrollment data for research and demonstration.
@@ -527,62 +556,205 @@ Spatial Analysis   Temporal Analysis
 
 # 9. Technology Stack
 
-## Programming
+> This section reflects the stack **as implemented**. Where an earlier design choice
+> was superseded, both are noted.
 
-- Python 3.x
+## 9.0 Language & Core CV
 
-## Computer Vision
+- Python 3.10+
+- OpenCV (`opencv-python`) for capture, frame ops, drawing
+- NumPy, Pandas, `shapely` (zone/fence geometry), `scikit-learn`
 
-- OpenCV
-- FFmpeg
+## 9.1 Deep Learning / Perception
 
-## Deep Learning
+| Task | Implementation |
+|---|---|
+| Framework | PyTorch, `torchvision` |
+| Object detection (live pipeline) | Ultralytics **YOLOv8n**, COCO classes `[0,2,3,5,7]` (person, car, motorcycle, bus, truck) — `src/detection/detector.py` |
+| Object detection (custom) | YOLO trained on the **13-class coarse** border/military taxonomy (`backend/ml/taxonomy.py`) — see **§9A**. Trained via `scripts/train_yolo.py`; dataset built & verified, **training run pending / not yet loaded by the live pipeline** |
+| Stage-2 fine-grained classifier | Optional crop classifier (`scripts/train_classifier.py`, `scripts/inference_two_stage.py`) for airframe-level ID — **Phase 2**, the surveillance logic does not consume it. Experimental |
+| Multi-object tracking | **ByteTrack** via the `supervision` library (`sv.ByteTrack`) — `src/tracking/tracker.py` |
+| Face recognition | InsightFace (buffalo_l) detection + ArcFace embeddings, cosine-matched against a JSON gallery — `src/face/`, orchestrated by `FaceRecognizer`. **Wired into the pipeline** for `person` tracks (throttled ~2 s/track); off by default (`face.enabled` in thresholds.yaml — needs `insightface`). |
+| Dominant colour | HSV histogram heuristic — `src/features/color_extractor.py` |
+| ANPR OCR | `src/anpr/ocr.py` engine cascade **EasyOCR → PaddleOCR → pytesseract → mock** (`IBVAP_OCR_ENGINE` overrides). `src/features/anpr.py` localises the plate (YOLO plate model if present, else contour heuristic) then OCRs it. EasyOCR is the default (reuses torch); optional dep in `requirements-training.txt`. |
 
-- PyTorch
-- Ultralytics/YOLO-based detector
-- ArcFace-based face embeddings
+## 9.2 Backend Service
 
-## Tracking
+- **FastAPI** + Uvicorn (Flask was dropped)
+- WebSocket endpoint `/ws/alerts` for real-time alert push — JWT via the
+  `Sec-WebSocket-Protocol: bearer, <jwt>` handshake (`?token=` legacy fallback)
+- Middleware stack: `TrustedHostMiddleware`, `CORSMiddleware`, `slowapi` rate limiting
+  (`600/min` + `20/s` burst, keyed on the real client IP via `src/api/net.py`),
+  `SecurityHeadersMiddleware`, `RequestLoggingMiddleware` (IP + audit trail),
+  `InputValidationMiddleware` (raw + URL-decoded path-traversal / injection / upload-size checks)
+- Interactive docs auto-disabled when `IBVAP_ENV=production`
 
-- ByteTrack
+## 9.3 Frontend (operator dashboard)
 
-## OCR / ANPR
+- **Next.js 15 (App Router) + React 19 + TypeScript**, built as a **static export**
+  (`output: 'export'`) — no Node server in production, nginx serves the files and
+  proxies `/api`, `/ws`, `/snapshots`, `/static` to the backend.
+- **Tailwind CSS v4** design system (`app/globals.css`); a small in-repo component
+  library in `frontend/src/components/ui/` (Button, Card, `DataTable`, RiskBadge, …).
+- ApexCharts (`react-apexcharts`, loaded client-only), Leaflet / `react-leaflet`
+  (Map view). Tables use the in-repo `DataTable` (Grid.js was removed).
+- Risk level is shown as a coded colour dot (low green / medium amber / high orange /
+  critical red) — no emoji.
+- `@supabase/supabase-js` for the auth session + token handling.
+- Dev: the browser calls the backend cross-origin via `NEXT_PUBLIC_API_BASE`
+  (backend CORS allows `:3001`); prod is same-origin behind nginx.
 
-- PaddleOCR or another benchmarked OCR engine
-- YOLO-based license-plate detector
+## 9.4 Data & Auth
 
-## Backend
+| Concern | Implementation |
+|---|---|
+| Runtime data store | **SQLite** via SQLAlchemy 2.x (`sqlite:///./ibvap.db`), `DATABASE_URL`-overridable. Models in `src/database/models.py`, access via `Repository` |
+| Auth | **Supabase Auth** — JWT issued by Supabase, verified locally in `src/api/auth.py` with `SUPABASE_JWT_SECRET` (HS256); Supabase API fallback |
+| User profiles / RBAC | `user_profiles` table + Row-Level Security policies in `supabase/migrations/`. Route guards: `require_auth`, `require_admin` |
+| Local `users` / `audit_logs` tables | SQLAlchemy tables used for the seeded `admin`/`operator` rows and audit logging. API request auth itself is Supabase JWT, not these rows |
+| Postgres | Holds **only** `user_profiles` (auth identity / RBAC). The `cameras/tracks/events/alerts/zones` tables + realtime publication in `supabase/migrations/` are **vestigial** — nothing writes them (ADR-001) |
 
-- FastAPI or Flask
+## 9.5 Evaluation / Visualisation
 
-## Frontend
+- Matplotlib for plots
+- Metric set unchanged: Precision, Recall, F1, mAP@50, mAP@50:95, FPS, MOTA, IDF1, HOTA,
+  ID switches, FAR/FRR, character/full-plate accuracy, ROC-AUC, alert-reduction, detection latency
+- **Status:** `backend/outputs/metrics/` is currently empty — experiments (§21) not yet run
 
-- HTML
-- CSS
-- JavaScript
+---
 
-## Database
+# 9A. Coarse Detection Taxonomy (border/military aware)
 
-- SQLite initially
-- PostgreSQL for scaling
+> **Superseded design note.** An earlier iteration trained a **91-class** detector covering 73
+> fine-grained military aircraft types (F-16 vs F-18 vs Rafale …). That was abandoned: on the
+> project's 6 GB budget a nano/small backbone cannot separate near-identical airframes, all 73
+> types combined held < 12 k boxes against Person's 350 k, and the surveillance logic never
+> consumes the airframe type. Fine-grained type ID moved to **Phase 2** (§9B).
 
-## Data Processing
+## 9A.1 Rationale
 
-- NumPy
-- Pandas
-- scikit-learn
+PS 26187 is border surveillance. Generic COCO classes cannot distinguish a tank from a truck or
+flag an aircraft near a border, so the taxonomy is extended beyond person/vehicle — but only to
+the granularity the product actually reasons about.
 
-## Visualization / Evaluation
+## 9A.2 Coarse classes (13)
 
-- Matplotlib
-- Precision
-- Recall
-- F1-score
-- mAP
-- IDF1
-- HOTA
-- MOTA
-- RMSE/MAE where applicable
+Defined once in **`backend/ml/taxonomy.py`**, which is the single source of truth for the data
+scripts *and* the live pipeline.
+
+| id | class | sourced from |
+|---|---|---|
+| 0 | `person` | Person, Soldier, thermal head/face boxes, MOT17, VIRAT, people_det |
+| 1 | `car` | Car (incl. VIRAT vehicles) |
+| 2 | `bus` | Bus |
+| 3 | `truck` | Forklift / heavy goods |
+| 4 | `motorcycle` | Motorcycle |
+| 5 | `bicycle` | Bicycle |
+| 6 | `license_plate` | License Plate Recognition v13 (Roboflow) |
+| 7 | `military_ground_vehicle` | Tank / armour |
+| 8 | `aircraft` | Generic Jet, Large Military Plane + 59 fixed-wing types |
+| 9 | `helicopter` | AH64, CH47, Ka27, Ka52, Mi24, Mi28, UH60, V22, Z19 |
+| 10 | `drone_uav` | MQ9, RQ4, TB2, TB001, WZ7 |
+| 11 | `night_vision_object` | night-vision.v3i (12 IR sub-classes collapsed upstream — legacy catch-all) |
+| 12 | `animal` | Dog, Cat, Bird, Horse, Cow, Sheep |
+
+`taxonomy.FINE_TO_COARSE` maps every old 91-class id onto these; `taxonomy.normalize()` canonicalises
+any model-supplied name (`"Car"`, `"License_Plate"`, `"Tank"`) to the lowercase vocabulary the
+runtime already keys off.
+
+## 9A.3 Dataset build pipeline
+
+```text
+unified_yolo (91-class, legacy)
+        │  ml/remap_to_coarse.py      FINE_TO_COARSE + geometry cleaning; images hard-linked
+        ▼
+detector_yolo (13-class)
+        │  scripts/add_plates.py      v13 plate set -> class 6, --limit for balance
+        ▼
+        │  scripts/make_clean_split.py   group by source image AND MOT/VIRAT clip
+        ▼
+configs/dataset_coarse.yaml + data/splits/{train,val}_coarse.txt
+        │  ml/verify_dataset.py       histogram / parity / leak / box-size gate
+        ▼
+scripts/train_yolo.py  ->  ml/eval_detector.py (per-class mAP)
+```
+
+Earlier one-off dataset mergers (`merge_datasets.py`, `merge_military.py`,
+`add_external.py`, `fix_existing_labels.py`, …) were superseded by
+`scripts/add_class_dataset.py` and removed; see git history if the approaches are needed.
+
+## 9A.4 Class balance after remap
+
+Instances in `detector_yolo` before the plate merge (517,414 boxes total):
+
+| class | instances | | class | instances |
+|---|---:|---|---|---:|
+| person | 388,815 | | bicycle | 4,566 |
+| night_vision_object | 48,839 | | truck | 2,181 |
+| car | 46,853 | | motorcycle | 2,150 |
+| aircraft | 12,979 | | helicopter | 1,000 |
+| animal | 7,994 | | bus | 887 |
+| license_plate | (added next) | | military_ground_vehicle | 682 |
+| | | | drone_uav | 468 |
+
+The collapse lifted the rare tail from 10–40 instances per class (old fine taxonomy) to 468–1,000.
+Person still dominates at ~75 %; that is acceptable — person detection is the product's first
+priority — and is mitigated by `copy_paste`/`mixup` augmentation rather than by discarding images.
+
+## 9A.5 Training configuration (6 GB RTX 40-series)
+
+| setting | value | reason |
+|---|---|---|
+| model | `yolo11s.pt` (fallback `yolov8s.pt`) | 13 classes is tractable for `s`; large mAP gain over `n` |
+| imgsz | 640 | plates and distant objects are small; 480 loses them |
+| batch | `-1` (auto-fit) | batch 2 gave unusably noisy BatchNorm/gradients |
+| epochs / patience | 150 / 40 | converge with early-stop insurance |
+| schedule | `cos_lr`, `close_mosaic=15` | standard finish-strong recipe |
+| augmentation | `+mixup 0.10`, `copy_paste 0.15`, `degrees 5`, `scale 0.5` | copy-paste specifically lifts the rare military classes |
+| cache | `disk` | the dataset volume is slow; large wall-clock win |
+| env | `CUBLAS_WORKSPACE_CONFIG=:4096:8`, `deterministic=False` | cuDNN STREAM_MISMATCH workaround on RTX 40-series |
+
+## 9A.6 Runtime integration
+
+- `configs/thresholds.yaml → detection.weights_path` points at the trained `best.pt`. When set and
+  present, `ObjectDetector` loads it, reads the model's own `names` map, and emits **all** classes
+  (`detect_all=True`); `target_classes` then applies only to the stock COCO fallback model.
+- `ObjectDetector` normalises every emitted name through `taxonomy.normalize()`.
+- `MultiObjectTracker` no longer re-derives names from `COCO_TARGET_CLASSES`; it carries the name the
+  detector attached to each `DetectionResult` (COCO map kept only as a fallback).
+- Downstream consumers (`track_manager`, `detection_result.vehicle_count`, the ANPR gate in
+  `pipeline._process_track`, `risk_classifier` features) already key off
+  `person/car/bus/truck/motorcycle` and therefore need no change.
+
+---
+
+# 9B. Phase 2 — fine-grained two-stage refinement (designed, not built)
+
+Stage 1 stays the coarse detector. A stage-2 classifier runs **only** on `aircraft`, `helicopter`,
+`drone_uav` and `military_ground_vehicle` crops — never on person/vehicle — and returns the specific
+type. This is where a cascade actually helps: detectors are weak at fine-grained discrimination, and
+restricting the second stage prevents a mediocre classifier from degrading good person/vehicle calls.
+
+Planned when it is picked up:
+
+- **Backbone:** ConvNeXt-tiny or EfficientNetV2-S @ 288–384 px via `timm` (both beat ResNet-50 on
+  fine-grained tasks).
+- **Data:** train/val/**test** split grouped by source image; train on **YOLO-predicted crops** plus
+  jittered GT crops to remove the GT-box vs detector-box domain shift; cap the oversampling ratio;
+  merge or drop the ~15 types with < 40 images; log a per-class confusion matrix; temperature-scale
+  so the refine threshold is meaningful.
+- **Serving:** move `scripts/inference_two_stage.py::TwoStageDetector` into
+  `src/detection/two_stage_detector.py` with guarded imports; batch a frame's crops into one forward
+  pass; run stage 2 only every N frames per track; store the refined type on the `Track` via a
+  side-channel (ByteTrack carries a single int `class_id` and cannot).
+- **Config:** `detection.mode: two_stage` plus `classifier_weights` / `class_mapping` /
+  `refine_threshold` keys in `thresholds.yaml`.
+
+Known defects to fix in `scripts/train_classifier.py` when reviving it: the 5000-image cap combined
+with an inverse-frequency `WeightedRandomSampler` oversamples a 10-image class ~500× per epoch
+(guaranteed overfit), validation is 20 % of the *capped* pool so rare-class `val_acc` is pure noise,
+there is no held-out test set, and three leaf folders (Soldier, Large_Military_Plane, License_Plate)
+are empty. The `total_mem` → `total_memory` crash at line 276 has been fixed.
 
 ---
 
@@ -591,6 +763,14 @@ Spatial Analysis   Temporal Analysis
 The project shall NOT rely on one dataset for every task.
 
 A modular dataset strategy will be used.
+
+> **Implementation note (2026-09-08).** The detector currently in training does **not** use
+> VIRAT as its training source. It is trained on the **13-class coarse** border/military
+> dataset assembled from public detection sets + Roboflow exports (`backend/data/detector_yolo`)
+> — see §9A. VIRAT / MOT17 / UFPR-Planalto801 / BDD100K
+> remain the intended **evaluation and tracking-benchmark** references and for a person/vehicle
+> generalisation baseline. The dataset descriptions below (§10.1–§10.7) describe the evaluation
+> plan, not the current training set.
 
 ## 10.1 Primary Dataset — VIRAT
 
@@ -710,6 +890,29 @@ For trainable models:
 For video datasets, splitting shall occur at the **video/sequence level**, not randomly at the frame level.
 
 This prevents near-identical frames from the same video appearing in both training and testing.
+
+> **Verified 2026-09-08 — the shipped `unified_yolo` split leaks badly.**
+> `scripts/make_clean_split.py` was added to check and fix it. Findings on the raw export:
+>
+> - **Augmentation leak:** Roboflow augments each source image several times
+>   (`<id>_jpg.rf.<hash>.jpg`) and scatters the copies across train *and* val.
+>   **71.5 % of the val set** had a near-identical twin in train → val mAP is inflated.
+> - **Missing labels (merge bug):** **100 % of `plate_*` images (19,828) have no label file
+>   at all**, so class 7 *License Plate* has zero training instances and those images would
+>   otherwise act as harmful negatives (68 `people` images likewise unlabeled).
+> - ~9,500 images have an **empty** `.txt` — these are legitimate background negatives and are kept.
+>
+> `make_clean_split.py` produces a **non-destructive** corrected split without moving any file:
+> `data/splits/{train,val}_clean.txt` + `configs/dataset_clean.yaml`. It re-partitions by
+> **source image** (all augmentations of one source stay on one side), stratified per family,
+> deterministic (seed 42): **73,575 train / 7,963 val (9.8 %)**, 0 source-key overlap.
+> **Train and evaluate the detector with `--data configs/dataset_clean.yaml`**, not `dataset.yaml`.
+>
+> **Residual risk:** only frame-level ids are available, so frames from the same MOT/VIRAT/
+> nightvis *clip* may still span the split. Group by clip if that metadata can be recovered.
+>
+> **Also to fix upstream:** re-run the plate-dataset conversion in the merge scripts so
+> `License Plate` gets real labels; then regenerate the split.
 
 ---
 
@@ -904,6 +1107,14 @@ This allows the same platform to behave differently according to camera purpose.
 
 # 17. Database Design
 
+> **As built.** Schema lives in `backend/src/database/models.py` (SQLAlchemy) and is created
+> automatically in SQLite on first run. It largely matches the tables below, with these additions:
+> `events.evidence_hash` and `alerts.snapshot_hash` (SHA-256 of the evidence image, computed at
+> capture time — NFR event-integrity), `cameras.latitude/longitude` (Map view), and local
+> `users` / `audit_logs` tables. A parallel Postgres schema exists in `supabase/migrations/`
+> (adds `user_profiles` + RLS + a realtime publication) but the pipeline does not write to it yet.
+> **Decided (ADR-001, 2026-09-09):** SQLite is the single application datastore; Postgres holds auth identity only (`user_profiles`). The Postgres `cameras/events/…` tables in `supabase/migrations/` are vestigial.
+
 ## Cameras
 
 ```text
@@ -966,25 +1177,25 @@ timestamp
 
 # 18. API Requirements
 
-Example endpoints:
+All routes are mounted under `/api/*` and require a valid Supabase JWT
+(`Authorization: Bearer <token>`); admin-only routes additionally require the `admin` role.
+
+## As-built routers (`backend/src/api/routes/`)
 
 ```text
-GET  /api/cameras
-POST /api/cameras
-GET  /api/cameras/{id}/status
-
-GET  /api/events
-GET  /api/events/{id}
-
-GET  /api/alerts
-GET  /api/alerts/{id}
-
-POST /api/zones
-GET  /api/zones/{camera_id}
-
-GET  /api/tracks/{track_id}
-
-GET  /api/statistics
+Cameras      GET/POST  /api/cameras            GET /api/cameras/{id}/status  ...
+Events       GET       /api/events             GET /api/events/{id}          GET /api/events/count
+Alerts       GET       /api/alerts             GET /api/alerts/{id}          POST /api/alerts/{id}/review
+Zones        GET/POST  /api/zones              GET /api/zones/{camera_id}
+Tracks       GET       /api/tracks/{track_id}
+Statistics   GET       /api/statistics
+Stream       GET       /api/stream/...         (MJPEG / annotated frame access)
+Reports      GET       /api/reports/daily      (24 h aggregation for CSV/PDF export)
+Audit        GET       /api/audit              (admin — user action log with IP + timestamp)
+Health       GET       /api/health             (unauthenticated)
+POST         /api/auth/logout        revoke the caller's access token (server-side logout)
+WebSocket    WS        /ws/alerts  (real-time alert push; JWT via Sec-WebSocket-Protocol: bearer,<jwt>)
+Static       GET       /snapshots/<file>       (evidence images)
 ```
 
 ---
@@ -1259,66 +1470,34 @@ Dashboard
 
 ---
 
-# 23. Recommended Initial Software Repository
+# 23. Software Repository Layout (as built)
 
 ```text
 IBVAP/
+├── backend/
+│   ├── src/
+│   │   ├── ingestion/  detection/  tracking/  spatial/  temporal/
+│   │   ├── face/  anpr/  features/           # face + ANPR modules (delivered, not yet wired)
+│   │   ├── behavior/  fusion/  risk/  alerts/
+│   │   ├── database/                          # SQLAlchemy models + Repository (SQLite)
+│   │   └── api/                               # FastAPI app, routes, auth, middleware, websocket
+│   ├── ml/                                    # taxonomy, dataset verify, eval_detector
+│   ├── scripts/                               # training, dataset prep, db ops, seed_users, purge
+│   ├── configs/                               # cameras / zones / thresholds / risk_weights / retention
+│   ├── tests/
+│   ├── outputs/  (snapshots, logs, metrics — gitignored)
+│   ├── main.py   requirements*.txt   ruff.toml   Dockerfile
 │
-├── data/
-│   ├── virat/
-│   ├── ufpr/
-│   ├── mot17/
-│   ├── bdd100k/
-│   └── custom/
+├── frontend/                                  # Next.js 15 (App Router), static export
+│   ├── app/                                   # routes: /, /cameras, /alerts, /events, /event, ...
+│   ├── src/components/  context/  hooks/  api/  lib/  types/
+│   └── next.config.ts   Dockerfile   nginx.conf
 │
-├── models/
-│   ├── detection/
-│   ├── face/
-│   ├── anpr/
-│   └── risk/
-│
-├── src/
-│   ├── ingestion/
-│   ├── detection/
-│   ├── tracking/
-│   ├── spatial/
-│   ├── temporal/
-│   ├── face/
-│   ├── anpr/
-│   ├── behavior/
-│   ├── fusion/
-│   ├── risk/
-│   ├── alerts/
-│   ├── database/
-│   └── api/
-│
-├── dashboard/
-│   ├── templates/
-│   └── static/
-│
-├── configs/
-│   ├── cameras.yaml
-│   ├── zones.yaml
-│   └── thresholds.yaml
-│
-├── experiments/
-│   ├── detection/
-│   ├── tracking/
-│   ├── behavior/
-│   ├── fusion/
-│   └── risk/
-│
-├── outputs/
-│   ├── videos/
-│   ├── snapshots/
-│   ├── logs/
-│   └── metrics/
-│
-├── tests/
-│
-├── requirements.txt
-├── README.md
-└── main.py
+├── supabase/                                  # migrations (user_profiles + RLS), config.toml
+├── docs/
+├── scripts/                                   # repo-level ops (secret rotation)
+├── docker-compose.yml   docker-compose.tls.yml
+└── README.md
 ```
 
 ---
@@ -1524,3 +1703,59 @@ IBVAP should ultimately behave as an intelligent surveillance reasoning system r
 > Detect → Track → Understand → Fuse → Assess Risk → Explain → Alert
 
 This principle defines the technical identity of IBVAP.
+
+---
+
+# 31. Implementation Status (2026-09-08)
+
+Snapshot of where the codebase stands against the functional requirements.
+Legend: ✅ done · 🟡 partial / experimental · ⛔ not started.
+
+| FR | Requirement | Status | Notes |
+|---|---|---|---|
+| FR-01 | Video input (RTSP + file, multi-camera, reconnect) | ✅ | `src/ingestion/`, per-camera threads, file-end + stream-reconnect handling |
+| FR-02 | Object detection (person + vehicles) | ✅ | YOLOv8n / COCO in `src/detection/detector.py` |
+| FR-02+ | Border/military **coarse 13-class** detector (§9A) | 🟡 | Dataset built & verified (`data/detector_yolo`, `configs/dataset_coarse.yaml`); runtime plumbing done (`detection.weights_path`); **training run pending** |
+| FR-02++ | Fine-grained military type ID (73 types) | ⛔ | Deferred to Phase 2 — §9B |
+| FR-03 | Multi-object tracking, persistent IDs, trajectories | ✅ | ByteTrack via `supervision`, `TrackManager` history |
+| FR-04 | Polygonal zones (restricted/buffer/safe/entry-exit) | ✅ | `src/spatial/zone_manager.py`, config + `/api/zones` |
+| FR-05 | Virtual fence + crossing direction/time/track | ✅ | `src/spatial/fence_detector.py` |
+| FR-06 | Direction analysis | ✅ | `src/spatial/direction_analyzer.py`, "toward restricted zone" |
+| FR-07 | Loitering detection | ✅ | `src/temporal/loitering_detector.py`, dwell-time tiers in risk engine |
+| FR-08 | Night / low-light context | ✅ | `src/temporal/night_detector.py` (time-of-day + brightness) |
+| FR-09 | Face detection / embedding / matching | 🟡→✅ | `FaceRecognizer` wired into the pipeline (person tracks, throttled); identity feeds context fusion + `identity_results` + `alerts.identity_result`. Off by default — enable `face.enabled` + `pip install insightface`. |
+| FR-10 | ANPR (plate detect → OCR → confidence) | ✅ | Real OCR via `src/anpr/ocr.py` (EasyOCR default). Plate text + confidence attach to the track, feed context fusion, and persist to `anpr_results` + `alerts.plate_result`. Plate-localiser YOLO model optional (`models/anpr/plate_detector.pt`). |
+| FR-11 | Behaviour engine (intrusion, fence, loiter, direction, night, combined) | ✅ | `src/behavior/behavior_engine.py`, "combined suspicious" at 3+ flags |
+| FR-12 | Context fusion + alert dedup | ✅ | `src/fusion/context_fusion.py` — one `FusedEvent` + semantic description + cooldown |
+| FR-13 | Risk engine `R = w1·S+w2·T+w3·B+w4·I+w5·V`, 4 levels | ✅ | `src/risk/risk_engine.py`, weights in `configs/risk_weights.yaml`, explainable summary |
+| FR-13+ | ML event-level risk classifier (baseline comparison) | 🟡 | `src/risk/risk_classifier.py` (RandomForest) scaffolded; **no feature dataset generated, no trained model** |
+| FR-14 | Alert engine (dedup, rate-limit, min-risk, evidence, WS push) | ✅ | `src/alerts/alert_engine.py` + `notifiers.py` (email/SMS, mock fallback) |
+| FR-15 | Dashboard (live feed, status, boxes, IDs, zones, alerts, history, search, detail, evidence) | ✅ | Next.js App Router app in `frontend/app/` |
+| FR-15+ | Heatmap overlay, Threat-Score panel, Multi-camera grid, Map view | ✅ | `HeatmapOverlay`, `ThreatScorePanel`, `MultiView`, `MapView` |
+| FR-16 | Event database (cameras, tracks, events, alerts, plates, identities, risk, evidence) | ✅ | SQLite: cameras/tracks/events/alerts/audit + **`identity_results` / `anpr_results` now populated** by the pipeline (`Repository.create_identity_result` / `create_anpr_result`). |
+| — | Reports (24 h aggregation → CSV/PDF) | ✅ | `/api/reports/daily` + frontend export |
+| — | Audit log page | ✅ | `/api/audit`, `frontend/app/(app)/audit/page.tsx` |
+| — | Evidence hashing (SHA-256) | ✅ | `alert_engine._save_snapshot`, stored on event + alert |
+| — | Experiments 1–6 (§21) + metrics (§20) | ⛔ | `outputs/metrics/` empty; no `experiments/` results yet — **highest-value remaining work for evaluation** |
+
+## Priority open items
+
+1. **Run the coarse training** — `python scripts/train_yolo.py --data configs/dataset_coarse.yaml
+   --model yolo11s.pt` (smoke-test with `--epochs 3` first), then
+   `python -m ml.eval_detector --weights outputs/training/ibvap_coarse/weights/best.pt`
+   and record the per-class mAP baseline.
+2. Point `configs/thresholds.yaml → detection.weights_path` at the resulting `best.pt` and
+   confirm the dashboard end-to-end (boxes, `object_type`, events, alerts).
+3. ~~Verify the train/val split~~ **Done (§12).** The raw export leaked 71 % of val; the split is
+   now grouped by source image **and** MOT/VIRAT clip via `scripts/make_clean_split.py`.
+4. ~~License Plate has no training data~~ **Done.** 19,828 label-less `plate_*` images purged and
+   18,000 correctly-labelled images (19,270 boxes) merged from the v13 Roboflow set.
+5. ~~Decide the data-store story~~ **Done (ADR-001):** SQLite canonical, Postgres = auth only.
+6. Either integrate face + a real OCR engine (PaddleOCR/EasyOCR) into the pipeline, or mark
+   FR-09/FR-10 explicitly as "modules delivered, not demo-active" in the PRD.
+7. `night_vision_object` is a legacy catch-all (12 IR sub-classes were collapsed upstream).
+   Optional ~15 min improvement: re-pull `night-vision.v3i` and remap its real sub-classes to
+   person/vehicle instead of one generic class.
+8. Generate the event-level feature dataset (§11 schema) so the ML risk classifier (FR-13+) can be
+   trained and compared against the rule-based baseline.
+9. Detection still has **zero** test coverage — `backend/tests/` is empty.

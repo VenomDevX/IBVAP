@@ -60,3 +60,14 @@ vehicle_scores:
   no_plate_detected: 30
   plate_read_low_confidence: 35
   known_vehicle: 0
+
+# Behavioural-risk FLOOR implied by the detected object class alone
+# (coarse detector taxonomy — backend/ml/taxonomy.py). Omitted classes contribute nothing.
+object_scores:
+  military_ground_vehicle: 85
+  aircraft: 70
+  helicopter: 70
+  drone_uav: 75
+  license_plate: 0
+  person: 0
+  car: 0

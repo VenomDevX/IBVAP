@@ -3,13 +3,11 @@ IBVAP — Virtual Fence Detector
 Detects line/boundary crossing events using trajectory analysis.
 """
 
-from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass, field
-import time
 import math
+from dataclasses import dataclass
 
-import numpy as np
 import cv2
+import numpy as np
 from loguru import logger
 
 from src.tracking.track import Track
@@ -18,26 +16,28 @@ from src.tracking.track import Track
 @dataclass
 class FenceLine:
     """A virtual fence line definition."""
+
     fence_id: str
     name: str
     camera_id: str
-    point_a: Tuple[int, int]
-    point_b: Tuple[int, int]
+    point_a: tuple[int, int]
+    point_b: tuple[int, int]
     trigger_direction: str = "both"  # "both", "top_to_bottom", "bottom_to_top"
     enabled: bool = True
-    color: Tuple[int, int, int] = (0, 0, 255)
+    color: tuple[int, int, int] = (0, 0, 255)
 
 
 @dataclass
 class FenceCrossingEvent:
     """Record of a fence crossing."""
+
     fence_id: str
     track_id: int
     camera_id: str
     crossing_time: float
     direction: str  # "top_to_bottom" or "bottom_to_top"
     object_type: str
-    crossing_point: Tuple[int, int]
+    crossing_point: tuple[int, int]
 
 
 class FenceDetector:
@@ -47,9 +47,11 @@ class FenceDetector:
     """
 
     def __init__(self):
-        self._fences: Dict[str, FenceLine] = {}
-        self._crossing_history: Dict[str, set] = {}  # fence_id -> set of track_ids that crossed
-        self._recent_crossings: List[FenceCrossingEvent] = []
+        self._fences: dict[str, FenceLine] = {}
+        self._crossing_history: dict[str, set] = {}  # fence_id -> set of track_ids that crossed
+        from collections import deque
+
+        self._recent_crossings = deque(maxlen=500)
 
     def load_from_config(self, config: dict):
         """Load fences from YAML config."""
@@ -75,7 +77,7 @@ class FenceDetector:
         self._fences[fence.fence_id] = fence
         self._crossing_history[fence.fence_id] = set()
 
-    def check_crossing(self, track: Track) -> List[FenceCrossingEvent]:
+    def check_crossing(self, track: Track) -> list[FenceCrossingEvent]:
         """
         Check if a track has crossed any fence.
         Uses the last two trajectory points to detect line crossing.
@@ -99,15 +101,13 @@ class FenceDetector:
 
             # Check line segment intersection
             crossed, cross_point = self._line_intersection(
-                (prev_x, prev_y), (curr_x, curr_y),
-                fence.point_a, fence.point_b
+                (prev_x, prev_y), (curr_x, curr_y), fence.point_a, fence.point_b
             )
 
             if crossed:
                 # Determine crossing direction
                 direction = self._get_crossing_direction(
-                    (prev_x, prev_y), (curr_x, curr_y),
-                    fence.point_a, fence.point_b
+                    (prev_x, prev_y), (curr_x, curr_y), fence.point_a, fence.point_b
                 )
 
                 # Check if direction matches trigger condition
@@ -129,14 +129,11 @@ class FenceDetector:
                 self._recent_crossings.append(event)
                 track.has_crossed_fence = True
 
-                logger.info(
-                    f"Fence crossing: Track {track.track_id} crossed "
-                    f"{fence.name} ({direction})"
-                )
+                logger.info(f"Fence crossing: Track {track.track_id} crossed {fence.name} ({direction})")
 
         return events
 
-    def check_approaching(self, track: Track, threshold_pixels: float = 50.0) -> List[dict]:
+    def check_approaching(self, track: Track, threshold_pixels: float = 50.0) -> list[dict]:
         """Check if a track is approaching any fence line."""
         approaching = []
 
@@ -149,25 +146,24 @@ class FenceDetector:
             if not fence.enabled or fence.camera_id != track.camera_id:
                 continue
 
-            dist = self._point_to_line_distance(
-                (cx, cy), fence.point_a, fence.point_b
-            )
+            dist = self._point_to_line_distance((cx, cy), fence.point_a, fence.point_b)
 
             if dist < threshold_pixels:
-                approaching.append({
-                    "fence_id": fence_id,
-                    "fence_name": fence.name,
-                    "distance": round(dist, 1),
-                    "track_id": track.track_id,
-                })
+                approaching.append(
+                    {
+                        "fence_id": fence_id,
+                        "fence_name": fence.name,
+                        "distance": round(dist, 1),
+                        "track_id": track.track_id,
+                    }
+                )
 
         return approaching
 
     @staticmethod
     def _line_intersection(
-        p1: Tuple[int, int], p2: Tuple[int, int],
-        p3: Tuple[int, int], p4: Tuple[int, int]
-    ) -> Tuple[bool, Optional[Tuple[int, int]]]:
+        p1: tuple[int, int], p2: tuple[int, int], p3: tuple[int, int], p4: tuple[int, int]
+    ) -> tuple[bool, tuple[int, int] | None]:
         """
         Check if line segments (p1-p2) and (p3-p4) intersect.
         Returns (intersects, intersection_point).
@@ -193,8 +189,7 @@ class FenceDetector:
 
     @staticmethod
     def _get_crossing_direction(
-        prev: Tuple[int, int], curr: Tuple[int, int],
-        line_a: Tuple[int, int], line_b: Tuple[int, int]
+        prev: tuple[int, int], curr: tuple[int, int], line_a: tuple[int, int], line_b: tuple[int, int]
     ) -> str:
         """Determine crossing direction relative to the fence line."""
         # Use cross product to determine which side the points are on
@@ -211,11 +206,7 @@ class FenceDetector:
         return "unknown"
 
     @staticmethod
-    def _point_to_line_distance(
-        point: Tuple[int, int],
-        line_a: Tuple[int, int],
-        line_b: Tuple[int, int]
-    ) -> float:
+    def _point_to_line_distance(point: tuple[int, int], line_a: tuple[int, int], line_b: tuple[int, int]) -> float:
         """Calculate minimum distance from a point to a line segment."""
         px, py = point
         ax, ay = line_a
@@ -234,7 +225,7 @@ class FenceDetector:
 
         return math.sqrt((px - proj_x) ** 2 + (py - proj_y) ** 2)
 
-    def get_recent_crossings(self, limit: int = 50) -> List[dict]:
+    def get_recent_crossings(self, limit: int = 50) -> list[dict]:
         return [
             {
                 "fence_id": e.fence_id,
@@ -244,11 +235,11 @@ class FenceDetector:
                 "direction": e.direction,
                 "object_type": e.object_type,
             }
-            for e in self._recent_crossings[-limit:]
+            for e in list(self._recent_crossings)[-limit:]
         ]
 
     @staticmethod
-    def draw_fences(frame: np.ndarray, fences: List[FenceLine]) -> np.ndarray:
+    def draw_fences(frame: np.ndarray, fences: list[FenceLine]) -> np.ndarray:
         """Draw fence lines on frame."""
         annotated = frame.copy()
         for fence in fences:
@@ -257,8 +248,5 @@ class FenceDetector:
             cv2.line(annotated, fence.point_a, fence.point_b, fence.color, 3)
             mid_x = (fence.point_a[0] + fence.point_b[0]) // 2
             mid_y = (fence.point_a[1] + fence.point_b[1]) // 2
-            cv2.putText(
-                annotated, fence.name, (mid_x - 30, mid_y - 10),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, fence.color, 2
-            )
+            cv2.putText(annotated, fence.name, (mid_x - 30, mid_y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, fence.color, 2)
         return annotated

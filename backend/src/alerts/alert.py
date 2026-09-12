@@ -4,13 +4,12 @@ Structured alert output format.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional
-import time
 
 
 @dataclass
 class Alert:
     """A generated security alert."""
+
     alert_id: str
     camera_id: str
     event_id: str
@@ -20,14 +19,14 @@ class Alert:
     risk_score: float
     risk_level: str  # "low", "medium", "high", "critical"
     object_type: str
-    contributing_factors: List[str] = field(default_factory=list)
-    snapshot_path: Optional[str] = None
-    snapshot_hash: Optional[str] = None
-    plate_result: Optional[str] = None
-    identity_result: Optional[str] = None
+    contributing_factors: list[str] = field(default_factory=list)
+    snapshot_path: str | None = None
+    snapshot_hash: str | None = None
+    plate_result: str | None = None
+    identity_result: str | None = None
     reviewed: bool = False
-    reviewed_by: Optional[str] = None
-    reviewed_at: Optional[float] = None
+    reviewed_by: str | None = None
+    reviewed_at: float | None = None
 
     @property
     def severity_emoji(self) -> str:

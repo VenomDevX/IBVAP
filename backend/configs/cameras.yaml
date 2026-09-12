@@ -1,7 +1,7 @@
 cameras:
   - id: "CAM_STREET"
     name: "Street Traffic Camera"
-    source: "./data/custom/street_traffic.mp4"
+    source: "./data/demo/street_traffic.mp4"
     fps: 30
     resolution: [1920, 1080]
     capabilities:
@@ -12,7 +12,7 @@ cameras:
 
   - id: "CAM_PEOPLE"
     name: "Pedestrian Surveillance"
-    source: "./data/custom/people_walking.mp4"
+    source: "./data/demo/people_walking.mp4"
     fps: 30
     resolution: [1920, 1080]
     capabilities:
@@ -22,7 +22,7 @@ cameras:
 
   - id: "CAM_HIGHWAY"
     name: "Highway Border Crossing"
-    source: "./data/custom/highway_border.mp4"
+    source: "./data/demo/highway_border.mp4"
     fps: 30
     resolution: [1920, 1080]
     capabilities:
@@ -32,10 +32,70 @@ cameras:
 
   - id: "CAM_CHECKPOINT"
     name: "Indoor Checkpoint"
-    source: "./data/custom/indoor_checkpoint.mp4"
+    source: "./data/demo/indoor_checkpoint.mp4"
     fps: 30
     resolution: [1920, 1080]
     capabilities:
       - "detection"
       - "tracking"
       - "face"
+
+  - id: "CAM_VIRAT_PARKING"
+    name: "VIRAT Parking Lot"
+    source: "./data/demo/virat_parking_lot.mp4"
+    fps: 24
+    resolution: [1280, 720]
+    capabilities:
+      - "detection"
+      - "tracking"
+      - "anpr"
+
+  - id: "CAM_VIRAT_STREET"
+    name: "VIRAT Street Activity"
+    source: "./data/demo/virat_street_activity.mp4"
+    fps: 30
+    resolution: [1280, 720]
+    capabilities:
+      - "detection"
+      - "tracking"
+      - "face"
+      - "anpr"
+
+  - id: "CAM_VIRAT_VEHICLE"
+    name: "VIRAT Vehicle Area"
+    source: "./data/demo/virat_vehicle_area.mp4"
+    fps: 30
+    resolution: [1280, 720]
+    capabilities:
+      - "detection"
+      - "tracking"
+      - "anpr"
+
+  - id: "CAM_HIGHWAY_4K"
+    name: "Highway Traffic Flow (Pixabay)"
+    source: "./data/demo/traffic_flow_highway.mp4"
+    fps: 30
+    resolution: [3840, 2160]
+    capabilities:
+      - "detection"
+      - "tracking"
+      - "anpr"
+
+  - id: "CAM_CROSSWALK"
+    name: "Pedestrian Crosswalk (Pixabay)"
+    source: "./data/demo/crosswalk_crowd.mp4"
+    fps: 60
+    resolution: [3840, 2160]
+    capabilities:
+      - "detection"
+      - "tracking"
+      - "face"
+
+  - id: "CAM_MILITARY_TEST"
+    name: "Stage-2 Smoke Test (synthetic, aircraft frame looped)"
+    source: "./data/demo/military_test_aircraft.mp4"
+    fps: 10
+    resolution: [640, 640]
+    capabilities:
+      - "detection"
+      - "tracking"

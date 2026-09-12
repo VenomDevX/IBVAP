@@ -12,6 +12,17 @@ dist
 dist-ssr
 *.local
 
+# env — local secrets only; .env.development / .env.production are safe config
+.env
+.env*.local
+
+# Next.js
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+.vercel
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

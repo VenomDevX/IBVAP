@@ -1,28 +1,18 @@
-# Stage 1: Build the React application
+# IBVAP frontend — Next.js static export served by nginx (unprivileged)
 FROM node:20-alpine AS build
-
 WORKDIR /app
-
-# Install dependencies
-COPY package.json package-lock.json ./
+COPY package*.json ./
 RUN npm ci
-
-# Copy the rest of the application
 COPY . .
-
-# Build the app
+# Next inlines NEXT_PUBLIC_* at build time
+ARG NEXT_PUBLIC_SUPABASE_URL
+ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
+ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL \
+    NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
 RUN npm run build
 
-# Stage 2: Serve the application with Nginx
-FROM nginx:alpine
-
-# Copy the custom Nginx configuration
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-
-# Copy the built React app to Nginx's web root
-COPY --from=build /app/dist /usr/share/nginx/html
-
-# Expose port 80
-EXPOSE 80
-
-CMD ["nginx", "-g", "daemon off;"]
+FROM nginxinc/nginx-unprivileged:alpine
+COPY --from=build /app/out /usr/share/nginx/html
+COPY --chown=101:101 nginx.conf /etc/nginx/conf.d/default.conf
+COPY nginx-tls.conf /etc/nginx/nginx-tls.template
+EXPOSE 8080

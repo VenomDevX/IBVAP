@@ -1,0 +1,10 @@
+# Evidence / data retention windows (days). purge_expired.py enforces these.
+# Set generously for a border-surveillance context; tighten per local policy.
+retention_days:
+  snapshots: 90        # outputs/snapshots/*.jpg + the referencing alert row
+  events: 180
+  alerts: 180
+  tracks: 30
+  identity_results: 30  # biometric — keep short
+  anpr_results: 30      # plate text — keep short
+  audit_logs: 730       # 2 years — accountability record

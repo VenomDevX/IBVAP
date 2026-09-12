@@ -3,66 +3,96 @@ IBVAP — Video Processing Pipeline
 Main orchestrator: Ingest → Detect → Track → Spatial → Temporal → Behavior → Fusion → Risk → Alert → Store
 """
 
-import time
-import threading
 import os
-from typing import Dict, Optional, List, Callable
+import threading
+import time
 from pathlib import Path
 
-import cv2
 import numpy as np
 import yaml
 from loguru import logger
 
-from src.ingestion.video_source import VideoSource, CameraInfo, CameraStatus
-from src.ingestion.frame_buffer import FrameBuffer, FramePacket
-from src.detection.detector import ObjectDetector
-from src.detection.detection_result import FrameDetections
-from src.tracking.tracker import MultiObjectTracker
-from src.tracking.track_manager import TrackManager
-from src.spatial.zone_manager import ZoneManager
-from src.spatial.fence_detector import FenceDetector
-from src.spatial.direction_analyzer import DirectionAnalyzer
-from src.temporal.loitering_detector import LoiteringDetector
-from src.temporal.night_detector import NightDetector
-from src.behavior.behavior_engine import BehaviorEngine
-from src.fusion.context_fusion import ContextFusion
-from src.risk.risk_engine import RiskEngine
 from src.alerts.alert_engine import AlertEngine
+from src.behavior.behavior_engine import BehaviorEngine
+from src.classification.fine_classifier import FineClassifier
 from src.database.db import get_database
 from src.database.repository import Repository
-from src.api.websocket import ws_manager
+from src.detection.detector import ObjectDetector
+from src.face.face_recognizer import FaceRecognizer
+from src.features.anpr import extract_plate
 from src.features.color_extractor import get_dominant_color
-from src.features.anpr import extract_license_plate
+from src.fusion.context_fusion import ContextFusion
+from src.ingestion.video_source import CameraInfo, CameraStatus, VideoSource
+from src.risk.risk_engine import RiskEngine
+from src.spatial.direction_analyzer import DirectionAnalyzer
+from src.spatial.fence_detector import FenceDetector
 from src.spatial.heatmap_tracker import HeatmapTracker
+from src.spatial.zone_manager import Zone, ZoneManager
+from src.temporal.loitering_detector import LoiteringDetector
+from src.temporal.night_detector import NightDetector
+from src.tracking.track_manager import TrackManager
+from src.tracking.tracker import MultiObjectTracker
 
 
 class CameraPipeline:
     """Processing pipeline for a single camera source."""
 
-    def __init__(self, camera_info: CameraInfo, detector: ObjectDetector,
-                 zone_manager: ZoneManager, fence_detector: FenceDetector,
-                 risk_config: dict, alert_engine: AlertEngine):
+    def __init__(
+        self,
+        camera_info: CameraInfo,
+        detector: ObjectDetector,
+        zone_manager: ZoneManager,
+        fence_detector: FenceDetector,
+        risk_config: dict,
+        alert_engine: AlertEngine,
+        face_recognizer: FaceRecognizer | None = None,
+        fine_classifier: FineClassifier | None = None,
+        thresholds: dict | None = None,
+    ):
         self.camera_info = camera_info
+        thresholds = thresholds or {}
+        tracking = thresholds.get("tracking", {})
+        behavior = thresholds.get("behavior", {})
         self.video_source = VideoSource(camera_info)
         self.detector = detector  # Shared detector across cameras
-        self.tracker = MultiObjectTracker()
+        self.tracker = MultiObjectTracker(
+            max_age=tracking.get("max_age", 30), min_hits=tracking.get("min_hits", 3),
+            iou_threshold=tracking.get("iou_threshold", 0.3),
+            frame_rate=camera_info.fps_limit or 30,
+        )
         self.track_manager = TrackManager()
         self.heatmap_tracker = HeatmapTracker()
         self.zone_manager = zone_manager
         self.fence_detector = fence_detector
-        self.direction_analyzer = DirectionAnalyzer()
-        self.loitering_detector = LoiteringDetector()
-        self.night_detector = NightDetector()
+        self.direction_analyzer = DirectionAnalyzer(
+            min_trajectory_points=behavior.get("direction_min_points", 5),
+            stationary_threshold=behavior.get("stationary_speed_threshold", 5.0),
+        )
+        self.loitering_detector = LoiteringDetector(
+            threshold_seconds=behavior.get("loitering_threshold_seconds", 30),
+            min_movement_pixels=behavior.get("loitering_min_movement", 50),
+            stationary_speed_threshold=behavior.get("stationary_speed_threshold", 5.0),
+        )
+        self.night_detector = NightDetector(
+            night_start=behavior.get("night_start", "19:00"), night_end=behavior.get("night_end", "05:00"),
+            brightness_threshold=behavior.get("low_light_brightness_threshold", 60),
+        )
         self.behavior_engine = BehaviorEngine()
         self.context_fusion = ContextFusion()
         self.risk_engine = RiskEngine(risk_config)
         self.alert_engine = alert_engine
+        self.face_recognizer = face_recognizer or FaceRecognizer(enabled=False)
+        self._face_check_times: dict[int, float] = {}
+        self.fine_classifier = fine_classifier or FineClassifier(enabled=False)
+        self._fine_check_times: dict[int, float] = {}
+        self._FACE_RECHECK_S = 2.0
+        self._FINE_RECHECK_S = 2.0
 
         self._running = False
-        self._thread: Optional[threading.Thread] = None
-        self._latest_frame: Optional[np.ndarray] = None
-        self._latest_annotated: Optional[np.ndarray] = None
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._latest_frame: np.ndarray | None = None
+        self._latest_annotated: np.ndarray | None = None
         self._frame_lock = threading.Lock()
         self._stats = {
             "frames_processed": 0,
@@ -78,10 +108,7 @@ class CameraPipeline:
         if self._running:
             return
 
-        if not self.video_source.connect():
-            logger.error(f"Failed to start pipeline for {self.camera_info.camera_id}")
-            return
-
+        self._stop_event.clear()
         self._running = True
         self._thread = threading.Thread(target=self._process_loop, daemon=True)
         self._thread.start()
@@ -90,6 +117,7 @@ class CameraPipeline:
     def stop(self):
         """Stop the processing pipeline."""
         self._running = False
+        self._stop_event.set()
         if self._thread:
             self._thread.join(timeout=5)
         self.video_source.release()
@@ -97,6 +125,10 @@ class CameraPipeline:
 
     def _process_loop(self):
         """Main processing loop."""
+        if not self.video_source.connect() and not self._recover_source():
+            self._running = False
+            return
+        last_frame_id = -1
         while self._running:
             try:
                 start_time = time.time()
@@ -110,12 +142,16 @@ class CameraPipeline:
                         self._running = False
                         break
                     # Stream error — try reconnect
-                    if not self.video_source.reconnect():
+                    if not self._recover_source():
                         self._running = False
                         break
                     continue
 
                 frame_id = self.video_source.frame_id
+                if frame_id == last_frame_id:
+                    self._stop_event.wait(0.005)
+                    continue
+                last_frame_id = frame_id
                 camera_id = self.camera_info.camera_id
 
                 # Store raw frame
@@ -138,16 +174,55 @@ class CameraPipeline:
                     if track.duration > 0.5:
                         x1, y1, x2, y2 = [int(v) for v in track.bbox]
                         # Ensure bounds
-                        x1 = max(0, x1); y1 = max(0, y1)
-                        x2 = min(frame.shape[1], x2); y2 = min(frame.shape[0], y2)
-                        
+                        x1 = max(0, x1)
+                        y1 = max(0, y1)
+                        x2 = min(frame.shape[1], x2)
+                        y2 = min(frame.shape[0], y2)
+
                         if x2 > x1 and y2 > y1:
                             crop = frame[y1:y2, x1:x2]
                             if track.color == "Unknown":
                                 track.color = get_dominant_color(crop)
-                            if track.object_type in ("car", "truck", "bus", "motorcycle", "vehicle") and track.license_plate == "Unknown":
-                                track.license_plate = extract_license_plate(crop)
-                            
+                            if (
+                                track.object_type in ("car", "truck", "bus", "motorcycle", "vehicle")
+                                and track.license_plate == "Unknown"
+                            ):
+                                plate = extract_plate(crop)
+                                if plate["text"] != "Unknown" and plate["confidence"] > 0:
+                                    track.license_plate = plate["text"]
+                                    track.plate_confidence = plate["confidence"]
+                            if (
+                                self.fine_classifier.active
+                                and FineClassifier.is_military(track.object_type)
+                                and track.fine_type == "unknown"
+                            ):
+                                # Stage 2: name the specific type (F16, not
+                                # "aircraft"). Throttled like the face check -
+                                # a track's airframe does not change, so one
+                                # answer every few seconds is plenty, and the
+                                # gate inside classify() keeps low-confidence
+                                # guesses out of an operator's display.
+                                last = self._fine_check_times.get(tid, 0.0)
+                                if time.time() - last >= self._FINE_RECHECK_S:
+                                    self._fine_check_times[tid] = time.time()
+                                    fine = self.fine_classifier.classify(crop)
+                                    if fine:
+                                        track.fine_type = fine["type"]
+                                        track.fine_confidence = fine["confidence"]
+                            if (
+                                track.object_type == "person"
+                                and track.identity_status == "unknown"
+                                and self.face_recognizer.active
+                            ):
+                                last = self._face_check_times.get(tid, 0.0)
+                                if time.time() - last >= self._FACE_RECHECK_S:
+                                    self._face_check_times[tid] = time.time()
+                                    match = self.face_recognizer.identify(crop)
+                                    if match and match["status"] != "unknown":
+                                        track.identity_label = match["identity"]
+                                        track.identity_score = match["similarity"]
+                                        track.identity_status = match["status"]
+
                     self._process_track(track, frame)
 
                 # Annotate frame
@@ -157,8 +232,7 @@ class CameraPipeline:
                 if camera_zones:
                     annotated = ZoneManager.draw_zones(annotated, camera_zones)
                 # Draw fences
-                fences = [f for f in self.fence_detector._fences.values()
-                          if f.camera_id == camera_id]
+                fences = [f for f in self.fence_detector._fences.values() if f.camera_id == camera_id]
                 if fences:
                     annotated = FenceDetector.draw_fences(annotated, fences)
                 # Draw tracks
@@ -175,6 +249,17 @@ class CameraPipeline:
             except Exception as e:
                 logger.error(f"Pipeline error ({self.camera_info.camera_id}): {e}")
                 time.sleep(0.1)
+
+    def _recover_source(self) -> bool:
+        if not self.video_source.is_stream():
+            return False
+        while self._running and not self._stop_event.is_set():
+            if self.video_source.reconnect(self._stop_event):
+                return True
+            if self.video_source._reconnect_count >= self.video_source.max_reconnect_attempts:
+                self.video_source._status = CameraStatus.OFFLINE
+                return False
+        return False
 
     def _process_track(self, track, frame: np.ndarray):
         """Process a single track through spatial/temporal/behavior/fusion/risk pipeline."""
@@ -212,6 +297,7 @@ class CameraPipeline:
 
         if fence_events:
             spatial_context["fence_crossed"] = True
+        spatial_context["approaching_fence"] = bool(approaching)
 
         # 5. Direction analysis
         direction = self.direction_analyzer.analyze_direction(track)
@@ -219,10 +305,7 @@ class CameraPipeline:
         toward_restricted = False
         for zone in self.zone_manager.get_camera_zones(camera_id):
             if zone.zone_type == "restricted":
-                zone_center = (
-                    int(np.mean([p[0] for p in zone.points])),
-                    int(np.mean([p[1] for p in zone.points]))
-                )
+                zone_center = (int(np.mean([p[0] for p in zone.points])), int(np.mean([p[1] for p in zone.points])))
                 if self.direction_analyzer.is_moving_toward_zone(track, zone_center):
                     toward_restricted = True
                     break
@@ -240,27 +323,40 @@ class CameraPipeline:
             "is_night": night_ctx.get("is_night", False),
             "is_night_time": night_ctx.get("is_night_time", False),
             "is_loitering": len(loiter_events) > 0 or track.is_loitering,
-            "loiter_duration": loiter_events[0].duration if loiter_events else 0,
+            "loiter_duration": max((self.loitering_detector.get_zone_duration(track.track_id, zid)
+                                     for zid in current_zone_ids), default=0),
             "loiter_zone": loiter_events[0].zone_id if loiter_events else "",
             "brightness": night_ctx.get("brightness", 128),
         }
 
         # 7. Behavior analysis
         behavior_events = self.behavior_engine.analyze_track(
-            track, spatial_context, temporal_context, direction_context, fence_context
+            track, spatial_context, temporal_context, direction_context, fence_context, apply_cooldown=False
         )
 
         if not behavior_events:
+            track.risk_score = 0.0
+            track.risk_level = "low"
+            track.risk_factors = []
             return
 
         # 8. Context fusion
         identity_context = {}
         if track.color != "Unknown":
             identity_context["color"] = track.color
+        if track.object_type == "person":
+            identity_context["identity"] = track.identity_label
+            identity_context["identity_status"] = track.identity_status if self.face_recognizer.active else "not_checked"
+            identity_context["identity_score"] = track.identity_score
 
         vehicle_context = {}
-        if hasattr(track, 'license_plate') and track.license_plate != "Unknown":
+        if track.object_type in ("car", "truck", "bus", "motorcycle", "vehicle", "military_ground_vehicle"):
             vehicle_context["plate"] = track.license_plate
+            vehicle_context["plate_confidence"] = track.plate_confidence
+            vehicle_context["plate_status"] = (
+                "not_detected" if track.license_plate == "Unknown" else
+                "low_confidence" if track.plate_confidence < 0.6 else "read"
+            )
 
         fused_event = self.context_fusion.fuse_events(
             track_id=track.track_id,
@@ -279,45 +375,70 @@ class CameraPipeline:
 
         # 9. Risk scoring
         fused_event = self.risk_engine.score_fused_event(fused_event)
-        
+
         # Attach latest risk to the track for live dashboard
         track.risk_score = fused_event.risk_score
         track.risk_level = fused_event.risk_level
         track.risk_factors = fused_event.contributing_factors
+
+        if not self.context_fusion.should_record(fused_event):
+            return
 
         # Print risk summary for significant events
         if fused_event.risk_level in ("high", "critical"):
             summary = self.risk_engine.get_explainable_summary(fused_event)
             logger.info(f"\n{summary}")
 
-        # 10. Alert generation
-        alert = self.alert_engine.generate_alert(fused_event, frame)
-
-        if alert:
-            self._stats["alerts_generated"] += 1
-            if alert.snapshot_path:
+        # Serialize chain appends across camera workers; publish only committed alerts.
+        with self.alert_engine.persistence_lock:
+            alert = self.alert_engine.generate_alert(fused_event, frame, publish=False)
+            if alert and alert.snapshot_path:
                 fused_event.evidence_path = alert.snapshot_path
                 fused_event.evidence_hash = alert.snapshot_hash
-
-            # Store to database
-            try:
-                db = get_database()
-                session = db.get_session()
+            with get_database().get_session() as session:
                 repo = Repository(session)
-                repo.create_event(fused_event.to_dict())
-                repo.create_alert(alert.to_dict())
-                session.close()
-            except Exception as e:
-                logger.error(f"Database write error: {e}")
+                try:
+                    repo.create_event(fused_event.to_dict(), commit=False)
+                    if alert:
+                        repo.create_alert(alert.to_dict(), commit=False)
+                    session.commit()
+                except Exception:
+                    session.rollback()
+                    raise
+                self.context_fusion.mark_recorded(fused_event)
+                self._stats["events_generated"] += 1
+                if alert:
+                    self.alert_engine.publish_alert(alert)
+                    self._stats["alerts_generated"] += 1
+                if track.object_type == "person" and track.identity_status != "unknown":
+                    try:
+                        repo.create_identity_result(
+                            track_id=track.track_id,
+                            camera_id=camera_id,
+                            identity_label=track.identity_label,
+                            similarity_score=track.identity_score,
+                        )
+                    except Exception as e:
+                        session.rollback()
+                        logger.error(f"DB write error (identity): {e}")
+                if track.license_plate != "Unknown":
+                    try:
+                        repo.create_anpr_result(
+                            track_id=track.track_id,
+                            camera_id=camera_id,
+                            plate_text=track.license_plate,
+                            ocr_confidence=track.plate_confidence,
+                        )
+                    except Exception as e:
+                        session.rollback()
+                        logger.error(f"DB write error (anpr): {e}")
 
-        self._stats["events_generated"] += 1
-
-    def get_latest_frame(self) -> Optional[np.ndarray]:
+    def get_latest_frame(self) -> np.ndarray | None:
         """Get the latest raw frame."""
         with self._frame_lock:
             return self._latest_frame.copy() if self._latest_frame is not None else None
 
-    def get_latest_annotated_frame(self) -> Optional[np.ndarray]:
+    def get_latest_annotated_frame(self) -> np.ndarray | None:
         """Get the latest annotated frame (with overlays)."""
         with self._frame_lock:
             return self._latest_annotated.copy() if self._latest_annotated is not None else None
@@ -338,11 +459,13 @@ class IBVAPPipeline:
 
     def __init__(self, config_dir: str = "./configs"):
         self.config_dir = Path(config_dir)
-        self.camera_pipelines: Dict[str, CameraPipeline] = {}
-        self.detector: Optional[ObjectDetector] = None
+        self.camera_pipelines: dict[str, CameraPipeline] = {}
+        self.detector: ObjectDetector | None = None
         self.zone_manager = ZoneManager()
         self.fence_detector = FenceDetector()
         self.alert_engine = AlertEngine()
+        self.face_recognizer: FaceRecognizer | None = None
+        self.fine_classifier: FineClassifier | None = None
         self._risk_config = {}
 
     def initialize(self):
@@ -357,15 +480,21 @@ class IBVAPPipeline:
 
         # Initialize detector (shared across cameras)
         det_cfg = thresholds_config.get("detection", {})
+        weights_path = det_cfg.get("weights_path") or ""
+        use_custom = bool(weights_path) and os.path.exists(weights_path)
+        if weights_path and not use_custom:
+            logger.warning(f"detection.weights_path set but not found ({weights_path}) - using stock model")
         self.detector = ObjectDetector(
-            model_path=det_cfg.get("model_variant", "yolov8n") + ".pt",
+            model_path=weights_path if use_custom else det_cfg.get("model_variant", "yolov8n") + ".pt",
             confidence_threshold=det_cfg.get("confidence_threshold", 0.40),
-            target_classes=det_cfg.get("target_classes", [0, 2, 3, 5, 7]),
+            nms_threshold=det_cfg.get("nms_threshold", 0.45),
+            target_classes=det_cfg.get("target_classes") or [0, 2, 3, 5, 7],
             imgsz=det_cfg.get("imgsz", 640),
+            detect_all=use_custom,  # custom coarse model: emit all its classes
         )
 
-        # Initialize zones
-        self.zone_manager.load_from_config(zones_config)
+        # Import YAML defaults once; database rows (including deletions) take precedence.
+        self._restore_zones(zones_config)
 
         # Initialize fences
         self.fence_detector.load_from_config(zones_config)
@@ -378,11 +507,27 @@ class IBVAPPipeline:
             min_risk_score=alert_cfg.get("min_alert_risk_score", 20),
         )
 
+        # Face recognition (shared model, off by default — see thresholds.yaml)
+        fc = thresholds_config.get("face", {})
+        self.face_recognizer = FaceRecognizer(
+            enabled=bool(fc.get("enabled", False)),
+            gallery_path=fc.get("gallery_path", "./models/face/gallery.json"),
+            similarity_threshold=fc.get("similarity_threshold", 0.45),
+            uncertain_threshold=fc.get("uncertain_threshold", 0.35),
+            min_face_confidence=fc.get("min_face_confidence", 0.6),
+        )
+
+        # Stage 2 fine-grained classifier (military crops only). On by default;
+        # disables itself when the weights are absent - see thresholds.yaml.
+        cc = thresholds_config.get("classifier", {})
+        self.fine_classifier = FineClassifier(
+            enabled=bool(cc.get("enabled", True)),
+            weights=cc.get("weights", "./models/classifier/ibvap_fine.pt"),
+            min_confidence=float(cc.get("min_confidence", 0.55)),
+        )
+
         # Initialize database
         db = get_database()
-
-        # Create default users
-        self._create_default_users(db)
 
         # Initialize camera pipelines
         for cam_cfg in cameras_config.get("cameras", []):
@@ -404,6 +549,9 @@ class IBVAPPipeline:
                 fence_detector=self.fence_detector,
                 risk_config=self._risk_config,
                 alert_engine=self.alert_engine,
+                face_recognizer=self.face_recognizer,
+                fine_classifier=self.fine_classifier,
+                thresholds=thresholds_config,
             )
 
             self.camera_pipelines[camera_info.camera_id] = pipeline
@@ -415,19 +563,19 @@ class IBVAPPipeline:
                 existing = repo.get_camera(camera_info.camera_id)
                 if not existing:
                     # Mock locations for the map view based on camera ID
-                    lat, lng = 28.6139, 77.2090 # Default to New Delhi coordinates
+                    lat, lng = 28.6139, 77.2090  # Default to New Delhi coordinates
                     if camera_info.camera_id == "cam_north":
                         lat, lng = 28.6150, 77.2100
                     elif camera_info.camera_id == "cam_south":
                         lat, lng = 28.6120, 77.2080
 
                     repo.create_camera(
-                        camera_id=camera_info.camera_id, 
+                        camera_id=camera_info.camera_id,
                         name=camera_info.name,
-                        stream_url=camera_info.source, 
+                        stream_url=camera_info.source,
                         camera_type=camera_info.camera_type,
                         latitude=lat,
-                        longitude=lng
+                        longitude=lng,
                     )
                 session.close()
             except Exception as e:
@@ -435,62 +583,43 @@ class IBVAPPipeline:
 
         logger.success(f"IBVAP Pipeline initialized with {len(self.camera_pipelines)} cameras")
 
-    def _create_default_users(self, db):
-        """Create default admin and operator users."""
-        import secrets
-
-        try:
-            from src.api.auth import hash_password
-
-            session = db.get_session()
-            repo = Repository(session)
-
-            # Read passwords from env vars — generate secure random ones if not set
-            admin_pw = os.environ.get("IBVAP_ADMIN_PASSWORD")
-            if not admin_pw:
-                admin_pw = secrets.token_urlsafe(16)
-                logger.warning(f"IBVAP_ADMIN_PASSWORD not set. Generated temp password: {admin_pw}")
-
-            operator_pw = os.environ.get("IBVAP_OPERATOR_PASSWORD")
-            if not operator_pw:
-                operator_pw = secrets.token_urlsafe(16)
-                logger.warning(f"IBVAP_OPERATOR_PASSWORD not set. Generated temp password: {operator_pw}")
-
-            if not repo.get_user("admin"):
-                repo.create_user("admin", hash_password(admin_pw), "admin", "Administrator")
-                logger.info("Created default admin user")
-
-            if not repo.get_user("operator"):
-                repo.create_user("operator", hash_password(operator_pw), "operator", "Operator")
-                logger.info("Created default operator user")
-
-            session.close()
-        except Exception as e:
-            logger.warning(f"Could not create default users: {e}")
-
     def start_all(self):
         """Start all camera pipelines."""
         for cam_id, pipeline in self.camera_pipelines.items():
             pipeline.start()
+
+    def _restore_zones(self, zones_config: dict):
+        defaults = ZoneManager()
+        defaults.load_from_config(zones_config)
+        with get_database().get_session() as session:
+            repo = Repository(session)
+            existing = {z.zone_id for z in repo.get_zones(include_deleted=True)}
+            for zone in defaults.get_all_zones():
+                if zone["zone_id"] not in existing:
+                    repo.create_zone(zone)
+            self.zone_manager = ZoneManager()
+            for row in repo.get_zones():
+                self.zone_manager.add_zone(Zone(
+                    zone_id=row.zone_id, camera_id=row.camera_id, name=row.name,
+                    zone_type=row.zone_type, points=[tuple(p) for p in row.points],
+                    color=tuple(row.color), enabled=row.enabled,
+                ))
 
     def stop_all(self):
         """Stop all camera pipelines."""
         for cam_id, pipeline in self.camera_pipelines.items():
             pipeline.stop()
 
-    def get_pipeline(self, camera_id: str) -> Optional[CameraPipeline]:
+    def get_pipeline(self, camera_id: str) -> CameraPipeline | None:
         return self.camera_pipelines.get(camera_id)
 
-    def get_all_stats(self) -> Dict[str, dict]:
-        return {
-            cam_id: pipeline.get_stats()
-            for cam_id, pipeline in self.camera_pipelines.items()
-        }
+    def get_all_stats(self) -> dict[str, dict]:
+        return {cam_id: pipeline.get_stats() for cam_id, pipeline in self.camera_pipelines.items()}
 
     def _load_yaml(self, filename: str) -> dict:
         filepath = self.config_dir / filename
         try:
-            with open(filepath, "r") as f:
+            with open(filepath) as f:
                 return yaml.safe_load(f) or {}
         except FileNotFoundError:
             logger.warning(f"Config file not found: {filepath}")

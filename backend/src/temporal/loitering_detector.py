@@ -4,8 +4,8 @@ Identifies objects dwelling in a zone beyond configured thresholds.
 """
 
 import time
-from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
+
 from loguru import logger
 
 from src.tracking.track import Track
@@ -14,6 +14,7 @@ from src.tracking.track import Track
 @dataclass
 class LoiteringEvent:
     """A detected loitering event."""
+
     track_id: int
     camera_id: str
     zone_id: str
@@ -44,11 +45,11 @@ class LoiteringDetector:
         self.stationary_speed = stationary_speed_threshold
 
         # Track zone entry times: (track_id, zone_id) -> entry_time
-        self._zone_occupancy: Dict[Tuple[int, str], float] = {}
+        self._zone_occupancy: dict[tuple[int, str], float] = {}
         # Track IDs already flagged as loitering (to avoid duplicate events)
-        self._flagged: Dict[Tuple[int, str], float] = {}
+        self._flagged: dict[tuple[int, str], float] = {}
 
-    def check_loitering(self, track: Track, current_zones: List[str]) -> List[LoiteringEvent]:
+    def check_loitering(self, track: Track, current_zones: list[str]) -> list[LoiteringEvent]:
         """
         Check if a track is loitering in any of its current zones.
 
@@ -95,10 +96,7 @@ class LoiteringDetector:
                     self._flagged[key] = now
                     track.is_loitering = True
 
-                    logger.info(
-                        f"Loitering detected: Track {track.track_id} in zone "
-                        f"{zone_id} for {duration:.1f}s"
-                    )
+                    logger.info(f"Loitering detected: Track {track.track_id} in zone {zone_id} for {duration:.1f}s")
 
         # Clean up zones the track has left
         keys_to_remove = []
@@ -109,6 +107,12 @@ class LoiteringDetector:
 
         for key in keys_to_remove:
             del self._zone_occupancy[key]
+            self._flagged.pop(key, None)
+
+        track.is_loitering = any(
+            tid == track.track_id and zid in current_zones and now - started >= self.threshold_seconds
+            for (tid, zid), started in self._zone_occupancy.items()
+        )
 
         return events
 
@@ -125,6 +129,7 @@ class LoiteringDetector:
         ys = [p[1] for p in recent]
 
         import numpy as np
+
         var_x = np.var(xs)
         var_y = np.var(ys)
 

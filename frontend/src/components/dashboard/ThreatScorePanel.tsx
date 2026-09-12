@@ -1,16 +1,64 @@
-import { useState, useEffect } from 'react';
-import { apiFetch, getRiskEmoji } from '../../api/client';
+'use client';
+
+import { useEffect, useState } from 'react';
+import { apiFetch, riskMeta } from '../../api/client';
 import { useInterval } from '../../hooks/useInterval';
-import type { ThreatsData } from '../../types';
+import Card from '../ui/Card';
+import Icon from '../ui/Icon';
+import { EmptyState, Loading } from '../ui/States';
+import type { Threat, ThreatsData } from '../../types';
+
+function severity(score: number) {
+  if (score > 75) return { color: 'var(--risk-critical)' };
+  if (score > 50) return { color: 'var(--risk-medium)' };
+  return { color: 'var(--risk-low)' };
+}
+
+function ThreatRow({ threat }: { threat: Threat }) {
+  const sev = severity(threat.risk_score);
+  const meta = riskMeta(threat.risk_level);
+  return (
+    <div className="rounded-sm border-l-2 bg-elevated px-3.5 py-3" style={{ borderColor: meta.color }}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="size-2 shrink-0 rounded-full" style={{ background: meta.color }} aria-hidden />
+          <strong className="text-[0.9rem] font-semibold capitalize text-fg">{threat.object_type}</strong>
+          <span className="rounded-sm border border-default bg-input px-1.5 py-0.5 text-[0.68rem] tracking-wide text-fg-subtle">
+            {threat.camera_id}
+          </span>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="h-1.5 w-24 overflow-hidden rounded-full bg-default">
+            <span className="block h-full transition-[width] duration-500" style={{ width: `${threat.risk_score}%`, background: sev.color }} />
+          </span>
+          <span className="text-[0.8rem] font-bold tabular-nums" style={{ color: sev.color }}>
+            {threat.risk_score}/100
+          </span>
+        </div>
+      </div>
+      {threat.risk_factors.length > 0 && (
+        <div className="mt-2.5 flex flex-wrap gap-1.5">
+          {threat.risk_factors.map((factor, i) => (
+            <span key={i} className="inline-flex items-center gap-1 rounded-sm border border-default bg-card px-1.5 py-0.5 text-[0.72rem] text-fg-muted">
+              <Icon name="triangle-exclamation" className="text-[0.6rem] text-warning" />
+              {factor}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function ThreatScorePanel() {
-  const [threatsData, setThreatsData] = useState<ThreatsData | null>(null);
+  const [threats, setThreats] = useState<Threat[]>([]);
   const [loading, setLoading] = useState(true);
 
   const fetchThreats = async () => {
     try {
       const res = await apiFetch('/api/statistics/threats');
-      setThreatsData(await res.json());
+      const data: ThreatsData = await res.json();
+      setThreats(data?.top_threats ?? []);
       setLoading(false);
     } catch (err) {
       console.error('Failed to load threats:', err);
@@ -20,72 +68,17 @@ export default function ThreatScorePanel() {
   useEffect(() => { fetchThreats(); }, []);
   useInterval(fetchThreats, 3000);
 
-  if (loading) {
-    return <div className="card loading"><i className="fas fa-spinner fa-spin" /> Loading Threat Scores...</div>;
-  }
-
-  const threats = threatsData?.top_threats || [];
-
   return (
-    <div className="card threat-panel">
-      <div className="card-header">
-        <h3><i className="fas fa-shield-alt text-danger"></i> Live Threat Assessment</h3>
-      </div>
-      <div className="card-body">
-        {threats.length === 0 ? (
-          <div className="empty-state">
-            <i className="fas fa-check-circle text-success" style={{ fontSize: '2rem', marginBottom: '1rem' }}></i>
-            <p>No active threats detected.</p>
-          </div>
-        ) : (
-          <div className="threat-list">
-            {threats.map((threat) => (
-              <div key={threat.track_id} className={`threat-item risk-${threat.risk_level}`} style={{ marginBottom: '1.5rem', padding: '1rem', borderRadius: '8px', backgroundColor: 'var(--surface)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span style={{ fontSize: '1.5rem' }}>{getRiskEmoji(threat.risk_level)}</span>
-                    <strong style={{ textTransform: 'capitalize', fontSize: '1.1rem' }}>{threat.object_type}</strong>
-                    <span className="badge" style={{ backgroundColor: 'var(--border)' }}>{threat.camera_id}</span>
-                  </div>
-                  
-                  {/* Gauge */}
-                  <div className="threat-gauge" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <div style={{ 
-                      width: '100px', height: '8px', borderRadius: '4px', backgroundColor: 'var(--border)', overflow: 'hidden',
-                      position: 'relative'
-                    }}>
-                      <div style={{
-                        position: 'absolute', top: 0, left: 0, height: '100%',
-                        width: `${threat.risk_score}%`,
-                        backgroundColor: threat.risk_score > 75 ? 'var(--danger)' : threat.risk_score > 50 ? 'var(--warning)' : 'var(--success)',
-                        transition: 'width 0.5s ease-out'
-                      }}></div>
-                    </div>
-                    <strong style={{ 
-                      color: threat.risk_score > 75 ? 'var(--danger)' : threat.risk_score > 50 ? 'var(--warning)' : 'var(--success)'
-                    }}>
-                      {threat.risk_score}/100
-                    </strong>
-                  </div>
-                </div>
-                
-                {/* Factors */}
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginTop: '0.5rem' }}>
-                  {threat.risk_factors.map((factor, idx) => (
-                    <span key={idx} style={{ 
-                      fontSize: '0.8rem', padding: '0.2rem 0.5rem', borderRadius: '4px',
-                      backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)'
-                    }}>
-                      <i className="fas fa-exclamation-triangle" style={{ marginRight: '0.3rem', color: 'var(--warning)', fontSize: '0.7rem' }}></i>
-                      {factor}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
+    <Card title="Live Threat Assessment" icon="shield-halved" className="mb-6">
+      {loading ? (
+        <Loading label="Loading threat scores…" />
+      ) : threats.length === 0 ? (
+        <EmptyState icon="circle-check" message="No active threats detected" />
+      ) : (
+        <div className="flex max-h-[26rem] flex-col gap-3 overflow-y-auto pr-1">
+          {threats.map(t => <ThreatRow key={t.track_id} threat={t} />)}
+        </div>
+      )}
+    </Card>
   );
 }

@@ -4,7 +4,7 @@ Estimates movement direction using object trajectory history.
 """
 
 import math
-from typing import Dict, List, Optional, Tuple
+
 from src.tracking.track import Track
 
 
@@ -28,8 +28,7 @@ class DirectionAnalyzer:
         "unknown": (None, "Unknown"),
     }
 
-    def __init__(self, min_trajectory_points: int = 5,
-                 stationary_threshold: float = 5.0):
+    def __init__(self, min_trajectory_points: int = 5, stationary_threshold: float = 5.0):
         """
         Args:
             min_trajectory_points: Minimum trajectory points needed for analysis
@@ -59,8 +58,8 @@ class DirectionAnalyzer:
         for i in range(1, len(recent)):
             x1, y1, _ = recent[i - 1]
             x2, y2, _ = recent[i]
-            dx_total += (x2 - x1)
-            dy_total += (y2 - y1)
+            dx_total += x2 - x1
+            dy_total += y2 - y1
             count += 1
 
         if count == 0:
@@ -74,9 +73,7 @@ class DirectionAnalyzer:
 
         return self._angle_to_direction(angle)
 
-    def is_moving_toward_point(self, track: Track,
-                                target: Tuple[int, int],
-                                angle_threshold: float = 60.0) -> bool:
+    def is_moving_toward_point(self, track: Track, target: tuple[int, int], angle_threshold: float = 60.0) -> bool:
         """
         Check if a track is moving toward a specific point (e.g., zone center).
         """
@@ -102,8 +99,7 @@ class DirectionAnalyzer:
 
         return diff < angle_threshold
 
-    def is_moving_toward_zone(self, track: Track,
-                               zone_center: Tuple[int, int]) -> bool:
+    def is_moving_toward_zone(self, track: Track, zone_center: tuple[int, int]) -> bool:
         """Check if track is moving toward a zone center."""
         return self.is_moving_toward_point(track, zone_center)
 
@@ -114,7 +110,7 @@ class DirectionAnalyzer:
             return self.DIRECTIONS[direction][1]
         return "Unknown"
 
-    def get_movement_angle(self, track: Track) -> Optional[float]:
+    def get_movement_angle(self, track: Track) -> float | None:
         """Get precise movement angle in degrees."""
         recent = track.get_recent_trajectory(self.min_points)
         if len(recent) < 2:

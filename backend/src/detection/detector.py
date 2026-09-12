@@ -4,11 +4,10 @@ Wrapper around Ultralytics YOLO for person/vehicle detection.
 """
 
 import time
-from typing import List, Optional, Dict
-from pathlib import Path
+from collections import deque
 
-import numpy as np
 import cv2
+import numpy as np
 from loguru import logger
 
 try:
@@ -19,9 +18,8 @@ except ImportError:
 
 from src.detection.detection_result import DetectionResult, FrameDetections
 
-
-# COCO class names for the classes we care about
-COCO_TARGET_CLASSES: Dict[int, str] = {
+# COCO class names for the classes we care about (stock yolov8n fallback)
+COCO_TARGET_CLASSES: dict[int, str] = {
     0: "person",
     1: "bicycle",
     2: "car",
@@ -30,11 +28,22 @@ COCO_TARGET_CLASSES: Dict[int, str] = {
     7: "truck",
 }
 
+try:
+    from ml.taxonomy import normalize as _normalize_class
+except Exception:  # ml package not importable (e.g. isolated tests)
+
+    def _normalize_class(name: str) -> str:  # type: ignore
+        return (name or "unknown").strip().lower().replace(" ", "_")
+
 
 class ObjectDetector:
     """
-    YOLOv8-based object detector.
+    YOLO-based object detector.
     Detects people, vehicles, and other configurable object classes.
+
+    With a stock model it filters to COCO person/vehicle ids. With a custom
+    coarse model (weights_path set + detect_all=True) it reads the model's own
+    `names` map and emits every class, normalised to the pipeline vocabulary.
     """
 
     def __init__(
@@ -42,20 +51,24 @@ class ObjectDetector:
         model_path: str = "yolov8n.pt",
         confidence_threshold: float = 0.40,
         nms_threshold: float = 0.45,
-        target_classes: Optional[List[int]] = None,
+        target_classes: list[int] | None = None,
         device: str = "auto",
         imgsz: int = 640,
+        detect_all: bool = False,
     ):
         self.confidence_threshold = confidence_threshold
         self.nms_threshold = nms_threshold
         self.target_classes = target_classes or [0, 2, 3, 5, 7]
+        self.detect_all = detect_all
         self.imgsz = imgsz
         self._model = None
         self._device = device
         self._model_path = model_path
+        # id -> canonical class name; populated from the model after load
+        self._id2name: dict[int, str] = {k: _normalize_class(v) for k, v in COCO_TARGET_CLASSES.items()}
 
         # Performance tracking
-        self._inference_times: list = []
+        self._inference_times = deque(maxlen=200)
         self._total_detections: int = 0
 
         self._load_model()
@@ -73,16 +86,23 @@ class ObjectDetector:
             # Auto-detect device
             if self._device == "auto":
                 import torch
+
                 self._device = "cuda" if torch.cuda.is_available() else "cpu"
 
-            logger.success(f"Detection model loaded on {self._device}")
+            # Prefer the model's own class names (custom coarse model)
+            model_names = getattr(self._model, "names", None)
+            if model_names:
+                self._id2name = {int(k): _normalize_class(v) for k, v in dict(model_names).items()}
+
+            logger.success(
+                f"Detection model loaded on {self._device} ({len(self._id2name)} classes, detect_all={self.detect_all})"
+            )
 
         except Exception as e:
             logger.error(f"Failed to load detection model: {e}")
             self._model = None
 
-    def detect(self, frame: np.ndarray, frame_id: int = 0,
-               camera_id: str = "") -> FrameDetections:
+    def detect(self, frame: np.ndarray, frame_id: int = 0, camera_id: str = "") -> FrameDetections:
         """
         Run object detection on a single frame.
 
@@ -95,15 +115,10 @@ class ObjectDetector:
             FrameDetections containing all detected objects
         """
         timestamp = time.time()
-        detections: List[DetectionResult] = []
+        detections: list[DetectionResult] = []
 
         if self._model is None:
-            return FrameDetections(
-                frame_id=frame_id,
-                camera_id=camera_id,
-                timestamp=timestamp,
-                detections=detections
-            )
+            return FrameDetections(frame_id=frame_id, camera_id=camera_id, timestamp=timestamp, detections=detections)
 
         try:
             start_time = time.time()
@@ -115,7 +130,7 @@ class ObjectDetector:
                 iou=self.nms_threshold,
                 imgsz=self.imgsz,
                 device=self._device,
-                classes=self.target_classes,
+                classes=None if self.detect_all else self.target_classes,
                 verbose=False,
             )
 
@@ -133,7 +148,7 @@ class ObjectDetector:
                         conf = float(box.conf[0].cpu().numpy())
                         cls_id = int(box.cls[0].cpu().numpy())
 
-                        class_name = COCO_TARGET_CLASSES.get(cls_id, f"class_{cls_id}")
+                        class_name = self._id2name.get(cls_id, f"class_{cls_id}")
 
                         detection = DetectionResult(
                             bbox=(int(x1), int(y1), int(x2), int(y2)),
@@ -148,19 +163,13 @@ class ObjectDetector:
         except Exception as e:
             logger.error(f"Detection error on frame {frame_id}: {e}")
 
-        return FrameDetections(
-            frame_id=frame_id,
-            camera_id=camera_id,
-            timestamp=timestamp,
-            detections=detections
-        )
+        return FrameDetections(frame_id=frame_id, camera_id=camera_id, timestamp=timestamp, detections=detections)
 
     def get_average_inference_time(self) -> float:
         """Get average inference time in milliseconds."""
         if not self._inference_times:
             return 0.0
-        # Keep last 100 measurements
-        recent = self._inference_times[-100:]
+        recent = list(self._inference_times)[-100:]
         return (sum(recent) / len(recent)) * 1000
 
     def get_fps(self) -> float:
@@ -169,18 +178,19 @@ class ObjectDetector:
         return 1000.0 / avg_ms if avg_ms > 0 else 0.0
 
     @staticmethod
-    def draw_detections(frame: np.ndarray, frame_detections: FrameDetections,
-                        show_confidence: bool = True) -> np.ndarray:
+    def draw_detections(
+        frame: np.ndarray, frame_detections: FrameDetections, show_confidence: bool = True
+    ) -> np.ndarray:
         """Draw bounding boxes and labels on frame."""
         annotated = frame.copy()
 
         colors = {
-            "person": (0, 255, 0),      # Green
-            "car": (255, 165, 0),        # Orange
-            "motorcycle": (255, 255, 0), # Yellow
-            "bus": (0, 165, 255),         # Orange-blue
-            "truck": (0, 0, 255),         # Red
-            "bicycle": (255, 0, 255),     # Magenta
+            "person": (0, 255, 0),  # Green
+            "car": (255, 165, 0),  # Orange
+            "motorcycle": (255, 255, 0),  # Yellow
+            "bus": (0, 165, 255),  # Orange-blue
+            "truck": (0, 0, 255),  # Red
+            "bicycle": (255, 0, 255),  # Magenta
         }
 
         for det in frame_detections.detections:
@@ -195,15 +205,8 @@ class ObjectDetector:
             if show_confidence:
                 label += f" {det.confidence:.2f}"
 
-            (label_w, label_h), _ = cv2.getTextSize(
-                label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1
-            )
-            cv2.rectangle(
-                annotated, (x1, y1 - label_h - 8), (x1 + label_w, y1), color, -1
-            )
-            cv2.putText(
-                annotated, label, (x1, y1 - 4),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1
-            )
+            (label_w, label_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+            cv2.rectangle(annotated, (x1, y1 - label_h - 8), (x1 + label_w, y1), color, -1)
+            cv2.putText(annotated, label, (x1, y1 - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
         return annotated

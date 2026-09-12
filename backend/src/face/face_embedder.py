@@ -4,8 +4,6 @@ ArcFace embedding generation for face recognition.
 """
 
 import numpy as np
-from typing import Optional
-from loguru import logger
 
 
 class FaceEmbedder:
@@ -14,7 +12,7 @@ class FaceEmbedder:
     def __init__(self):
         self._model = None
 
-    def get_embedding(self, face_data: dict) -> Optional[np.ndarray]:
+    def get_embedding(self, face_data: dict) -> np.ndarray | None:
         """Extract embedding from a detected face."""
         embedding = face_data.get("embedding")
         if embedding is not None:

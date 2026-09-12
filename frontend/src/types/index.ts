@@ -3,9 +3,15 @@
 export interface Camera {
   camera_id: string;
   name: string;
-  source: string;
+  source?: string;
+  location?: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  type?: string;
   status: 'online' | 'offline' | 'connecting';
+  enabled?: boolean;
   fps?: number;
+  active_tracks?: number;
 }
 
 export interface Alert {

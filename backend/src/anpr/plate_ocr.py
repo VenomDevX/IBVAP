@@ -3,9 +3,8 @@ IBVAP — Plate OCR
 OCR engine for license plate text extraction using PaddleOCR.
 """
 
-from typing import Optional, Tuple
-import numpy as np
 import cv2
+import numpy as np
 from loguru import logger
 
 
@@ -22,14 +21,15 @@ class PlateOCR:
     def _load_ocr(self):
         try:
             from paddleocr import PaddleOCR
-            self._ocr = PaddleOCR(use_angle_cls=True, lang='en', show_log=False)
+
+            self._ocr = PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
             logger.success("PaddleOCR loaded for ANPR")
         except ImportError:
             logger.warning("PaddleOCR not installed — ANPR OCR disabled")
         except Exception as e:
             logger.error(f"PaddleOCR init error: {e}")
 
-    def read_plate(self, plate_image: np.ndarray) -> Tuple[str, float]:
+    def read_plate(self, plate_image: np.ndarray) -> tuple[str, float]:
         """
         Read text from a plate crop image.
 

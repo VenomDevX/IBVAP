@@ -3,7 +3,6 @@ IBVAP — ML Risk Classifier (Optional)
 Event-level ML classifier for comparison with rule-based baseline.
 """
 
-from typing import List, Optional, Tuple
 import numpy as np
 from loguru import logger
 
@@ -21,10 +20,20 @@ class RiskClassifier:
         self.model_type = model_type
         self._model = None
         self._feature_names = [
-            "person_detected", "vehicle_detected", "night", "restricted_zone",
-            "fence_crossing", "loitering", "unknown_identity", "movement_toward_fence",
-            "duration_seconds", "object_count", "average_speed",
-            "distance_to_boundary", "plate_detected", "identity_confidence",
+            "person_detected",
+            "vehicle_detected",
+            "night",
+            "restricted_zone",
+            "fence_crossing",
+            "loitering",
+            "unknown_identity",
+            "movement_toward_fence",
+            "duration_seconds",
+            "object_count",
+            "average_speed",
+            "distance_to_boundary",
+            "plate_detected",
+            "identity_confidence",
         ]
         self._label_map = {0: "low", 1: "medium", 2: "high", 3: "critical"}
 
@@ -34,13 +43,11 @@ class RiskClassifier:
             from sklearn.ensemble import RandomForestClassifier
             from sklearn.model_selection import cross_val_score
 
-            self._model = RandomForestClassifier(
-                n_estimators=100, max_depth=10, random_state=42
-            )
+            self._model = RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42)
             self._model.fit(X, y)
 
             # Cross-validation score
-            scores = cross_val_score(self._model, X, y, cv=5, scoring='f1_macro')
+            scores = cross_val_score(self._model, X, y, cv=5, scoring="f1_macro")
             logger.info(f"Risk classifier trained — CV F1: {scores.mean():.3f} ± {scores.std():.3f}")
 
         except ImportError:
@@ -48,7 +55,7 @@ class RiskClassifier:
         except Exception as e:
             logger.error(f"Training error: {e}")
 
-    def predict(self, features: dict) -> Tuple[str, float]:
+    def predict(self, features: dict) -> tuple[str, float]:
         """
         Predict risk level from event features.
 

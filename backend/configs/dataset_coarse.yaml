@@ -1,0 +1,22 @@
+# Leak-free, clip-aware split — scripts/make_clean_split.py
+# grouped by source image + MOT/VIRAT clip; val_fraction=0.1 seed=42
+
+path: F:/Projects/SIH 26187/backend/data/raw_dataset/detector_yolo
+train: F:/Projects/SIH 26187/backend/data/splits/train_coarse.txt
+val: F:/Projects/SIH 26187/backend/data/splits/val_coarse.txt
+
+nc: 13
+names:
+  0: person
+  1: car
+  2: bus
+  3: truck
+  4: motorcycle
+  5: bicycle
+  6: license_plate
+  7: military_ground_vehicle
+  8: aircraft
+  9: helicopter
+  10: drone_uav
+  11: night_vision_object
+  12: animal

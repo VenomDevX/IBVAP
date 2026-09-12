@@ -1,25 +1,29 @@
-import ReactApexChart from 'react-apexcharts';
+'use client';
+
 import type { ApexOptions } from 'apexcharts';
+import ApexChart from './ApexChart';
+import { useThemeColors } from '../../hooks/useThemeColors';
 import type { TimeseriesData } from '../../types';
 
-interface AlertTrendChartProps {
-  data: TimeseriesData;
-}
+export default function AlertTrendChart({ data }: { data: TimeseriesData }) {
+  const c = useThemeColors();
 
-export default function AlertTrendChart({ data }: AlertTrendChartProps) {
   const options: ApexOptions = {
-    chart: { type: 'area', height: 260, toolbar: { show: false }, background: 'transparent', fontFamily: 'Inter, sans-serif' },
-    colors: ['#2563eb'],
-    fill: { type: 'gradient', gradient: { shadeIntensity: 1, opacityFrom: 0.4, opacityTo: 0.05, stops: [0, 90, 100] } },
+    chart: { type: 'area', height: 260, toolbar: { show: false }, background: 'transparent', fontFamily: 'inherit' },
+    colors: [c.accent],
+    fill: { type: 'gradient', gradient: { shadeIntensity: 1, opacityFrom: 0.25, opacityTo: 0.02, stops: [0, 90, 100] } },
     dataLabels: { enabled: false },
     stroke: { curve: 'smooth', width: 2 },
-    xaxis: { categories: data.labels, labels: { style: { colors: '#94a3b8' } }, axisBorder: { show: false }, axisTicks: { show: false } },
-    yaxis: { labels: { style: { colors: '#94a3b8' } } },
-    grid: { borderColor: 'rgba(148, 163, 184, 0.1)', strokeDashArray: 4 },
-    tooltip: { theme: 'dark' },
+    xaxis: {
+      categories: data.labels,
+      labels: { style: { colors: c.fgMuted } },
+      axisBorder: { show: false },
+      axisTicks: { show: false },
+    },
+    yaxis: { labels: { style: { colors: c.fgMuted } } },
+    grid: { borderColor: c.border, strokeDashArray: 4 },
+    tooltip: { theme: c.isLight ? 'light' : 'dark' },
   };
 
-  const series = [{ name: 'Alerts', data: data.data }];
-
-  return <ReactApexChart options={options} series={series} type="area" height={260} />;
+  return <ApexChart options={options} series={[{ name: 'Alerts', data: data.data }]} type="area" height={260} />;
 }

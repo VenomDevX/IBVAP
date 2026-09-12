@@ -3,14 +3,13 @@ IBVAP — Intelligent Border Video Analytics Platform
 Main entry point.
 """
 
-import os
-import sys
 import argparse
+import os
 from pathlib import Path
 
 import uvicorn
-from loguru import logger
 from dotenv import load_dotenv
+from loguru import logger
 
 
 def setup_logging():
@@ -77,6 +76,7 @@ def main():
     os.environ["IBVAP_CONFIG_DIR"] = args.config
 
     # Run FastAPI with Uvicorn
+    _trusted_proxy = os.getenv("TRUSTED_PROXY", "").lower() in ("1", "true", "yes")
     uvicorn.run(
         "src.api.app:create_app",
         host=args.host,
@@ -84,6 +84,8 @@ def main():
         reload=args.reload,
         factory=True,
         log_level="info" if not args.debug else "debug",
+        proxy_headers=_trusted_proxy,
+        forwarded_allow_ips="*" if _trusted_proxy else None,
     )
 
 

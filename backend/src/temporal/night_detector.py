@@ -3,11 +3,11 @@ IBVAP — Night Detector
 Detects night-time or low-illumination conditions.
 """
 
-from datetime import datetime, time as dt_time
-from typing import Optional
+from datetime import datetime
+from datetime import time as dt_time
 
-import numpy as np
 import cv2
+import numpy as np
 from loguru import logger
 
 
@@ -38,7 +38,7 @@ class NightDetector:
         parts = time_str.split(":")
         return dt_time(int(parts[0]), int(parts[1]))
 
-    def is_night_time(self, timestamp: Optional[float] = None) -> bool:
+    def is_night_time(self, timestamp: float | None = None) -> bool:
         """Check if current time falls within configured night hours."""
         if timestamp:
             dt = datetime.fromtimestamp(timestamp)
@@ -49,13 +49,9 @@ class NightDetector:
 
         # Handle overnight range (e.g., 19:00 to 05:00)
         if self.night_start > self.night_end:
-            self._is_night_by_time = (
-                current_time >= self.night_start or current_time <= self.night_end
-            )
+            self._is_night_by_time = current_time >= self.night_start or current_time <= self.night_end
         else:
-            self._is_night_by_time = (
-                self.night_start <= current_time <= self.night_end
-            )
+            self._is_night_by_time = self.night_start <= current_time <= self.night_end
 
         return self._is_night_by_time
 
@@ -79,8 +75,7 @@ class NightDetector:
             logger.error(f"Brightness analysis error: {e}")
             return False
 
-    def get_night_context(self, frame: Optional[np.ndarray] = None,
-                          timestamp: Optional[float] = None) -> dict:
+    def get_night_context(self, frame: np.ndarray | None = None, timestamp: float | None = None) -> dict:
         """
         Get comprehensive night/light context.
         Combines time-based and brightness-based analysis.

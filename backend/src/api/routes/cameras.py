@@ -3,10 +3,13 @@ IBVAP — Camera API Routes
 Camera management and status endpoints.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
-from typing import List
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import Response
 
-from src.api.auth import require_auth
+from src.api.auth import require_auth, require_auth_media, require_camera_access, scoped_cameras
+from src.api.middleware.input_validator import sanitize_camera_id
+from src.api.ratelimit import limiter
 from src.database.db import get_database
 from src.database.repository import Repository
 
@@ -19,7 +22,8 @@ async def list_cameras(user: dict = Depends(require_auth)):
     db = get_database()
     session = db.get_session()
     repo = Repository(session)
-    cameras = repo.get_all_cameras()
+    allowed = scoped_cameras(user)
+    cameras = [c for c in repo.get_all_cameras() if allowed is None or c.camera_id in allowed]
     result = [
         {
             "camera_id": c.camera_id,
@@ -36,6 +40,7 @@ async def list_cameras(user: dict = Depends(require_auth)):
 
     # Augment with live pipeline status
     from src.api.app import get_pipeline
+
     pipeline = get_pipeline()
     if pipeline:
         for cam in result:
@@ -53,6 +58,8 @@ async def list_cameras(user: dict = Depends(require_auth)):
 @router.get("/{camera_id}")
 async def get_camera(camera_id: str, user: dict = Depends(require_auth)):
     """Get a specific camera's details and live status."""
+    camera_id = sanitize_camera_id(camera_id)
+    require_camera_access(user, camera_id)
     db = get_database()
     session = db.get_session()
     repo = Repository(session)
@@ -74,6 +81,7 @@ async def get_camera(camera_id: str, user: dict = Depends(require_auth)):
     }
 
     from src.api.app import get_pipeline
+
     pipeline = get_pipeline()
     if pipeline:
         p = pipeline.get_pipeline(camera_id)
@@ -87,7 +95,10 @@ async def get_camera(camera_id: str, user: dict = Depends(require_auth)):
 @router.get("/{camera_id}/status")
 async def get_camera_status(camera_id: str, user: dict = Depends(require_auth)):
     """Get camera connection status."""
+    camera_id = sanitize_camera_id(camera_id)
+    require_camera_access(user, camera_id)
     from src.api.app import get_pipeline
+
     pipeline = get_pipeline()
     if pipeline:
         p = pipeline.get_pipeline(camera_id)
@@ -95,18 +106,28 @@ async def get_camera_status(camera_id: str, user: dict = Depends(require_auth)):
             return p.video_source.get_status_dict()
     raise HTTPException(status_code=404, detail="Camera pipeline not found")
 
+
 @router.get("/{camera_id}/heatmap")
-async def get_heatmap(camera_id: str, window: int = 300, user: dict = Depends(require_auth)):
-    """Get live heatmap for a camera (returns PNG)."""
-    from src.api.app import get_pipeline
-    from fastapi.responses import Response
+@limiter.limit("30/minute")
+async def get_heatmap(
+    camera_id: str,
+    request: Request,
+    window: int = Query(300, ge=10, le=3600),
+    user: dict = Depends(require_auth_media),
+):
+    """Live heatmap PNG for a camera. The image is composited off the event loop."""
+    camera_id = sanitize_camera_id(camera_id)
+    require_camera_access(user, camera_id)
     import cv2
-    
+
+    from src.api.app import get_pipeline
+
     pipeline = get_pipeline()
     if pipeline:
         p = pipeline.get_pipeline(camera_id)
         if p and p.heatmap_tracker:
-            heatmap_rgba = p.heatmap_tracker.generate_heatmap(window_seconds=window)
-            _, img_encoded = cv2.imencode('.png', heatmap_rgba)
-            return Response(content=img_encoded.tobytes(), media_type="image/png")
+            heatmap_rgba = await run_in_threadpool(p.heatmap_tracker.generate_heatmap, window_seconds=window)
+            ok, img_encoded = await run_in_threadpool(cv2.imencode, ".png", heatmap_rgba)
+            if ok:
+                return Response(content=img_encoded.tobytes(), media_type="image/png")
     raise HTTPException(status_code=404, detail="Camera pipeline or heatmap tracker not found")
