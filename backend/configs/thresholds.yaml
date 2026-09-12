@@ -64,3 +64,16 @@ alerts:
   max_alerts_per_minute: 10
   # Minimum risk score to generate an alert
   min_alert_risk_score: 20
+
+classifier:
+  # Stage 2: names the specific type of a military detection (F16 rather than
+  # "aircraft"). Runs only on aircraft / helicopter / drone_uav /
+  # military_ground_vehicle crops - see src/classification/fine_classifier.py.
+  # Unlike `face`, this is on by default: the weights are produced locally by
+  # scripts/train_classifier.py, not pulled as a large third-party dependency.
+  # If the file is absent the classifier disables itself and the pipeline runs
+  # single-stage exactly as before.
+  enabled: true
+  weights: "./models/classifier/ibvap_fine.pt"
+  min_confidence: 0.55   # below this, keep the coarse label rather than guess
+  recheck_seconds: 2.0   # a track's airframe does not change; do not run per frame

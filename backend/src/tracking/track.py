@@ -46,6 +46,12 @@ class Track:
     identity_score: float = 0.0
     identity_status: str = "unknown"  # known | uncertain | unknown
 
+    # Fine-grained type (stage 2 classifier, military crops only).
+    # "unknown" means either not yet classified or below the confidence gate;
+    # consumers should fall back to object_type, which is always populated.
+    fine_type: str = "unknown"
+    fine_confidence: float = 0.0
+
     # Risk Assessment
     risk_score: float = 0.0
     risk_level: str = "low"
@@ -144,6 +150,8 @@ class Track:
             "identity_label": self.identity_label,
             "identity_score": round(self.identity_score, 3),
             "identity_status": self.identity_status,
+            "fine_type": self.fine_type,
+            "fine_confidence": round(self.fine_confidence, 3),
             "risk_score": round(self.risk_score, 1),
             "risk_level": self.risk_level,
             "risk_factors": self.risk_factors,
