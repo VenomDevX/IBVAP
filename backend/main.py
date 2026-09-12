@@ -28,19 +28,30 @@ def setup_logging():
 
 def main():
     """Main entry point for IBVAP."""
+    # Load environment variables FIRST: --port's default below reads IBVAP_PORT,
+    # so .env must already be loaded before argparse computes it. Getting this
+    # order backwards is what let backend/.env's IBVAP_PORT=8002 silently do
+    # nothing for the CLI default while frontend/.env.development's
+    # NEXT_PUBLIC_API_BASE correctly pointed at 8002 - the two configs never
+    # actually agreed, so a plain `python main.py` (defaulting to 8000) always
+    # left the frontend talking to a port nothing was listening on.
+    load_dotenv()
+
     parser = argparse.ArgumentParser(
         description="IBVAP — Intelligent Border Video Analytics Platform"
     )
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind (default: 0.0.0.0)")
-    parser.add_argument("--port", type=int, default=8000, help="Port to bind (default: 8000)")
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.getenv("IBVAP_PORT", 8000)),
+        help="Port to bind (default: $IBVAP_PORT from .env, else 8000)",
+    )
     parser.add_argument("--reload", action="store_true", help="Enable auto-reload for dev")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
     parser.add_argument("--config", default="./configs", help="Config directory path")
 
     args = parser.parse_args()
-
-    # Load environment variables
-    load_dotenv()
 
     # Setup logging
     setup_logging()
@@ -52,7 +63,7 @@ def main():
 
     for d in [f"{output_base}/snapshots", f"{output_base}/logs", f"{output_base}/metrics",
               f"{output_base}/videos", f"{model_base}/detection", f"{model_base}/face",
-              f"{model_base}/anpr", f"{model_base}/risk", f"{data_base}/custom"]:
+              f"{model_base}/anpr", f"{model_base}/risk", f"{data_base}/demo"]:
         Path(d).mkdir(parents=True, exist_ok=True)
 
     # Banner
