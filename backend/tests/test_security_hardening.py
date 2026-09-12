@@ -143,6 +143,11 @@ def test_ws_accepts_subprotocol_token(client, monkeypatch):
     import src.api.auth as auth
 
     monkeypatch.setattr(auth, "_verify_token", lambda t: {"sub": "u1", "exp": time.time() + 3600})
+    # authenticate_ws also calls resolve_profile(sub); without a real Supabase
+    # client "u1" is not "dev-admin" so it raises "Profile service unavailable",
+    # which authenticate_ws's except swallows into a 4003 close - the socket
+    # never got as far as testing the subprotocol-token path this test is for.
+    monkeypatch.setattr(auth, "resolve_profile", lambda uid: {"role": "operator", "allowed_areas": []})
     from src.api.websocket import ws_manager
 
     with client.websocket_connect("/ws/alerts", subprotocols=["bearer", "tok"]):
@@ -275,3 +280,66 @@ def test_production_refuses_to_start_without_required_secrets(monkeypatch, bad):
         monkeypatch.delenv(bad, raising=False)
     with pytest.raises(RuntimeError):
         appmod._assert_production_config()
+
+
+# ──────────────────────────────────────────────────────────────
+# scoped_cameras() must fail closed, not open.
+#
+# allowed_areas defaults to [] for a newly created profile (see
+# models.py: allowed_areas = Column(JSON, default=list)). An earlier version
+# of scoped_cameras() treated that empty list the same as "unrestricted",
+# which meant a brand-new operator or auditor account - before an admin ever
+# assigned it a camera - could see every camera in the system. Only "admin"
+# may get unrestricted (None); every other role gets exactly its own list,
+# empty or not.
+# ──────────────────────────────────────────────────────────────
+
+
+def test_scoped_cameras_admin_is_unrestricted():
+    from src.api.auth import scoped_cameras
+
+    assert scoped_cameras({"app_role": "admin", "allowed_areas": []}) is None
+    assert scoped_cameras({"app_role": "admin", "allowed_areas": None}) is None
+
+
+def test_scoped_cameras_empty_allowed_areas_means_zero_cameras():
+    """THE regression this guards against: [] must stay [], never become None."""
+    from src.api.auth import scoped_cameras
+
+    for role in ("operator", "auditor"):
+        result = scoped_cameras({"app_role": role, "allowed_areas": []})
+        assert result == [], (
+            f"{role} with allowed_areas=[] must see ZERO cameras, got {result!r} "
+            "(None here would mean unrestricted access)"
+        )
+
+
+def test_scoped_cameras_returns_exact_list_for_non_admin():
+    from src.api.auth import scoped_cameras
+
+    assert scoped_cameras({"app_role": "operator", "allowed_areas": ["cam1", "cam2"]}) == [
+        "cam1",
+        "cam2",
+    ]
+
+
+def test_scoped_cameras_invalid_role_or_shape_denies_all():
+    from src.api.auth import scoped_cameras
+
+    assert scoped_cameras({"app_role": "not-a-real-role", "allowed_areas": ["cam1"]}) == []
+    assert scoped_cameras({"app_role": "operator", "allowed_areas": "not-a-list"}) == []
+    assert scoped_cameras({}) == []
+
+
+def test_can_access_camera_denies_when_scope_is_empty():
+    from src.api.auth import can_access_camera
+
+    user = {"app_role": "operator", "allowed_areas": []}
+    assert can_access_camera(user, "CAM_1") is False
+
+
+def test_can_access_camera_admin_sees_everything():
+    from src.api.auth import can_access_camera
+
+    admin = {"app_role": "admin", "allowed_areas": []}
+    assert can_access_camera(admin, "CAM_ANYTHING") is True

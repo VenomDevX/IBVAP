@@ -3,14 +3,13 @@ IBVAP — Intelligent Border Video Analytics Platform
 Main entry point.
 """
 
-import os
-import sys
 import argparse
+import os
 from pathlib import Path
 
 import uvicorn
-from loguru import logger
 from dotenv import load_dotenv
+from loguru import logger
 
 
 def setup_logging():
