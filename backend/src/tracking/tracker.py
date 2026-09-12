@@ -18,6 +18,22 @@ from src.detection.detector import COCO_TARGET_CLASSES
 from src.tracking.track import Track
 
 
+def _bbox_iou(a: tuple, b: tuple) -> float:
+    """Intersection-over-union of two (x1, y1, x2, y2) boxes."""
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    iw, ih = max(0, ix2 - ix1), max(0, iy2 - iy1)
+    inter = iw * ih
+    if inter <= 0:
+        return 0.0
+    area_a = max(0, ax2 - ax1) * max(0, ay2 - ay1)
+    area_b = max(0, bx2 - bx1) * max(0, by2 - by1)
+    union = area_a + area_b - inter
+    return inter / union if union > 0 else 0.0
+
+
 class MultiObjectTracker:
     """
     ByteTrack-based multi-object tracker.
@@ -125,6 +141,45 @@ class MultiObjectTracker:
                         )
                         track.update(bbox, conf, timestamp)
                         self._tracks[tid] = track
+
+            # --- Fallback: reconcile tracks ByteTrack went quiet on ---
+            # sv.ByteTrack (deprecated, removed in supervision 0.31) has been
+            # observed to drop an already-confirmed track from its per-frame
+            # output even though the same object is still being detected: it
+            # reports the tracker_id on the activation frame, then omits it on
+            # many subsequent frames despite an unchanged, high-confidence,
+            # overlapping detection. Confirmed on both a static synthetic clip
+            # and real moving traffic footage - not specific to either.
+            #
+            # Silently, this freezes `last_seen`, which freezes `duration`,
+            # which gates ANPR extraction, face re-identification and the
+            # stage-2 fine classifier: those features "stop working" for a
+            # track ByteTrack has gone quiet on, even though the object is
+            # still on screen.
+            #
+            # For each raw input detection not claimed by ByteTrack's own
+            # output this frame, look for an EXISTING active track of the same
+            # class with a strongly overlapping bbox and refresh it directly.
+            # This never creates a new track - ByteTrack alone still owns
+            # activation / min_hits - so it cannot produce a track ByteTrack
+            # itself would not have produced; it only keeps an
+            # already-confirmed track fresh when ByteTrack goes quiet on it.
+            for j in range(len(xyxy)):
+                box = tuple(int(v) for v in xyxy[j])
+                cid = int(class_id[j])
+                cls_name = id2name.get(cid, COCO_TARGET_CLASSES.get(cid, f"class_{cid}"))
+                best_tid, best_iou = None, self.iou_threshold
+                for tid, track in self._tracks.items():
+                    if tid in active_ids or not track.is_active:
+                        continue
+                    if track.object_type != cls_name:
+                        continue
+                    iou = _bbox_iou(box, track.bbox)
+                    if iou > best_iou:
+                        best_iou, best_tid = iou, tid
+                if best_tid is not None:
+                    self._tracks[best_tid].update(box, float(confidence[j]), timestamp)
+                    active_ids.add(best_tid)
 
             # Mark tracks not in current frame
             for tid, track in self._tracks.items():
