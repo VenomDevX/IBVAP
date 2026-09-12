@@ -61,8 +61,8 @@ function useDashboardData() {
         byType: statData.alert_stats?.by_type ?? {},
       });
       setError(false);
-    } catch (err) {
-      console.error('Dashboard data error:', err);
+    } catch {
+      // Startup/offline state is rendered below and retried automatically.
       setError(true);
     } finally {
       setLoading(false);

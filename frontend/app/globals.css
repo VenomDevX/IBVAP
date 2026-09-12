@@ -9,6 +9,9 @@
    they live as CSS custom properties and are mapped into Tailwind below.
    ========================================================================== */
 :root {
+  /* Local builds must not depend on fonts.googleapis.com being reachable. */
+  --font-inter: Inter, "Segoe UI", Arial, sans-serif;
+  --font-jetbrains: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
   --bg-primary: #121212;
   --bg-secondary: #1a1a1a;
   --bg-card: #222222;

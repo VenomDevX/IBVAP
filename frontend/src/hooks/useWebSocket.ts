@@ -12,6 +12,7 @@ function wsOrigin(): string {
 
 export function useWebSocket(onAlert: (alert: Alert) => void) {
   const wsRef = useRef<WebSocket | null>(null);
+  const connectRef = useRef<() => void>(() => {});
   const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const attemptRef = useRef(0);
   const closedRef = useRef(false);
@@ -22,7 +23,7 @@ export function useWebSocket(onAlert: (alert: Alert) => void) {
     const { data: { session } } = await supabase.auth.getSession();
     const token = session?.access_token;
     if (!token) {
-      reconnectRef.current = setTimeout(connect, 3000);
+      reconnectRef.current = setTimeout(() => connectRef.current(), 3000);
       return;
     }
 
@@ -51,7 +52,7 @@ export function useWebSocket(onAlert: (alert: Alert) => void) {
       if (closedRef.current) return;
       const delay = Math.min(30000, 1000 * 2 ** attemptRef.current);
       attemptRef.current += 1;
-      reconnectRef.current = setTimeout(connect, delay);
+      reconnectRef.current = setTimeout(() => connectRef.current(), delay);
     };
 
     ws.onerror = () => {
@@ -63,6 +64,7 @@ export function useWebSocket(onAlert: (alert: Alert) => void) {
 
   useEffect(() => {
     closedRef.current = false;
+    connectRef.current = connect;
     connect();
     return () => {
       closedRef.current = true;

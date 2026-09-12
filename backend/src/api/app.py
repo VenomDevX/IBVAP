@@ -9,6 +9,7 @@ import os
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import jwt
 from fastapi import Depends, FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -26,10 +27,11 @@ from src.api.ratelimit import limiter
 from src.api.routes import alerts, audit, cameras, events, reports, snapshots, statistics, stream, tracks, zones
 from src.api.token_revocation import revoke_token
 from src.api.websocket import authenticate_ws, ws_manager
-from src.pipeline.pipeline import IBVAPPipeline
+if TYPE_CHECKING:
+    from src.pipeline.pipeline import IBVAPPipeline
 
 # Global pipeline reference
-pipeline: IBVAPPipeline = None
+pipeline: "IBVAPPipeline | None" = None
 
 _PLACEHOLDER_KEYS = {"", "change-me", "changeme", "test-hmac-key", "dev", "secret", "placeholder"}
 
@@ -37,30 +39,55 @@ _PLACEHOLDER_KEYS = {"", "change-me", "changeme", "test-hmac-key", "dev", "secre
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifecycle — start/stop pipeline."""
-    global pipeline
     logger.info("Starting IBVAP application...")
-
-    pipeline = IBVAPPipeline()
-    pipeline.initialize()
-
-    # Register WebSocket alert callback
-    def alert_callback(alert_data: dict):
-        ws_manager.broadcast_sync({"type": "alert", "data": alert_data})
-
-    pipeline.alert_engine.register_callback(alert_callback)
-
-    # Give the WS manager the running loop so camera worker threads can push alerts
-    ws_manager.attach_loop(asyncio.get_running_loop())
-
-    # Start camera pipelines
-    pipeline.start_all()
+    loop = asyncio.get_running_loop()
+    ws_manager.attach_loop(loop)
+    app.state.pipeline_status = "starting"
+    startup_task = asyncio.create_task(
+        asyncio.to_thread(_initialize_pipeline, app),
+        name="ibvap-pipeline-startup",
+    )
 
     yield
 
     # Shutdown
     logger.info("Shutting down IBVAP...")
     if pipeline:
-        pipeline.stop_all()
+        await asyncio.to_thread(pipeline.stop_all)
+    if not startup_task.done():
+        startup_task.cancel()
+
+
+def _initialize_pipeline(app: FastAPI) -> None:
+    """Load video analytics without delaying or taking down the web API."""
+    global pipeline
+    candidate = None
+    try:
+        # This import loads PyTorch/Ultralytics and can be expensive. Keeping it
+        # here lets /api/health come online even on a resource-constrained PC.
+        from src.pipeline.pipeline import IBVAPPipeline
+
+        candidate = IBVAPPipeline()
+        candidate.initialize()
+
+        def alert_callback(alert_data: dict):
+            ws_manager.broadcast_sync({"type": "alert", "data": alert_data})
+
+        candidate.alert_engine.register_callback(alert_callback)
+        candidate.start_all()
+        pipeline = candidate
+        app.state.pipeline_status = "ready"
+        logger.success("IBVAP video pipeline is ready")
+    except BaseException as exc:
+        # MemoryError during ML import/initialisation is recoverable: database
+        # APIs and the dashboard should stay available in degraded mode.
+        app.state.pipeline_status = "unavailable"
+        logger.error(f"Video pipeline unavailable; API will stay online: {exc!r}")
+        if candidate is not None:
+            try:
+                candidate.stop_all()
+            except Exception:
+                logger.exception("Failed to clean up a partially started pipeline")
 
 
 def _assert_production_config() -> None:
@@ -192,8 +219,12 @@ def create_app() -> FastAPI:
 
     # ======================== Health Check ========================
     @app.get("/api/health")
-    async def health_check():
-        return {"status": "ok", "service": "ibvap-backend"}
+    async def health_check(request: Request):
+        return {
+            "status": "ok",
+            "service": "ibvap-backend",
+            "pipeline": getattr(request.app.state, "pipeline_status", "starting"),
+        }
 
     # ======================== Auth ========================
     @app.get("/api/auth/me", tags=["Auth"])
@@ -227,7 +258,7 @@ def create_app() -> FastAPI:
     return app
 
 
-def get_pipeline() -> IBVAPPipeline:
+def get_pipeline() -> "IBVAPPipeline | None":
     """Get the global pipeline instance."""
     global pipeline
     return pipeline

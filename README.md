@@ -108,7 +108,7 @@ SIH 26187/
 | API security | `slowapi` rate limiting, TrustedHost + CORS, custom security-headers / request-logging / input-validation middleware |
 | Runtime data store | SQLite via SQLAlchemy 2.x (`ibvap.db`) |
 | Auth & identity | Supabase Auth (JWT, verified locally with `SUPABASE_JWT_SECRET`); `user_profiles` + RLS in Postgres |
-| Frontend | React 19, TypeScript, Vite, Tailwind CSS v4, React Router 7 |
+| Frontend | Next.js 15 (App Router/static export), React 19, TypeScript, Tailwind CSS v4 |
 | Frontend libs | ApexCharts, Grid.js, Leaflet / react-leaflet, `@supabase/supabase-js` |
 | Containers | Docker / docker-compose (backend + frontend + nginx) |
 
@@ -132,7 +132,7 @@ venv\Scripts\activate            # Windows  (source venv/bin/activate on Linux/m
 pip install -r requirements.txt
 
 copy .env.example .env           # then edit .env (see below)
-python main.py                   # serves the API on http://localhost:8000
+python main.py                   # serves the API on http://localhost:8002
 ```
 
 Key `.env` values:
@@ -158,8 +158,16 @@ Configure the surveillance inputs before running:
 ```bash
 cd frontend
 npm install
-# create .env with VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY
-npm run dev                       # http://localhost:5173, proxies /api to the backend
+# create .env with NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY
+npm run dev                       # http://localhost:3001; API is http://127.0.0.1:8002
+```
+
+On Windows, the reliable one-command launcher builds the offline-capable
+production frontend and starts both services:
+
+```powershell
+.\scripts\run-local.ps1
+# Use .\scripts\run-local.ps1 -Dev only when actively editing the frontend.
 ```
 
 ### 3. Docker (optional)

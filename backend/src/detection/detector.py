@@ -3,6 +3,7 @@ IBVAP — YOLOv8 Object Detector
 Wrapper around Ultralytics YOLO for person/vehicle detection.
 """
 
+import threading
 import time
 from collections import deque
 
@@ -64,6 +65,9 @@ class ObjectDetector:
         self._model = None
         self._device = device
         self._model_path = model_path
+        # A single detector is shared by all camera threads. Serial inference
+        # avoids overlapping CUDA/CPU allocations and predictor races.
+        self._inference_lock = threading.Lock()
         # id -> canonical class name; populated from the model after load
         self._id2name: dict[int, str] = {k: _normalize_class(v) for k, v in COCO_TARGET_CLASSES.items()}
 
@@ -124,15 +128,16 @@ class ObjectDetector:
             start_time = time.time()
 
             # Run inference
-            results = self._model(
-                frame,
-                conf=self.confidence_threshold,
-                iou=self.nms_threshold,
-                imgsz=self.imgsz,
-                device=self._device,
-                classes=None if self.detect_all else self.target_classes,
-                verbose=False,
-            )
+            with self._inference_lock:
+                results = self._model(
+                    frame,
+                    conf=self.confidence_threshold,
+                    iou=self.nms_threshold,
+                    imgsz=self.imgsz,
+                    device=self._device,
+                    classes=None if self.detect_all else self.target_classes,
+                    verbose=False,
+                )
 
             inference_time = time.time() - start_time
             self._inference_times.append(inference_time)
