@@ -241,15 +241,23 @@ async def require_auth_media(
 def scoped_cameras(user: dict):
     """Camera ids this user may see, or None for 'all'.
 
-    admin, or an empty `allowed_areas`, => None (unrestricted).
-    Populate `user_profiles.allowed_areas` to restrict an operator/auditor.
+    Only "admin" gets unrestricted (None). Every other role gets exactly the
+    list in user_profiles.allowed_areas - including an EMPTY list, which means
+    zero cameras, not all of them.
+
+    Fail-closed by design: `allowed_areas` defaults to [] for a newly created
+    profile (models.py) until an admin explicitly assigns cameras. Treating
+    that default as "unrestricted" - the previous behaviour here - meant a
+    brand-new operator or auditor account could see every camera in the
+    system before anyone granted it access to any. An invalid or missing
+    profile also gets [], for the same reason.
     """
     if user.get("app_role") == "admin":
         return None
     areas = user.get("allowed_areas")
     if user.get("app_role") not in VALID_ROLES or not isinstance(areas, list):
         return []
-    return list(areas) if areas else None
+    return list(areas)
 
 
 def can_access_camera(user: dict, camera_id: str) -> bool:
