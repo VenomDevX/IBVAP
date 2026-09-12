@@ -534,12 +534,23 @@ class IBVAPPipeline:
             if not cam_cfg.get("enabled", True):
                 continue
 
+            # cameras.yaml uses `fps:` and `resolution: [w, h]`, but CameraInfo's
+            # fields are fps_limit/resolution(tuple). Neither was actually being
+            # read from config before this fix - fps_limit silently defaulted to
+            # 15 regardless of `fps:` in the file, and `resolution` was never
+            # passed at all, so a downscale-on-ingest entry in cameras.yaml (the
+            # intended way to run a 4K source without decoding it at full size)
+            # had zero effect. Confirmed by an OpenCV OutOfMemoryError on two 4K
+            # demo cameras that were configured to downscale to 1080p and still
+            # connected, and crashed, at their native 3840x2160.
+            res_cfg = cam_cfg.get("resolution")
             camera_info = CameraInfo(
                 camera_id=cam_cfg["id"],
                 name=cam_cfg["name"],
                 source=cam_cfg["source"],
                 camera_type=cam_cfg.get("type", "general"),
-                fps_limit=cam_cfg.get("fps_limit", 15),
+                fps_limit=cam_cfg.get("fps", cam_cfg.get("fps_limit", 15)),
+                resolution=tuple(res_cfg) if res_cfg else None,
             )
 
             pipeline = CameraPipeline(

@@ -75,12 +75,13 @@ cameras:
     name: "Highway Traffic Flow (Pixabay)"
     source: "./data/demo/traffic_flow_highway.mp4"
     fps: 30
-    resolution: [3840, 2160]
-    # Disabled by default: this machine has 15.6GB RAM (4.8GB free under normal
-    # load). Two 4K pipelines on top of the other 8 exhausted memory and
-    # crashed the backend (OpenCV OutOfMemoryError). Re-enable only if you
-    # have headroom to spare, or after disabling some of the other cameras.
-    enabled: false
+    # Downscaled from the source's native 3840x2160 to 1080p on ingest
+    # (VideoSource.read_frame's cv2.resize). The earlier crash came from
+    # setting `resolution` to the SOURCE's own 4K size, which decoded and
+    # re-encoded every frame at full 4K for nothing - the resize path
+    # already existed, it was just configured to resize to the same size.
+    resolution: [1920, 1080]
+    enabled: true
     capabilities:
       - "detection"
       - "tracking"
@@ -89,10 +90,9 @@ cameras:
   - id: "CAM_CROSSWALK"
     name: "Pedestrian Crosswalk (Pixabay)"
     source: "./data/demo/crosswalk_crowd.mp4"
-    fps: 60
-    resolution: [3840, 2160]
-    # Disabled by default - see CAM_HIGHWAY_4K above (same reason).
-    enabled: false
+    fps: 30  # halved from the 60fps source - static scene, halves inference load
+    resolution: [1920, 1080]  # downscaled on ingest - see CAM_HIGHWAY_4K
+    enabled: true
     capabilities:
       - "detection"
       - "tracking"
@@ -103,10 +103,7 @@ cameras:
     source: "./data/demo/military_test_aircraft.mp4"
     fps: 10
     resolution: [640, 640]
-    # Disabled by default: this was a one-off verification camera for the
-    # stage-2 classifier fix, not meant to run continuously. Small (640x640),
-    # so re-enabling it costs little - unlike the two 4K cameras above.
-    enabled: false
+    enabled: true  # 640x640, negligible memory cost
     capabilities:
       - "detection"
       - "tracking"
