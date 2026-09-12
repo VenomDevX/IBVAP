@@ -6,6 +6,9 @@ import Providers from './providers';
 export const metadata: Metadata = {
   title: 'IBVAP — Border Video Analytics',
   description: 'Intelligent Border Video Analytics Platform',
+  icons: {
+    icon: '/favicon.svg?v=3',
+  },
 };
 
 export const viewport: Viewport = {
