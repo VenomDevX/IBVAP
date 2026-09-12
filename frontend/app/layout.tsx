@@ -7,7 +7,7 @@ export const metadata: Metadata = {
   title: 'IBVAP — Border Video Analytics',
   description: 'Intelligent Border Video Analytics Platform',
   icons: {
-    icon: '/favicon.svg?v=3',
+    icon: '/ibvap-logo.svg?v=1',
   },
 };
 
