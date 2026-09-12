@@ -131,3 +131,127 @@ def test_tracker_ages_and_evicts_stale_tracks(tracker):
 
 def test_tracker_no_detections_is_safe(tracker):
     assert tracker.update(_frame(0, [], time.time())) == {}
+
+
+# --------------------------------------------------------------------------- #
+# MultiObjectTracker — ByteTrack quiet-frame fallback
+#
+# Reproduced on the real supervision.ByteTrack (0.30.2, deprecated - removed
+# in 0.31): it drops an already-confirmed track from its per-frame output on
+# many frames despite an unchanged, overlapping, high-confidence detection,
+# freezing `last_seen`/`duration` and therefore ANPR, face re-identification
+# and the stage-2 classifier, which all gate on duration. Confirmed on both a
+# static synthetic clip and real moving traffic footage.
+#
+# A fake tracker is used here rather than the real one so this test is
+# deterministic and does not depend on the deprecated library's exact
+# (and apparently non-guaranteed) per-frame reporting behaviour.
+# --------------------------------------------------------------------------- #
+
+
+class _QuietAfterActivationByteTrack:
+    """Reports a tracker_id once, then goes quiet on it forever - the exact
+    failure mode observed from the real (deprecated) sv.ByteTrack."""
+
+    def __init__(self):
+        self._reported_once: set[int] = set()
+        self._next_id = 1
+
+    def update_with_detections(self, sv_detections):
+        import supervision as sv
+
+        n = len(sv_detections.xyxy)
+        ids = []
+        for _ in range(n):
+            tid = self._next_id
+            if tid in self._reported_once:
+                continue  # already activated once - go quiet, as observed
+            self._reported_once.add(tid)
+            ids.append(tid)
+        if not ids:
+            return sv.Detections(
+                xyxy=np.zeros((0, 4)), confidence=np.zeros(0), class_id=np.zeros(0, dtype=int)
+            )
+        # only ever "confirms" tracker_id=1 in this fixture (single object)
+        return sv.Detections(
+            xyxy=sv_detections.xyxy[:1],
+            confidence=sv_detections.confidence[:1],
+            class_id=sv_detections.class_id[:1],
+            tracker_id=np.array([1]),
+        )
+
+
+def test_duration_keeps_advancing_when_bytetrack_goes_quiet(tracker):
+    """THE regression: without the fallback, duration freezes at ~0 forever
+    after the activation frame, even though the object is still detected
+    every frame with an unchanged, overlapping bbox."""
+    tracker._tracker = _QuietAfterActivationByteTrack()
+    t0 = time.time()
+    box = (100, 100, 160, 260)
+
+    tracks = tracker.update(_frame(0, [(box, 0, "person")], t0))
+    assert tracks, "activation frame must confirm a track"
+    tid = next(iter(tracks))
+
+    # ByteTrack goes quiet on this id from here on (per the fake), but the
+    # same object keeps being detected every frame.
+    last_duration = -1.0
+    for i in range(1, 10):
+        tracks = tracker.update(_frame(i, [(box, 0, "person")], t0 + i * 0.2))
+        assert tid in tracks, "fallback must keep the track active/visible"
+        assert tracks[tid].duration > last_duration, (
+            f"duration must keep advancing (frame {i}); it must not freeze "
+            "just because the underlying tracker stopped reporting this id"
+        )
+        last_duration = tracks[tid].duration
+    assert last_duration >= 1.6  # ~9 * 0.2s, minus the activation frame
+
+
+class _NeverConfirmsByteTrack:
+    """A tracker that never activates anything - always reports empty."""
+
+    def update_with_detections(self, sv_detections):
+        import supervision as sv
+
+        return sv.Detections(
+            xyxy=np.zeros((0, 4)), confidence=np.zeros(0), class_id=np.zeros(0, dtype=int)
+        )
+
+
+def test_fallback_never_creates_a_track_bytetrack_did_not_confirm():
+    """The fallback must only refresh EXISTING tracks, never invent one -
+    activation/min_hits stays entirely ByteTrack's responsibility. Fed the
+    same detection repeatedly against a tracker that never activates
+    anything, no track may appear - there is nothing yet for the fallback to
+    reconcile against."""
+    from src.tracking.tracker import MultiObjectTracker
+
+    trk = MultiObjectTracker()
+    trk._tracker = _NeverConfirmsByteTrack()
+    box = (0, 0, 10, 10)
+    t0 = time.time()
+    for i in range(10):
+        tracks = trk.update(_frame(i, [(box, 0, "person")], t0 + i * 0.1))
+    assert tracks == {}
+
+
+def test_fallback_does_not_update_a_track_bytetrack_freshly_confirmed():
+    """When ByteTrack DOES report an id this frame, the fallback pass must
+    leave it alone rather than double-processing it."""
+    from src.tracking.tracker import MultiObjectTracker
+
+    trk = MultiObjectTracker()
+    t0 = time.time()
+    box = (50, 50, 90, 130)
+    for i in range(6):  # real ByteTrack, > min_hits to confirm
+        tracks = trk.update(_frame(i, [(box, 0, "person")], t0 + i * 0.05))
+    assert tracks, "expected a confirmed track from the real tracker"
+
+
+def test_bbox_iou():
+    from src.tracking.tracker import _bbox_iou
+
+    assert _bbox_iou((0, 0, 10, 10), (0, 0, 10, 10)) == 1.0
+    assert _bbox_iou((0, 0, 10, 10), (20, 20, 30, 30)) == 0.0
+    # half-overlap square: intersection 5x10=50, union 100+100-50=150
+    assert abs(_bbox_iou((0, 0, 10, 10), (5, 0, 15, 10)) - 50 / 150) < 1e-9
