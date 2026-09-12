@@ -13,5 +13,6 @@ RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:alpine
 COPY --from=build /app/out /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --chown=101:101 nginx.conf /etc/nginx/conf.d/default.conf
+COPY nginx-tls.conf /etc/nginx/nginx-tls.template
 EXPOSE 8080

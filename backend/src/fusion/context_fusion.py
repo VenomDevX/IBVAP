@@ -5,6 +5,7 @@ This is the CORE NOVELTY of IBVAP.
 """
 
 import time
+import uuid
 from collections import deque
 from dataclasses import dataclass, field
 
@@ -63,6 +64,7 @@ class FusedEvent:
             "identity_context": self.identity_context,
             "vehicle_context": self.vehicle_context,
             "evidence_path": self.evidence_path,
+            "evidence_hash": self.evidence_hash,
             "duration": round(self.duration, 1),
         }
 
@@ -91,7 +93,7 @@ class ContextFusion:
         self._event_counter: int = 0
         self._fused_events = deque(maxlen=5000)
         # Deduplication: track_id -> last fused event time
-        self._last_fusion: dict[int, float] = {}
+        self._last_fusion: dict[tuple, tuple[float, tuple]] = {}
         self._fusion_cooldown: float = 30.0  # seconds
 
     def fuse_events(
@@ -113,14 +115,6 @@ class ContextFusion:
         or None if they don't warrant a fused event.
         """
         now = time.time()
-
-        fcut = now - self._fusion_cooldown * 4
-        self._last_fusion = {k: t for k, t in self._last_fusion.items() if t > fcut}
-
-        # Check cooldown
-        if track_id in self._last_fusion:
-            if now - self._last_fusion[track_id] < self._fusion_cooldown:
-                return None
 
         if not behavior_events:
             return None
@@ -181,7 +175,7 @@ class ContextFusion:
 
         self._event_counter += 1
         fused = FusedEvent(
-            event_id=f"EVT_{int(now)}_{self._event_counter:04d}",
+            event_id=f"EVT_{uuid.uuid4().hex}",
             camera_id=camera_id,
             track_id=track_id,
             timestamp=now,
@@ -196,12 +190,25 @@ class ContextFusion:
             duration=track_duration,
         )
 
-        self._fused_events.append(fused)
-        self._last_fusion[track_id] = now
-
-        logger.info(f"Fused event: {event_type} | Track {track_id} | Factors: {len(all_factors)} | Camera: {camera_id}")
-
         return fused
+
+    @staticmethod
+    def _signature(event: FusedEvent) -> tuple:
+        return (event.event_type, event.risk_level, event.spatial_context.get("fence_crossed", False))
+
+    def should_record(self, event: FusedEvent) -> bool:
+        """Throttle unchanged records, never live scoring or a changed incident."""
+        now = time.time()
+        cutoff = now - self._fusion_cooldown * 4
+        self._last_fusion = {k: v for k, v in self._last_fusion.items() if v[0] > cutoff}
+        previous = self._last_fusion.get((event.camera_id, event.track_id))
+        return (previous is None or previous[1] != self._signature(event)
+                or now - previous[0] >= self._fusion_cooldown)
+
+    def mark_recorded(self, event: FusedEvent) -> None:
+        self._last_fusion[(event.camera_id, event.track_id)] = (time.time(), self._signature(event))
+        self._fused_events.append(event)
+        logger.info(f"Recorded event: {event.event_type} | Camera: {event.camera_id} | Track: {event.track_id}")
 
     def _classify_fused_event(
         self,

@@ -29,13 +29,15 @@ class MultiObjectTracker:
         max_age: int = 30,
         min_hits: int = 3,
         iou_threshold: float = 0.3,
+        frame_rate: float = 30,
     ):
         self.max_age = max_age
         self.min_hits = min_hits
         self.iou_threshold = iou_threshold
+        self.frame_rate = frame_rate
 
         # ByteTrack tracker
-        self._tracker = self._make_bytetrack(max_age, iou_threshold)
+        self._tracker = self._make_bytetrack(max_age, iou_threshold, min_hits, frame_rate)
 
         # Active tracks
         self._tracks: dict[int, Track] = {}
@@ -128,7 +130,7 @@ class MultiObjectTracker:
             for tid, track in self._tracks.items():
                 if tid not in active_ids and track.is_active:
                     age = timestamp - track.last_seen
-                    if age > self.max_age / 30.0:  # Convert frames to seconds
+                    if age > self.max_age / self.frame_rate:
                         track.is_active = False
 
         except Exception as e:
@@ -139,7 +141,7 @@ class MultiObjectTracker:
 
     def _age_tracks(self, current_time: float):
         """Mark stale tracks inactive and evict long-dead ones (bounds memory)."""
-        inactive_after = self.max_age / 30.0
+        inactive_after = self.max_age / self.frame_rate
         evict_after = 10 * inactive_after
         dead = []
         for tid, track in self._tracks.items():
@@ -156,7 +158,7 @@ class MultiObjectTracker:
         return self._tracks.get(track_id)
 
     @staticmethod
-    def _make_bytetrack(max_age, iou_threshold):
+    def _make_bytetrack(max_age, iou_threshold, min_hits=3, frame_rate=30):
         """Construct sv.ByteTrack, tolerating its removal/signature change in newer supervision."""
         if sv is None:
             return None
@@ -165,7 +167,8 @@ class MultiObjectTracker:
                 track_activation_threshold=0.25,
                 lost_track_buffer=max_age,
                 minimum_matching_threshold=iou_threshold,
-                frame_rate=30,
+                frame_rate=frame_rate,
+                minimum_consecutive_frames=min_hits,
             )
         except (AttributeError, TypeError) as e:
             logger.error(f"sv.ByteTrack unavailable ({e}) - tracker running in basic mode")
@@ -174,7 +177,7 @@ class MultiObjectTracker:
     def reset(self):
         """Reset all tracking state."""
         self._tracks.clear()
-        self._tracker = self._make_bytetrack(self.max_age, self.iou_threshold)
+        self._tracker = self._make_bytetrack(self.max_age, self.iou_threshold, self.min_hits, self.frame_rate)
 
     @staticmethod
     def draw_tracks(

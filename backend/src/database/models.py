@@ -186,6 +186,7 @@ class ZoneModel(Base):
     points = Column(JSON, default=list)
     color = Column(JSON, default=[255, 0, 0])
     enabled = Column(Boolean, default=True)
+    deleted = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

@@ -200,7 +200,7 @@ class RiskEngine:
         score = 0.0
         reasons = []
 
-        identity = ctx.get("identity", "not_checked")
+        identity = ctx.get("identity_status", ctx.get("identity", "not_checked"))
 
         if identity == "unknown":
             score = self.identity_scores.get("unknown_person", 60)
@@ -218,7 +218,7 @@ class RiskEngine:
         score = 0.0
         reasons = []
 
-        plate = ctx.get("plate", "not_checked")
+        plate = ctx.get("plate_status", str(ctx.get("plate", "not_checked")).lower())
 
         if plate == "unknown":
             score = self.vehicle_scores.get("unknown_plate", 50)
@@ -226,6 +226,9 @@ class RiskEngine:
         elif plate == "low_confidence":
             score = self.vehicle_scores.get("plate_read_low_confidence", 35)
             reasons.append("Low confidence plate reading")
+        elif plate == "not_detected":
+            score = self.vehicle_scores.get("no_plate_detected", 30)
+            reasons.append("No plate detected")
 
         return score, reasons
 

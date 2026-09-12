@@ -5,7 +5,7 @@ Alert querying, review, and management endpoints.
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from src.api.auth import require_auth, scoped_cameras
+from src.api.auth import can_access_camera, require_auth, require_camera_access, require_role, scoped_cameras
 from src.database.db import get_database
 from src.database.repository import Repository
 
@@ -55,7 +55,8 @@ async def get_live_alerts(user: dict = Depends(require_auth)):
 
     pipeline = get_pipeline()
     if pipeline:
-        return pipeline.alert_engine.get_all_alerts(limit=50)
+        return [a for a in pipeline.alert_engine.get_all_alerts(limit=5000)
+                if can_access_camera(user, a["camera_id"])][:50]
     return []
 
 
@@ -70,6 +71,8 @@ async def get_alert(alert_id: str, user: dict = Depends(require_auth)):
 
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
+
+    require_camera_access(user, alert.camera_id)
 
     return {
         "alert_id": alert.alert_id,
@@ -91,7 +94,7 @@ async def get_alert(alert_id: str, user: dict = Depends(require_auth)):
 
 
 @router.post("/{alert_id}/review")
-async def review_alert(alert_id: str, user: dict = Depends(require_auth)):
+async def review_alert(alert_id: str, user: dict = Depends(require_role("operator", "supervisor"))):
     """Mark an alert as reviewed. Attribution comes from the auth token only."""
     actor = user.get("email") or user.get("user_id") or "unknown"
     db = get_database()
@@ -99,6 +102,10 @@ async def review_alert(alert_id: str, user: dict = Depends(require_auth)):
     success = False
     try:
         repo = Repository(session)
+        alert = repo.get_alert(alert_id)
+        if not alert:
+            raise HTTPException(status_code=404, detail="Alert not found")
+        require_camera_access(user, alert.camera_id)
         success = repo.mark_alert_reviewed(alert_id, actor)
         if success:
             repo.create_audit_log("review_alert", actor, {"alert_id": alert_id})
@@ -107,5 +114,11 @@ async def review_alert(alert_id: str, user: dict = Depends(require_auth)):
 
     if not success:
         raise HTTPException(status_code=404, detail="Alert not found")
+
+    from src.api.app import get_pipeline
+
+    pipeline = get_pipeline()
+    if pipeline:
+        pipeline.alert_engine.mark_reviewed(alert_id, actor)
 
     return {"message": "Alert marked as reviewed", "alert_id": alert_id}

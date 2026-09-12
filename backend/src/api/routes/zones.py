@@ -3,10 +3,13 @@ IBVAP — Zones API Routes
 Virtual zone management endpoints.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from typing import Literal
 
-from src.api.auth import require_admin, require_auth
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field, field_validator
+from shapely.geometry import Polygon
+
+from src.api.auth import can_access_camera, require_admin, require_auth, require_camera_access
 from src.database.db import get_database
 from src.database.repository import Repository
 
@@ -14,13 +17,28 @@ router = APIRouter()
 
 
 class ZoneCreate(BaseModel):
-    zone_id: str
-    camera_id: str
-    name: str
-    type: str = "restricted"
-    points: list[list[int]]
-    color: list[int] = [255, 0, 0]
+    zone_id: str = Field(min_length=1, max_length=50, pattern=r"^[A-Za-z0-9_-]+$")
+    camera_id: str = Field(min_length=1, max_length=50, pattern=r"^[A-Za-z0-9_-]+$")
+    name: str = Field(min_length=1, max_length=200)
+    type: Literal["restricted", "buffer", "safe", "entry_exit"] = "restricted"
+    points: list[tuple[int, int]] = Field(min_length=3, max_length=256)
+    color: tuple[int, int, int] = (255, 0, 0)
     enabled: bool = True
+
+    @field_validator("points")
+    @classmethod
+    def valid_polygon(cls, points):
+        polygon = Polygon(points)
+        if not polygon.is_valid or polygon.area == 0 or any(x < 0 or y < 0 for x, y in points):
+            raise ValueError("Zone must be a valid nonzero polygon with nonnegative coordinates")
+        return points
+
+    @field_validator("color")
+    @classmethod
+    def valid_color(cls, color):
+        if any(c < 0 or c > 255 for c in color):
+            raise ValueError("Color channels must be between 0 and 255")
+        return color
 
 
 @router.get("")
@@ -40,16 +58,9 @@ async def list_zones(camera_id: str | None = None, user: dict = Depends(require_
             "color": z.color,
             "enabled": z.enabled,
         }
-        for z in zones
+        for z in zones if can_access_camera(user, z.camera_id)
     ]
     session.close()
-
-    # Also include runtime zones from zone manager
-    from src.api.app import get_pipeline
-
-    pipeline = get_pipeline()
-    if pipeline and not result:
-        result = pipeline.zone_manager.get_all_zones()
 
     return result
 
@@ -57,6 +68,7 @@ async def list_zones(camera_id: str | None = None, user: dict = Depends(require_
 @router.get("/{camera_id}")
 async def get_camera_zones(camera_id: str, user: dict = Depends(require_auth)):
     """Get zones for a specific camera."""
+    require_camera_access(user, camera_id)
     from src.api.app import get_pipeline
 
     pipeline = get_pipeline()
@@ -73,7 +85,10 @@ async def create_zone(zone: ZoneCreate, user: dict = Depends(require_admin)):
     session = db.get_session()
     repo = Repository(session)
 
-    repo.create_zone(zone.dict())
+    if any(z.zone_id == zone.zone_id for z in repo.get_zones(include_deleted=True)):
+        session.close()
+        raise HTTPException(status_code=409, detail="Zone ID already exists")
+    repo.create_zone(zone.model_dump())
     actor = user.get("email") or user.get("user_id") or "unknown"
     repo.create_audit_log("create_zone", actor, {"zone_id": zone.zone_id, "camera_id": zone.camera_id})
     session.close()

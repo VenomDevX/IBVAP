@@ -5,7 +5,7 @@ CRUD operations for all entities.
 
 from datetime import datetime
 
-from sqlalchemy import desc
+from sqlalchemy import desc, or_
 from sqlalchemy.orm import Session
 
 from src.alerts import evidence
@@ -70,9 +70,11 @@ class Repository:
 
     # ======================== EVENTS ========================
 
-    def create_event(self, event_data: dict) -> EventModel:
+    def create_event(self, event_data: dict, commit: bool = True) -> EventModel:
         existing = self.get_event(event_data["event_id"])
         if existing is not None:
+            if existing.camera_id != event_data["camera_id"] or existing.track_id != event_data.get("track_id"):
+                raise ValueError("Event ID already belongs to another track")
             return existing  # fusion re-emits the same event_id for an ongoing situation
         event = EventModel(
             event_id=event_data["event_id"],
@@ -106,7 +108,9 @@ class Repository:
             ],
         )
         self.session.add(event)
-        self.session.commit()
+        self.session.flush()
+        if commit:
+            self.session.commit()
         return event
 
     def _chain(self, row, model, fields):
@@ -161,7 +165,7 @@ class Repository:
 
     # ======================== ALERTS ========================
 
-    def create_alert(self, alert_data: dict) -> AlertModel:
+    def create_alert(self, alert_data: dict, commit: bool = True) -> AlertModel:
         alert = AlertModel(
             alert_id=alert_data["alert_id"],
             camera_id=alert_data["camera_id"],
@@ -195,7 +199,9 @@ class Repository:
             ],
         )
         self.session.add(alert)
-        self.session.commit()
+        self.session.flush()
+        if commit:
+            self.session.commit()
         return alert
 
     def get_alert(self, alert_id: str) -> AlertModel | None:
@@ -342,39 +348,49 @@ class Repository:
         self.session.commit()
         return zone
 
-    def get_zones(self, camera_id: str = None) -> list[ZoneModel]:
+    def get_zones(self, camera_id: str = None, include_deleted: bool = False) -> list[ZoneModel]:
         query = self.session.query(ZoneModel)
+        if not include_deleted:
+            query = query.filter_by(deleted=False)
         if camera_id:
             query = query.filter_by(camera_id=camera_id)
         return query.all()
 
     def delete_zone(self, zone_id: str) -> bool:
         zone = self.session.query(ZoneModel).filter_by(zone_id=zone_id).first()
-        if zone:
-            self.session.delete(zone)
+        if zone and not zone.deleted:
+            zone.deleted = True
+            zone.enabled = False
             self.session.commit()
             return True
         return False
 
     # ======================== STATISTICS ========================
 
-    def get_dashboard_stats(self) -> dict:
+    def get_dashboard_stats(self, allowed_cameras=None) -> dict:
         """Get statistics for the dashboard."""
-        total_events = self.session.query(EventModel).count()
-        total_alerts = self.session.query(AlertModel).count()
-        unreviewed = self.session.query(AlertModel).filter_by(reviewed=False).count()
-        cameras = self.session.query(CameraModel).count()
+        events = self.session.query(EventModel)
+        alerts = self.session.query(AlertModel)
+        camera_query = self.session.query(CameraModel)
+        if allowed_cameras is not None:
+            events = events.filter(EventModel.camera_id.in_(allowed_cameras))
+            alerts = alerts.filter(AlertModel.camera_id.in_(allowed_cameras))
+            camera_query = camera_query.filter(CameraModel.camera_id.in_(allowed_cameras))
+        total_events = events.count()
+        total_alerts = alerts.count()
+        unreviewed = alerts.filter_by(reviewed=False).count()
+        cameras = camera_query.count()
 
         # Risk level distribution
         from sqlalchemy import func
 
         risk_dist = dict(
-            self.session.query(AlertModel.risk_level, func.count(AlertModel.id)).group_by(AlertModel.risk_level).all()
+            alerts.with_entities(AlertModel.risk_level, func.count(AlertModel.id)).group_by(AlertModel.risk_level).all()
         )
 
         # Event type distribution
         event_dist = dict(
-            self.session.query(EventModel.event_type, func.count(EventModel.id)).group_by(EventModel.event_type).all()
+            events.with_entities(EventModel.event_type, func.count(EventModel.id)).group_by(EventModel.event_type).all()
         )
 
         return {
@@ -388,3 +404,13 @@ class Repository:
 
     def close(self):
         self.session.close()
+
+    def get_snapshot_cameras(self, name: str) -> set[str]:
+        owners = set()
+        for model, field in ((EventModel, EventModel.evidence_path), (AlertModel, AlertModel.snapshot_path)):
+            rows = self.session.query(model.camera_id).filter(or_(
+                field == name, field.endswith("/" + name, autoescape=True),
+                field.endswith("\\" + name, autoescape=True),
+            )).all()
+            owners.update(camera_id for (camera_id,) in rows)
+        return owners

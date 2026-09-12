@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 
-from src.api.auth import require_auth, require_auth_media, scoped_cameras
+from src.api.auth import require_auth, require_auth_media, require_camera_access, scoped_cameras
 from src.api.middleware.input_validator import sanitize_camera_id
 from src.api.ratelimit import limiter
 from src.database.db import get_database
@@ -59,6 +59,7 @@ async def list_cameras(user: dict = Depends(require_auth)):
 async def get_camera(camera_id: str, user: dict = Depends(require_auth)):
     """Get a specific camera's details and live status."""
     camera_id = sanitize_camera_id(camera_id)
+    require_camera_access(user, camera_id)
     db = get_database()
     session = db.get_session()
     repo = Repository(session)
@@ -95,6 +96,7 @@ async def get_camera(camera_id: str, user: dict = Depends(require_auth)):
 async def get_camera_status(camera_id: str, user: dict = Depends(require_auth)):
     """Get camera connection status."""
     camera_id = sanitize_camera_id(camera_id)
+    require_camera_access(user, camera_id)
     from src.api.app import get_pipeline
 
     pipeline = get_pipeline()
@@ -115,6 +117,7 @@ async def get_heatmap(
 ):
     """Live heatmap PNG for a camera. The image is composited off the event loop."""
     camera_id = sanitize_camera_id(camera_id)
+    require_camera_access(user, camera_id)
     import cv2
 
     from src.api.app import get_pipeline

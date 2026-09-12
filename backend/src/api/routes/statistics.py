@@ -5,7 +5,7 @@ Dashboard statistics and analytics endpoints.
 
 from fastapi import APIRouter, Depends
 
-from src.api.auth import require_auth
+from src.api.auth import can_access_camera, require_auth, scoped_cameras
 from src.database.db import get_database
 from src.database.repository import Repository
 
@@ -27,15 +27,15 @@ async def get_statistics(user: dict = Depends(require_auth)):
 
     # Live pipeline stats
     if pipeline:
-        result["pipeline"] = pipeline.get_all_stats()
-        result["alert_stats"] = pipeline.alert_engine.get_statistics()
+        result["pipeline"] = {k: v for k, v in pipeline.get_all_stats().items() if can_access_camera(user, k)}
+        result["alert_stats"] = pipeline.alert_engine.get_statistics(scoped_cameras(user))
 
     # Database stats
     try:
         db = get_database()
         session = db.get_session()
         repo = Repository(session)
-        result["database"] = repo.get_dashboard_stats()
+        result["database"] = repo.get_dashboard_stats(scoped_cameras(user))
         session.close()
     except Exception:
         result["database"] = {}
@@ -60,16 +60,17 @@ async def get_summary(user: dict = Depends(require_auth)):
     }
 
     if pipeline:
-        summary["total_cameras"] = len(pipeline.camera_pipelines)
+        cameras = [p for cam, p in pipeline.camera_pipelines.items() if can_access_camera(user, cam)]
+        summary["total_cameras"] = len(cameras)
         summary["online_cameras"] = sum(
-            1 for p in pipeline.camera_pipelines.values() if p.video_source.status.value == "online"
+            1 for p in cameras if p.video_source.status.value == "online"
         )
-        alert_stats = pipeline.alert_engine.get_statistics()
+        alert_stats = pipeline.alert_engine.get_statistics(scoped_cameras(user))
         summary["total_alerts"] = alert_stats.get("total_alerts", 0)
         summary["unreviewed_alerts"] = alert_stats.get("unreviewed", 0)
         summary["critical_alerts"] = alert_stats.get("by_level", {}).get("critical", 0)
         summary["active_tracks"] = sum(
-            p.get_stats().get("active_tracks", 0) for p in pipeline.camera_pipelines.values()
+            p.get_stats().get("active_tracks", 0) for p in cameras
         )
 
     return summary
@@ -87,12 +88,12 @@ async def get_timeseries(user: dict = Depends(require_auth)):
     if not pipeline:
         return {"labels": [], "data": []}
 
-    alerts = pipeline.alert_engine._alerts
+    alerts = list(pipeline.alert_engine._alerts)
     now = time.time()
     one_day_ago = now - (24 * 3600)
 
     # Filter alerts from last 24h
-    recent = [a for a in alerts if a.timestamp >= one_day_ago]
+    recent = [a for a in alerts if a.timestamp >= one_day_ago and can_access_camera(user, a.camera_id)]
 
     # Bucket by hour
     buckets = {i: 0 for i in range(24)}
@@ -127,6 +128,8 @@ async def get_threats(user: dict = Depends(require_auth)):
     distribution = {}
 
     for cam_id, p in pipeline.camera_pipelines.items():
+        if not can_access_camera(user, cam_id):
+            continue
         tracks = p.track_manager.get_active_tracks()
         distribution[cam_id] = 0
 
