@@ -4,12 +4,13 @@ MJPEG video stream and frame capture endpoints.
 """
 
 import asyncio
+import time
 
 import cv2
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 
-from src.api.auth import require_auth_media
+from src.api.auth import refresh_media_identity, require_auth_media, require_camera_access
 from src.api.middleware.input_validator import sanitize_camera_id
 from src.api.ratelimit import limiter
 
@@ -19,7 +20,7 @@ router = APIRouter()
 _MAX_FRAMES = 60 * 60 * 30
 
 
-async def generate_mjpeg(camera_id: str, request: Request):
+async def generate_mjpeg(camera_id: str, request: Request, user: dict):
     """Async generator that yields MJPEG frames until the client disconnects."""
     from src.api.app import get_pipeline
 
@@ -31,9 +32,18 @@ async def generate_mjpeg(camera_id: str, request: Request):
         return
 
     frames = 0
+    checked_at = 0.0
     while frames < _MAX_FRAMES:
         if await request.is_disconnected():
             break
+
+        if time.time() - checked_at >= 1:
+            try:
+                user = refresh_media_identity(user)
+                require_camera_access(user, camera_id)
+            except HTTPException:
+                break
+            checked_at = time.time()
 
         frame = cam_pipeline.get_latest_annotated_frame()
         if frame is None:
@@ -54,6 +64,7 @@ async def generate_mjpeg(camera_id: str, request: Request):
 async def video_stream(camera_id: str, request: Request, _user=Depends(require_auth_media)):
     """Get MJPEG video stream for a camera."""
     camera_id = sanitize_camera_id(camera_id)
+    require_camera_access(_user, camera_id)
     from src.api.app import get_pipeline
 
     pipeline = get_pipeline()
@@ -62,8 +73,9 @@ async def video_stream(camera_id: str, request: Request, _user=Depends(require_a
         raise HTTPException(status_code=404, detail="Camera not found")
 
     return StreamingResponse(
-        generate_mjpeg(camera_id, request),
+        generate_mjpeg(camera_id, request, _user),
         media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={"Cache-Control": "private, no-store"},
     )
 
 
@@ -72,6 +84,7 @@ async def video_stream(camera_id: str, request: Request, _user=Depends(require_a
 async def get_snapshot(camera_id: str, request: Request, _user=Depends(require_auth_media)):
     """Get a single snapshot frame from a camera."""
     camera_id = sanitize_camera_id(camera_id)
+    require_camera_access(_user, camera_id)
     from src.api.app import get_pipeline
 
     pipeline = get_pipeline()

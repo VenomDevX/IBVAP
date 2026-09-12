@@ -38,12 +38,14 @@ async def authenticate_ws(websocket: WebSocket) -> dict | None:
     try:
         payload = _auth._verify_token(token)
         _auth._deny_if_revoked(token)
+        profile = _auth.resolve_profile(payload["sub"])
     except Exception:
         await websocket.close(code=4003, reason="Invalid or expired token")
         return None
 
     await websocket.accept(subprotocol=subprotocol)
-    return payload
+    return {**payload, "token": token, "user_id": payload["sub"],
+            "app_role": profile["role"], "allowed_areas": profile["allowed_areas"]}
 
 
 class WebSocketManager:
@@ -73,14 +75,27 @@ class WebSocketManager:
         exp = (self._identities.get(id(websocket)) or {}).get("exp")
         return bool(exp) and time.time() >= exp
 
+    async def refresh_identity(self, websocket: WebSocket) -> dict | None:
+        try:
+            identity = _auth.refresh_media_identity(self._identities[id(websocket)])
+            self._identities[id(websocket)] = identity
+            return identity
+        except Exception:
+            await websocket.close(code=4003, reason="Authorization expired or unavailable")
+            await self.disconnect(websocket)
+            return None
+
     async def broadcast(self, message: dict):
         """Broadcast a message to all connected clients."""
         data = json.dumps(message)
         disconnected = []
 
         for connection in list(self.active_connections):
-            if self.token_expired(connection):
-                disconnected.append(connection)
+            identity = await self.refresh_identity(connection)
+            if identity is None:
+                continue
+            camera_id = message.get("data", {}).get("camera_id")
+            if not camera_id or not _auth.can_access_camera(identity, camera_id):
                 continue
             try:
                 await connection.send_text(data)

@@ -173,7 +173,12 @@ def create_app() -> FastAPI:
             while True:
                 # Inbound frames are not part of the protocol — read to detect
                 # disconnects, cap the size, and otherwise ignore them.
-                msg = await websocket.receive_text()
+                if await ws_manager.refresh_identity(websocket) is None:
+                    break
+                try:
+                    msg = await asyncio.wait_for(websocket.receive_text(), timeout=5)
+                except TimeoutError:
+                    continue
                 if len(msg) > 4096:
                     await websocket.close(code=1009, reason="Frame too large")
                     break

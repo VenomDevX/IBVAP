@@ -166,7 +166,7 @@ class VideoSource:
 
             return True, frame
 
-    def reconnect(self) -> bool:
+    def reconnect(self, stop_event: threading.Event | None = None) -> bool:
         """Attempt to reconnect to the video source."""
         if self._reconnect_count >= self.max_reconnect_attempts:
             logger.error(
@@ -181,7 +181,11 @@ class VideoSource:
         )
 
         self.release()
-        time.sleep(self.reconnect_delay)
+        if stop_event is not None:
+            if stop_event.wait(self.reconnect_delay):
+                return False
+        else:
+            time.sleep(self.reconnect_delay)
         return self.connect()
 
     def release(self):

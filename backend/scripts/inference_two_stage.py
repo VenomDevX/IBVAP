@@ -1,5 +1,5 @@
 """
-Two-Stage Inference Pipeline for IBVAP
+    Two-Stage Inference Pipeline for IBVAP
 ======================================
 Stage 1: YOLO detects objects → bounding boxes
 Stage 2: ResNet classifies each crop → fine-grained class
@@ -20,7 +20,7 @@ from ultralytics import YOLO
 
 class TwoStageDetector:
     """
-    YOLO (detection) + ResNet (classification) two-stage pipeline.
+    YOLO (detection) + EfficientNet (classification) two-stage pipeline.
     """
 
     def __init__(self, yolo_weights, resnet_weights, class_mapping_path, device="cuda:0"):
@@ -36,22 +36,17 @@ class TwoStageDetector:
         self.num_classes = len(self.idx_to_class)
         print(f"Loaded {self.num_classes} class labels")
 
-        # Load ResNet
-        print(f"Loading ResNet from: {resnet_weights}")
+        # Load EfficientNet-B0
+        print(f"Loading EfficientNet-B0 from: {resnet_weights}")
         checkpoint = torch.load(resnet_weights, map_location=self.device)
 
-        self.resnet = models.resnet50()
-        in_features = self.resnet.fc.in_features
-        self.resnet.fc = torch.nn.Sequential(
-            torch.nn.Dropout(0.3),
-            torch.nn.Linear(in_features, 512),
-            torch.nn.ReLU(),
-            torch.nn.Dropout(0.2),
-            torch.nn.Linear(512, self.num_classes),
+        self.classifier = models.efficientnet_b0(weights=None)
+        self.classifier.classifier[1] = torch.nn.Linear(
+            self.classifier.classifier[1].in_features, self.num_classes
         )
-        self.resnet.load_state_dict(checkpoint["model_state_dict"])
-        self.resnet.to(self.device)
-        self.resnet.eval()
+        self.classifier.load_state_dict(checkpoint["model_state_dict"])
+        self.classifier.to(self.device)
+        self.classifier.eval()
 
         # ResNet preprocessing
         self.transform = transforms.Compose(
@@ -72,7 +67,7 @@ class TwoStageDetector:
         tensor = self.transform(crop_rgb).unsqueeze(0).to(self.device)
 
         with torch.no_grad():
-            output = self.resnet(tensor)
+            output = self.classifier(tensor)
             probs = torch.softmax(output, dim=1)
             confidence, pred_idx = probs.max(1)
 
@@ -154,7 +149,7 @@ class TwoStageDetector:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Two-Stage YOLO+ResNet Inference")
+    parser = argparse.ArgumentParser(description="Two-Stage YOLO+EfficientNet Inference")
     parser.add_argument("--image", type=str, help="Path to image")
     parser.add_argument("--video", type=str, help="Path to video")
     parser.add_argument(
@@ -163,7 +158,7 @@ def main():
         default="runs/detect/outputs/training/ibvap_custom_model/weights/best.pt",
         help="YOLO weights path",
     )
-    parser.add_argument("--resnet", type=str, default="outputs/classifier/best.pt", help="ResNet weights path")
+    parser.add_argument("--resnet", type=str, default="outputs/efficientnet/best.pt", help="EfficientNet weights path")
     parser.add_argument(
         "--mapping", type=str, default="outputs/classifier/class_mapping.json", help="Class mapping JSON path"
     )

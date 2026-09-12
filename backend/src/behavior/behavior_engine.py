@@ -71,6 +71,7 @@ class BehaviorEngine:
         temporal_context: dict,
         direction_context: dict,
         fence_context: dict,
+        apply_cooldown: bool = True,
     ) -> list[BehaviorEvent]:
         """
         Analyze a track's behavior using all available context.
@@ -86,6 +87,7 @@ class BehaviorEngine:
             List of behavior events detected
         """
         events = []
+        self._apply_cooldown = apply_cooldown
 
         # --- Check: Restricted Zone Entry ---
         if zone_context.get("in_restricted", False):
@@ -131,7 +133,7 @@ class BehaviorEngine:
                 events.append(event)
 
         # --- Check: Night Movement ---
-        if temporal_context.get("is_night", False) and track.is_active:
+        if temporal_context.get("is_night", False) and track.is_active and track.average_speed > 0:
             event = self._create_event(
                 track,
                 BehaviorType.NIGHT_MOVEMENT,
@@ -202,6 +204,13 @@ class BehaviorEngine:
         """Create a behavior event with cooldown check."""
         now = time.time()
         key = (track.track_id, behavior_type.value)
+
+        if not getattr(self, "_apply_cooldown", True):
+            return BehaviorEvent(
+                event_id="", track_id=track.track_id, camera_id=track.camera_id,
+                behavior_type=behavior_type, timestamp=now,
+                details=details or {}, contributing_factors=factors or [],
+            )
 
         if len(self._cooldowns) > 512:
             ccut = now - self._cooldown_seconds * 4

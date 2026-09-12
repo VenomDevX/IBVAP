@@ -5,7 +5,7 @@ Event querying and detail endpoints.
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from src.api.auth import require_auth, scoped_cameras
+from src.api.auth import require_auth, require_camera_access, scoped_cameras
 from src.database.db import get_database
 from src.database.repository import Repository
 
@@ -56,7 +56,7 @@ async def get_event_count(
     db = get_database()
     session = db.get_session()
     repo = Repository(session)
-    count = repo.get_event_count(camera_id)
+    count = repo.get_event_count(camera_id, allowed_cameras=scoped_cameras(user))
     session.close()
     return {"count": count}
 
@@ -72,6 +72,8 @@ async def get_event(event_id: str, user: dict = Depends(require_auth)):
 
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
+
+    require_camera_access(user, event.camera_id)
 
     return {
         "event_id": event.event_id,

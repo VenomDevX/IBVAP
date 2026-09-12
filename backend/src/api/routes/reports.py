@@ -7,7 +7,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends
 
-from src.api.auth import require_auth
+from src.api.auth import can_access_camera, require_auth, scoped_cameras
 from src.database.db import get_database
 
 router = APIRouter()
@@ -27,6 +27,8 @@ async def get_daily_report(user: dict = Depends(require_auth)):
     active_threats = []
     if pipeline:
         for cam_id, p in pipeline.camera_pipelines.items():
+            if not can_access_camera(user, cam_id):
+                continue
             tracks = p.track_manager.get_active_tracks()
             for tid, track in tracks.items():
                 if track.risk_score > 0:
@@ -46,7 +48,11 @@ async def get_daily_report(user: dict = Depends(require_auth)):
 
         from src.database.models import AlertModel
 
-        alerts_24h = session.query(AlertModel).filter(AlertModel.timestamp >= datetime.fromtimestamp(one_day_ago)).all()
+        query = session.query(AlertModel).filter(AlertModel.timestamp >= datetime.fromtimestamp(one_day_ago))
+        allowed = scoped_cameras(user)
+        if allowed is not None:
+            query = query.filter(AlertModel.camera_id.in_(allowed))
+        alerts_24h = query.all()
 
         alert_data = [
             {

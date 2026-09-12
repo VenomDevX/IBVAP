@@ -58,6 +58,7 @@ class Database:
 
         insp = inspect(self.engine)
         wanted = {
+            "zones": {"deleted": "BOOLEAN NOT NULL DEFAULT 0"},
             "events": {"prev_hash": "VARCHAR(64)", "chain_hash": "VARCHAR(64)"},
             "alerts": {"prev_hash": "VARCHAR(64)", "chain_hash": "VARCHAR(64)"},
         }

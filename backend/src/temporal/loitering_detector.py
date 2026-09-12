@@ -107,6 +107,12 @@ class LoiteringDetector:
 
         for key in keys_to_remove:
             del self._zone_occupancy[key]
+            self._flagged.pop(key, None)
+
+        track.is_loitering = any(
+            tid == track.track_id and zid in current_zones and now - started >= self.threshold_seconds
+            for (tid, zid), started in self._zone_occupancy.items()
+        )
 
         return events
 

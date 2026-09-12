@@ -82,7 +82,7 @@ def _get_service_client():
         if not _warned_no_service_key:
             logger.warning(
                 "SUPABASE_SERVICE_KEY not set — application roles cannot be resolved; "
-                f"every authenticated user is treated as '{DEFAULT_ROLE}'."
+                "requests will be denied until role lookup is available."
             )
             _warned_no_service_key = True
         return None
@@ -98,21 +98,24 @@ def resolve_profile(user_id: str) -> dict:
     if hit and hit[0] > now:
         return hit[1]
 
-    if user_id == "dev-admin":
+    if user_id == "dev-admin" and _DEV_BYPASS and _IS_DEV:
         return {"role": "admin", "allowed_areas": []}
 
-    profile = {"role": DEFAULT_ROLE, "allowed_areas": []}
-    client = _get_service_client()
-    if client is not None and user_id and user_id != "unknown":
-        try:
-            resp = client.table("user_profiles").select("role, allowed_areas").eq("id", user_id).limit(1).execute()
-            row = (resp.data or [None])[0]
-            if row:
-                role = (row.get("role") or DEFAULT_ROLE).lower()
-                profile["role"] = role if role in VALID_ROLES else DEFAULT_ROLE
-                profile["allowed_areas"] = row.get("allowed_areas") or []
-        except Exception as e:
-            logger.error(f"resolve_profile({user_id}) failed: {e}")
+    try:
+        client = _get_service_client()
+        if client is None:
+            raise RuntimeError("Profile service unavailable")
+        resp = client.table("user_profiles").select("role, allowed_areas").eq("id", user_id).limit(1).execute()
+        row = (resp.data or [None])[0]
+    except Exception as e:
+        logger.error(f"Profile lookup failed: {type(e).__name__}")
+        raise HTTPException(status_code=503, detail="Authorization service unavailable") from e
+    if not row or row.get("role") not in VALID_ROLES:
+        raise HTTPException(status_code=403, detail="Application access is not configured")
+    areas = row.get("allowed_areas")
+    if not isinstance(areas, list) or any(not isinstance(a, str) or not a.strip() for a in areas):
+        raise HTTPException(status_code=403, detail="Invalid camera access configuration")
+    profile = {"role": row["role"], "allowed_areas": areas}
 
     _profile_cache[user_id] = (now + _PROFILE_TTL, profile)
     return profile
@@ -227,6 +230,7 @@ async def require_auth_media(
     return {
         "token": token,
         "user_id": uid,
+        "exp": payload.get("exp"),
         "email": payload.get("email", ""),
         "app_role": profile["role"],
         "allowed_areas": profile["allowed_areas"],
@@ -242,5 +246,26 @@ def scoped_cameras(user: dict):
     """
     if user.get("app_role") == "admin":
         return None
-    areas = user.get("allowed_areas") or []
+    areas = user.get("allowed_areas")
+    if user.get("app_role") not in VALID_ROLES or not isinstance(areas, list):
+        return []
     return list(areas) if areas else None
+
+
+def can_access_camera(user: dict, camera_id: str) -> bool:
+    allowed = scoped_cameras(user)
+    return allowed is None or camera_id in allowed
+
+
+def require_camera_access(user: dict, camera_id: str) -> None:
+    if not can_access_camera(user, camera_id):
+        raise HTTPException(status_code=403, detail="Camera access denied")
+
+
+def refresh_media_identity(user: dict) -> dict:
+    """Recheck long-lived connections, including logout and profile changes."""
+    if user.get("exp") and time.time() >= user["exp"]:
+        raise _unauth("Token has expired")
+    _deny_if_revoked(user["token"])
+    profile = resolve_profile(user["user_id"])
+    return {**user, "app_role": profile["role"], "allowed_areas": profile["allowed_areas"]}
