@@ -21,6 +21,10 @@ class IncidentUpdate(BaseModel):
     disposition: Literal["true_alarm", "false_alarm", "test", "escalated"] | None = None
     assignee: str | None = Field(default=None, max_length=100)
     note: str | None = Field(default=None, max_length=4000)
+    false_positive_reason: Literal[
+        "Wrong object detection", "Duplicate alert", "Authorized person", "Authorized vehicle",
+        "Incorrect zone", "Behavior incorrectly classified", "Other",
+    ] | None = None
 
 
 def _serialize_alert(alert) -> dict:
@@ -45,6 +49,9 @@ def _serialize_alert(alert) -> dict:
         "assignee": alert.assignee,
         "acknowledged_at": alert.acknowledged_at.isoformat() if alert.acknowledged_at else None,
         "resolved_at": alert.resolved_at.isoformat() if alert.resolved_at else None,
+        "acknowledged_by": alert.acknowledged_by,
+        "resolved_by": alert.resolved_by,
+        "false_positive": alert.false_positive,
     }
 
 
@@ -74,10 +81,11 @@ async def query_alerts(
     risk_level: str | None = None,
     reviewed: bool | None = None,
     status: str | None = None,
+    active_only: bool = False,
     start_time: datetime | None = None,
     end_time: datetime | None = None,
     search: str | None = Query(default=None, max_length=200),
-    sort_by: Literal["timestamp", "risk_score", "status", "camera_id"] = "timestamp",
+    sort_by: Literal["priority", "timestamp", "risk_score", "status", "camera_id"] = "priority",
     sort_order: Literal["asc", "desc"] = "desc",
     user: dict = Depends(require_auth),
 ):
@@ -87,6 +95,7 @@ async def query_alerts(
         repo = Repository(session)
         filters = dict(
             camera_id=camera_id, risk_level=risk_level, reviewed=reviewed, status=status,
+            active_only=active_only,
             start_time=start_time, end_time=end_time, search=search,
             allowed_cameras=scoped_cameras(user),
         )
@@ -136,10 +145,17 @@ async def get_alert(alert_id: str, user: dict = Depends(require_auth)):
 async def update_incident(
     alert_id: str,
     update: IncidentUpdate,
-    user: dict = Depends(require_role("operator", "supervisor")),
+    user: dict = Depends(require_auth),
 ):
     """Advance an incident and append an immutable operator note."""
     actor = user.get("email") or user.get("user_id") or "unknown"
+    role = user.get("app_role")
+    requested_status = update.status
+    allowed = {"admin", "commander", "supervisor", "operator"} if requested_status in {"resolved", "false_positive", "reopened"} else {
+        "admin", "commander", "supervisor", "operator"
+    }
+    if role not in allowed:
+        raise HTTPException(status_code=403, detail="Role cannot perform this incident transition")
     session = get_database().get_session()
     try:
         repo = Repository(session)
@@ -148,7 +164,11 @@ async def update_incident(
             raise HTTPException(status_code=404, detail="Alert not found")
         require_camera_access(user, alert.camera_id)
         changes = update.model_dump(exclude_unset=True)
+        feedback_reason = changes.pop("false_positive_reason", None)
         updated = repo.update_alert_workflow(alert_id, actor, **changes)
+        if update.status == "false_positive":
+            repo.create_operator_feedback(updated, actor, feedback_reason or "Other")
+            session.commit()
         repo.create_audit_log("update_incident", actor, {"alert_id": alert_id, "changes": changes})
         return _serialize_alert(updated)
     finally:
@@ -156,7 +176,7 @@ async def update_incident(
 
 
 @router.post("/{alert_id}/review")
-async def review_alert(alert_id: str, user: dict = Depends(require_role("operator", "supervisor"))):
+async def review_alert(alert_id: str, user: dict = Depends(require_role("operator", "commander", "supervisor"))):
     """Mark an alert as reviewed. Attribution comes from the auth token only."""
     actor = user.get("email") or user.get("user_id") or "unknown"
     db = get_database()

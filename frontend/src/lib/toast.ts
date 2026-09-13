@@ -4,6 +4,7 @@ export interface ToastPayload {
   title: string;
   message?: string;
   level?: RiskLevel | 'unknown';
+  eventKey?: string;
 }
 
 type Listener = (t: ToastPayload) => void;

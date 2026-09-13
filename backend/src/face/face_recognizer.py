@@ -19,6 +19,7 @@ class FaceRecognizer:
         similarity_threshold: float = 0.45,
         uncertain_threshold: float = 0.35,
         min_face_confidence: float = 0.6,
+        device: str = "auto",
     ):
         self.enabled = enabled
         self.min_face_confidence = min_face_confidence
@@ -30,7 +31,7 @@ class FaceRecognizer:
             from src.face.face_detector import FaceDetector
             from src.face.face_matcher import FaceMatcher
 
-            self._detector = FaceDetector()
+            self._detector = FaceDetector(device=device)
             self._matcher = FaceMatcher(
                 gallery_path=gallery_path,
                 similarity_threshold=similarity_threshold,

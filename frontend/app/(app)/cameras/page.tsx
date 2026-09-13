@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '@/src/context/AuthContext';
-import { apiFetch, mediaSrc } from '@/src/api/client';
+import { apiFetch, formatTime, mediaSrc } from '@/src/api/client';
 import { useInterval } from '@/src/hooks/useInterval';
 import Icon from '@/src/components/ui/Icon';
 import { Button } from '@/src/components/ui/Button';
@@ -133,7 +133,7 @@ export default function CamerasPage() {
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={mediaSrc(`/api/stream/${camera.camera_id}/snapshot?v=${snapshotTick}`, mediaTicket)} alt={camera.name}
-                    className="absolute inset-0 size-full object-cover"
+                    className={`absolute inset-0 size-full object-cover ${camera.status === 'online' ? '' : 'opacity-45 grayscale'}`}
                     onError={event => {
                       const img = event.target as HTMLImageElement;
                       img.style.display = 'none';
@@ -142,15 +142,16 @@ export default function CamerasPage() {
                     onLoad={event => {
                       const img = event.target as HTMLImageElement;
                       img.style.display = 'block';
-                      (img.parentElement?.querySelector('[data-offline]') as HTMLElement | null)?.style.setProperty('display', 'none');
+                      if (camera.status === 'online') (img.parentElement?.querySelector('[data-offline]') as HTMLElement | null)?.style.setProperty('display', 'none');
                     }}
                   />
                   {showHeatmap && (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={mediaSrc(`/api/cameras/${camera.camera_id}/heatmap`, mediaTicket)} alt="" className="pointer-events-none absolute inset-0 size-full object-cover opacity-80 mix-blend-screen" />
                   )}
-                  <div data-offline className="absolute inset-0 hidden flex-col items-center justify-center gap-2 text-fg-subtle">
-                    <Icon name="video-slash" className="text-2xl opacity-60" /><p className="text-sm">No current frame</p>
+                  <div data-offline className={`absolute inset-0 flex-col items-center justify-center gap-2 bg-black/45 text-white ${camera.status === 'online' ? 'hidden' : 'flex'}`}>
+                    <Icon name="video-slash" className="text-2xl opacity-80" /><p className="text-sm font-semibold">OFFLINE</p>
+                    <p className="text-xs text-white/75">Last frame at: {camera.last_frame_at ? formatTime(camera.last_frame_at) : 'Unavailable'}</p>
                   </div>
                 </div>
 

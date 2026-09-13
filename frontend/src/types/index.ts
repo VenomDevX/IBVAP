@@ -14,6 +14,9 @@ export interface Camera {
   active_tracks?: number;
   fps_limit?: number;
   resolution?: number[] | null;
+  last_frame_at?: string | null;
+  last_heartbeat?: string | null;
+  stream_status?: string;
 }
 
 export interface Alert {
@@ -24,6 +27,9 @@ export interface Alert {
   risk_level: RiskLevel;
   risk_score: number;
   timestamp: string;
+  track_id?: number | null;
+  object_type?: string;
+  contributing_factors?: string[];
   snapshot_path?: string;
   snapshot_hash?: string;
   reviewed: boolean;
@@ -33,6 +39,9 @@ export interface Alert {
   assignee?: string | null;
   acknowledged_at?: string | null;
   resolved_at?: string | null;
+  acknowledged_by?: string | null;
+  resolved_by?: string | null;
+  false_positive?: boolean;
   notes?: Array<{ author: string; note: string; created_at: string }>;
 }
 
@@ -52,7 +61,9 @@ export interface Event {
   event_id: string;
   event_type: string;
   camera_id: string;
-  track_id: string;
+  track_id: number;
+  track_uuid?: string;
+  zone_id?: string | null;
   object_type: string;
   risk_level: RiskLevel;
   risk_score: number;
@@ -63,6 +74,12 @@ export interface Event {
   temporal_context: TemporalContext;
   evidence_path?: string;
   evidence_hash?: string;
+  state?: 'PENDING' | 'OPEN' | 'ACTIVE' | 'CLOSED';
+  opened_at?: string | null;
+  last_updated?: string | null;
+  closed_at?: string | null;
+  score_breakdown?: Record<string, { raw_score: number; weight: number; contribution: number; reasons: string[] }>;
+  evidence?: Array<{ evidence_id: number; type: string; created_at: string; download_url: string }>;
 }
 
 export interface Zone {
@@ -89,6 +106,8 @@ export interface DashboardSummary {
   unreviewed_alerts: number;
   critical_alerts: number;
   active_tracks: number;
+  open_incidents?: number;
+  critical_high_incidents?: number;
 }
 
 export interface AlertStats {

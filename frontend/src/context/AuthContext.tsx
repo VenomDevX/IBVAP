@@ -5,7 +5,7 @@ import { supabase } from '../api/supabase';
 import { apiFetch } from '../api/client';
 import type { User, Session } from '@supabase/supabase-js';
 
-type AppRole = 'admin' | 'operator' | 'auditor' | null;
+type AppRole = 'admin' | 'commander' | 'operator' | 'viewer' | 'supervisor' | 'auditor' | null;
 
 interface AuthState {
   isAuthenticated: boolean;

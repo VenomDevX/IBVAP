@@ -96,7 +96,7 @@ class FenceDetector:
                 continue
 
             # Skip if already crossed this fence
-            if track.track_id in self._crossing_history.get(fence_id, set()):
+            if track.track_uuid in self._crossing_history.get(fence_id, set()):
                 continue
 
             # Check line segment intersection
@@ -125,7 +125,7 @@ class FenceDetector:
                 )
 
                 events.append(event)
-                self._crossing_history[fence_id].add(track.track_id)
+                self._crossing_history[fence_id].add(track.track_uuid)
                 self._recent_crossings.append(event)
                 track.has_crossed_fence = True
 

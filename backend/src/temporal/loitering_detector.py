@@ -4,6 +4,7 @@ Identifies objects dwelling in a zone beyond configured thresholds.
 """
 
 import time
+import uuid
 from dataclasses import dataclass
 
 from loguru import logger
@@ -44,8 +45,9 @@ class LoiteringDetector:
         self.min_movement = min_movement_pixels
         self.stationary_speed = stationary_speed_threshold
 
-        # Track zone entry times: (track_id, zone_id) -> entry_time
-        self._zone_occupancy: dict[tuple[int, str], float] = {}
+        # Persistent identity prevents ByteTrack ID reuse from inheriting an
+        # earlier object's dwell timer after reconnect/restart.
+        self._zone_occupancy: dict[tuple[str, str], float] = {}
         # Track IDs already flagged as loitering (to avoid duplicate events)
         self._flagged: dict[tuple[int, str], float] = {}
 
@@ -65,10 +67,17 @@ class LoiteringDetector:
 
         # Update zone occupancy
         for zone_id in current_zones:
-            key = (track.track_id, zone_id)
+            key = (track.track_uuid, zone_id)
+            legacy_key = (track.track_id, zone_id)
+            if key not in self._zone_occupancy and legacy_key in self._zone_occupancy:
+                self._zone_occupancy[key] = self._zone_occupancy.pop(legacy_key)
+                if legacy_key in self._flagged:
+                    self._flagged[key] = self._flagged.pop(legacy_key)
 
             if key not in self._zone_occupancy:
                 self._zone_occupancy[key] = now
+                track.zone_entry_times[zone_id] = now
+                track.zone_session_ids[zone_id] = str(uuid.uuid4())
                 continue
 
             entry_time = self._zone_occupancy[key]
@@ -102,15 +111,17 @@ class LoiteringDetector:
         keys_to_remove = []
         for key in self._zone_occupancy:
             tid, zid = key
-            if tid == track.track_id and zid not in current_zones:
+            if tid == track.track_uuid and zid not in current_zones:
                 keys_to_remove.append(key)
 
         for key in keys_to_remove:
             del self._zone_occupancy[key]
             self._flagged.pop(key, None)
+            track.zone_entry_times.pop(key[1], None)
+            track.zone_session_ids.pop(key[1], None)
 
         track.is_loitering = any(
-            tid == track.track_id and zid in current_zones and now - started >= self.threshold_seconds
+            tid == track.track_uuid and zid in current_zones and now - started >= self.threshold_seconds
             for (tid, zid), started in self._zone_occupancy.items()
         )
 
@@ -135,7 +146,7 @@ class LoiteringDetector:
 
         return float(var_x + var_y)
 
-    def get_zone_duration(self, track_id: int, zone_id: str) -> float:
+    def get_zone_duration(self, track_id: int | str, zone_id: str) -> float:
         """Get how long a track has been in a zone."""
         key = (track_id, zone_id)
         if key in self._zone_occupancy:

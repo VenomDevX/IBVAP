@@ -93,15 +93,45 @@ class RiskEngine:
 
         return risk_score, risk_level, reasons
 
+    def calculate_breakdown(self, fused_event: FusedEvent) -> dict:
+        """Return one normalized contribution per semantic factor category."""
+        s_score, s_reasons = self._calculate_spatial_risk(fused_event.spatial_context)
+        t_score, t_reasons = self._calculate_temporal_risk(fused_event.temporal_context)
+        b_score, b_reasons = self._calculate_behavioral_risk(
+            fused_event.event_type, fused_event.contributing_factors, fused_event.object_type
+        )
+        i_score, i_reasons = self._calculate_identity_risk(fused_event.identity_context)
+        v_score, v_reasons = self._calculate_vehicle_risk(fused_event.vehicle_context)
+        rows = {
+            "zone": (s_score, self.w_spatial, s_reasons),
+            "time": (t_score, self.w_temporal, t_reasons),
+            "behavior": (b_score, self.w_behavioral, b_reasons),
+            "identity": (i_score, self.w_identity, i_reasons),
+            "vehicle": (v_score, self.w_vehicle, v_reasons),
+        }
+        return {
+            category: {
+                "raw_score": round(raw, 2),
+                "weight": weight,
+                "contribution": round(raw * weight, 2),
+                "reasons": list(dict.fromkeys(reasons)),
+            }
+            for category, (raw, weight, reasons) in rows.items()
+        }
+
     def score_fused_event(self, fused_event: FusedEvent) -> FusedEvent:
         """Calculate and attach risk score to a fused event."""
         score, level, reasons = self.calculate_risk(fused_event)
         fused_event.risk_score = score
         fused_event.risk_level = level
-        # Merge risk reasons into contributing factors
-        for reason in reasons:
-            if reason not in fused_event.contributing_factors:
-                fused_event.contributing_factors.append(reason)
+        fused_event.score_breakdown = self.calculate_breakdown(fused_event)
+        # The structured breakdown is authoritative. Flatten its already
+        # normalized reasons only for backwards-compatible UI/report display.
+        fused_event.contributing_factors = list(dict.fromkeys(
+            reason
+            for category in fused_event.score_breakdown.values()
+            for reason in category["reasons"]
+        ))
         return fused_event
 
     def _calculate_spatial_risk(self, ctx: dict) -> tuple[float, list[str]]:
@@ -190,7 +220,11 @@ class RiskEngine:
             score = max(score, float(obj_floor))
             reasons.append(f"High-interest object class: {object_type.replace('_', ' ')}")
 
-        if not reasons:
+        context_only_types = {
+            "restricted_zone_entry", "night_restricted_zone_entry", "restricted_zone_loitering",
+            "loitering", "night_loitering", "fence_crossing", "night_fence_crossing",
+        }
+        if not reasons and event_type not in context_only_types:
             reasons.append(f"Behavioral pattern: {event_type.replace('_', ' ')}")
 
         return score, reasons

@@ -19,6 +19,7 @@ class Alert:
     risk_score: float
     risk_level: str  # "low", "medium", "high", "critical"
     object_type: str
+    track_uuid: str = ""
     contributing_factors: list[str] = field(default_factory=list)
     snapshot_path: str | None = None
     snapshot_hash: str | None = None
@@ -43,6 +44,7 @@ class Alert:
             "camera_id": self.camera_id,
             "event_id": self.event_id,
             "track_id": self.track_id,
+            "track_uuid": self.track_uuid,
             "timestamp": self.timestamp,
             "event_type": self.event_type,
             "risk_score": round(self.risk_score, 1),

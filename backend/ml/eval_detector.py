@@ -13,6 +13,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 
 from ultralytics import YOLO
@@ -28,6 +29,8 @@ def main():
     ap.add_argument("--imgsz", type=int, default=640)
     ap.add_argument("--split", default="val", choices=["val", "test", "train"])
     ap.add_argument("--conf", type=float, default=0.001)  # low conf for honest mAP
+    ap.add_argument("--device", default="0")
+    ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--tta", action="store_true", help="test-time augmentation (slower, ~+1 mAP)")
     args = ap.parse_args()
 
@@ -43,6 +46,8 @@ def main():
         split=args.split,
         imgsz=args.imgsz,
         conf=args.conf,
+        device=args.device,
+        batch=args.batch,
         augment=args.tta,
         plots=True,
         save_json=True,
@@ -60,17 +65,32 @@ def main():
         idx = list(m.box.ap_class_index)
         p, r = m.box.p, m.box.r
         ap50, ap = m.box.ap50, m.box.ap
+        per_class = []
         for row, cid in enumerate(idx):
+            per_class.append({
+                "id": int(cid), "class": str(names[cid]),
+                "precision": float(p[row]), "recall": float(r[row]),
+                "map50": float(ap50[row]), "map50_95": float(ap[row]),
+            })
             print(
                 f"{cid:>3}  {str(names[cid]):22s} {'-':>7} "
                 f"{'-':>8} {p[row]:7.3f} {r[row]:7.3f} {ap50[row]:8.3f} {ap[row]:9.3f}"
             )
     except Exception as e:
+        per_class = []
         print(f"(per-class array unpack failed: {e}; see the CSV/plots in {out_dir}/{run})")
     print("-" * 78)
     print(f"{'':3}  {'ALL':22s} {'':>7} {'':>8} {m.box.mp:7.3f} {m.box.mr:7.3f} {m.box.map50:8.3f} {m.box.map:9.3f}")
     print("=" * 78)
-    print(f"\nplots + confusion matrix + predictions.json -> {os.path.join(out_dir, run)}")
+    result_dir = os.path.join(out_dir, run)
+    with open(os.path.join(result_dir, "metrics.json"), "w", encoding="utf-8") as fh:
+        json.dump({
+            "weights": weights, "split": args.split, "imgsz": args.imgsz,
+            "precision": float(m.box.mp), "recall": float(m.box.mr),
+            "map50": float(m.box.map50), "map50_95": float(m.box.map),
+            "per_class": per_class,
+        }, fh, indent=2)
+    print(f"\nplots + confusion matrix + predictions.json + metrics.json -> {result_dir}")
     print("Weak classes (low mAP50): add data / raise imgsz / bump copy_paste, then retrain.")
 
 

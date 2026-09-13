@@ -25,8 +25,11 @@ from src.api.middleware.input_validator import InputValidationMiddleware
 from src.api.middleware.security import RequestLoggingMiddleware, SecurityHeadersMiddleware
 from src.api.ratelimit import limiter
 from src.api.routes import alerts, audit, cameras, events, reports, snapshots, statistics, stream, tracks, zones
+from src.api.routes import evidence as evidence_routes
 from src.api.token_revocation import revoke_token
 from src.api.websocket import authenticate_ws, ws_manager
+from src.database.db import get_database
+from src.database.repository import Repository
 from src.paths import snapshots_dir
 
 if TYPE_CHECKING:
@@ -186,6 +189,13 @@ def create_app() -> FastAPI:
     app.include_router(audit.router, prefix="/api/audit", tags=["Audit Logs"])
     app.include_router(snapshots.router, prefix="/snapshots", tags=["Snapshots"])
 
+    # Stable integration aliases. Existing unversioned routes remain intact for
+    # the current dashboard while external command/control clients can pin v1.
+    app.include_router(cameras.router, prefix="/api/v1/cameras", tags=["Cameras v1"])
+    app.include_router(events.router, prefix="/api/v1/events", tags=["Events v1"])
+    app.include_router(alerts.router, prefix="/api/v1/alerts", tags=["Alerts v1"])
+    app.include_router(evidence_routes.router, prefix="/api/v1/evidence", tags=["Evidence v1"])
+
     # ======================== WebSocket ========================
     @app.websocket("/ws/alerts")
     async def websocket_alerts(websocket: WebSocket):
@@ -231,8 +241,16 @@ def create_app() -> FastAPI:
         storage = None
         if pipeline is not None:
             stats = pipeline.get_all_stats()
-            camera_total = len(stats)
+            # The pipeline only instantiates enabled cameras.  Health must report
+            # the complete configured camera library (including disabled demos),
+            # otherwise the dashboard misleadingly shows 7/7 instead of 7/14.
             camera_online = sum(1 for row in stats.values() if row.get("camera_status") == "online")
+            try:
+                session = get_database().get_session()
+                camera_total = len(Repository(session).get_all_cameras())
+                session.close()
+            except Exception:
+                camera_total = len(stats)
             model_status = {
                 "detector": pipeline.detector is not None,
                 "fine_classifier": bool(pipeline.fine_classifier and pipeline.fine_classifier.active),
@@ -265,6 +283,16 @@ def create_app() -> FastAPI:
     async def readiness(request: Request):
         payload = health_payload(request)
         return JSONResponse(payload, status_code=200 if payload["ready"] else 503)
+
+    @app.get("/api/health/models")
+    async def model_health():
+        if pipeline is None:
+            return {"models": [], "pipeline": "unavailable"}
+        return {"models": pipeline.model_registry.snapshot(), "pipeline": "ready"}
+
+    @app.get("/api/v1/health")
+    async def versioned_health(request: Request):
+        return health_payload(request)
 
     # ======================== Auth ========================
     @app.get("/api/auth/me", tags=["Auth"])

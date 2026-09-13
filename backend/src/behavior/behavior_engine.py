@@ -57,12 +57,13 @@ class BehaviorEngine:
     Combines all analysis signals to detect meaningful behaviors.
     """
 
-    def __init__(self):
+    def __init__(self, night_movement_event_enabled: bool = False):
         self._event_counter: int = 0
         self._recent_events = deque(maxlen=2000)
         # Cooldown: (track_id, behavior_type) -> last_event_time
         self._cooldowns: dict[tuple, float] = {}
         self._cooldown_seconds: float = 30.0
+        self.night_movement_event_enabled = bool(night_movement_event_enabled)
 
     def analyze_track(
         self,
@@ -133,7 +134,12 @@ class BehaviorEngine:
                 events.append(event)
 
         # --- Check: Night Movement ---
-        if temporal_context.get("is_night", False) and track.is_active and track.average_speed > 0:
+        if (
+            self.night_movement_event_enabled
+            and temporal_context.get("is_night", False)
+            and track.is_active
+            and track.average_speed > 0
+        ):
             event = self._create_event(
                 track,
                 BehaviorType.NIGHT_MOVEMENT,

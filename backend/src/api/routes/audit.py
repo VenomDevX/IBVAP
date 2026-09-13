@@ -14,7 +14,7 @@ router = APIRouter()
 @router.get("")
 async def get_audit_logs(
     limit: int = Query(default=100, le=500),
-    user: dict = Depends(require_role("auditor")),
+    user: dict = Depends(require_role("auditor", "commander")),
 ):
     """Get recent audit logs."""
     db = get_database()

@@ -4,6 +4,8 @@ Camera management and status endpoints.
 """
 
 
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
@@ -83,6 +85,9 @@ def _serialize_camera(camera, include_source: bool = False) -> dict:
         "enabled": camera.enabled,
         "fps_limit": camera.fps_limit,
         "resolution": camera.resolution,
+        "last_frame_at": camera.last_frame_at.isoformat() if camera.last_frame_at else None,
+        "last_heartbeat": camera.last_heartbeat.isoformat() if camera.last_heartbeat else None,
+        "stream_status": camera.stream_status,
     }
     if include_source:
         result["source"] = camera.stream_url
@@ -109,6 +114,9 @@ async def list_cameras(user: dict = Depends(require_auth)):
             "enabled": c.enabled,
             "fps_limit": c.fps_limit,
             "resolution": c.resolution,
+            "last_frame_at": c.last_frame_at.isoformat() if c.last_frame_at else None,
+            "last_heartbeat": c.last_heartbeat.isoformat() if c.last_heartbeat else None,
+            "stream_status": c.stream_status,
         }
         for c in cameras
     ]
@@ -125,6 +133,11 @@ async def list_cameras(user: dict = Depends(require_auth)):
                 stats = p.get_stats()
                 cam["fps"] = round(stats.get("fps", 0), 1)
                 cam["active_tracks"] = stats.get("active_tracks", 0)
+                if p.video_source.last_frame_at:
+                    cam["last_frame_at"] = datetime.fromtimestamp(
+                        p.video_source.last_frame_at, tz=UTC
+                    ).isoformat()
+                cam["stream_status"] = p.video_source.status.value
 
     session.close()
     return result

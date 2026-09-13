@@ -24,13 +24,16 @@ class TrackManager:
     def update_tracks(self, active_tracks: dict[int, Track]):
         """Sync internal state with tracker output."""
         now = time.time()
-        self._tracks = active_tracks
+        # Merge instead of replacing the registry with only ByteTrack's active
+        # output. Replacing it made LOST/CLOSED lifecycle processing impossible.
+        self._tracks.update(active_tracks)
 
         # Find expired tracks
         for tid in list(self._tracks.keys()):
             track = self._tracks[tid]
             if not track.is_active or (now - track.last_seen) > self.expiry_seconds:
                 track.is_active = False
+                track.status = "CLOSED" if (now - track.last_seen) > self.expiry_seconds else "LOST"
                 if tid not in self._expired_ids:
                     self._expired_ids.add(tid)
                     self._expired_tracks.append(track)
@@ -39,7 +42,11 @@ class TrackManager:
 
     def get_active_tracks(self) -> dict[int, Track]:
         """Get all currently active tracks."""
-        return {tid: t for tid, t in self._tracks.items() if t.is_active}
+        now = time.time()
+        return {
+            tid: t for tid, t in self._tracks.items()
+            if t.is_active and t.status in {"NEW", "ACTIVE"} and now - t.last_seen <= self.expiry_seconds
+        }
 
     def get_track(self, track_id: int) -> Track | None:
         return self._tracks.get(track_id)
@@ -63,7 +70,7 @@ class TrackManager:
 
     @property
     def active_count(self) -> int:
-        return sum(1 for t in self._tracks.values() if t.is_active)
+        return len(self.get_active_tracks())
 
     @property
     def person_count(self) -> int:

@@ -20,6 +20,8 @@ def _serialize_event(event, include_context: bool = False) -> dict:
         "event_id": event.event_id,
         "camera_id": event.camera_id,
         "track_id": event.track_id,
+        "track_uuid": event.track_uuid,
+        "zone_id": event.zone_id,
         "event_type": event.event_type,
         "timestamp": event.timestamp.isoformat() if event.timestamp else None,
         "duration": event.duration,
@@ -27,6 +29,11 @@ def _serialize_event(event, include_context: bool = False) -> dict:
         "confidence": event.confidence,
         "risk_score": event.risk_score,
         "risk_level": event.risk_level,
+        "state": event.state,
+        "opened_at": event.opened_at.isoformat() if event.opened_at else None,
+        "last_updated": event.last_updated.isoformat() if event.last_updated else None,
+        "closed_at": event.closed_at.isoformat() if event.closed_at else None,
+        "score_breakdown": event.score_breakdown or {},
         "contributing_factors": event.contributing_factors,
         "evidence_path": event.evidence_path,
         "evidence_hash": event.evidence_hash,
@@ -107,13 +114,21 @@ async def get_event(event_id: str, user: dict = Depends(require_auth)):
     """Get a specific event's full details."""
     db = get_database()
     session = db.get_session()
-    repo = Repository(session)
-    event = repo.get_event(event_id)
-    session.close()
-
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
-
-    require_camera_access(user, event.camera_id)
-
-    return _serialize_event(event, include_context=True)
+    try:
+        repo = Repository(session)
+        event = repo.get_event(event_id)
+        if not event:
+            raise HTTPException(status_code=404, detail="Event not found")
+        require_camera_access(user, event.camera_id)
+        result = _serialize_event(event, include_context=True)
+        result["evidence"] = [
+            {
+                "evidence_id": row.id, "type": row.evidence_type,
+                "created_at": row.created_at.isoformat(),
+                "download_url": f"/api/v1/evidence/{event.event_id}/{row.id}",
+            }
+            for row in repo.get_event_evidence(event.event_id)
+        ]
+        return result
+    finally:
+        session.close()

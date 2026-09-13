@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { apiFetch, formatEventType, formatTime, mediaSrc } from '@/src/api/client';
 import { useInterval } from '@/src/hooks/useInterval';
@@ -45,7 +45,7 @@ function useDashboardData() {
     const responses = await Promise.allSettled([
         apiFetch('/api/statistics/summary'),
         apiFetch('/api/cameras'),
-        apiFetch('/api/alerts/query?status=open&page_size=10'),
+        apiFetch('/api/alerts/query?status=open&active_only=true&page_size=10'),
         apiFetch('/api/events?limit=10'),
         apiFetch('/api/statistics/timeseries'),
         apiFetch('/api/statistics'),
@@ -108,11 +108,24 @@ function ReportButtons() {
 function LiveFeed({ cameras }: { cameras: Camera[] }) {
   const { mediaTicket } = useAuth();
   const [selected, setSelected] = useState('');
+  const [activeSrc, setActiveSrc] = useState<string | null>(null);
+  const [loadingFeed, setLoadingFeed] = useState(false);
   const [heatmap, setHeatmap] = useState(false);
 
   useEffect(() => {
-    if (!selected && cameras.length > 0) setSelected(cameras[0].camera_id);
+    if (!selected) {
+      const firstEnabled = cameras.find(c => c.enabled !== false);
+      if (firstEnabled) setSelected(firstEnabled.camera_id);
+    }
   }, [cameras, selected]);
+
+  const selectedCamera = cameras.find(c => c.camera_id === selected);
+  const nextSrc = selected && selectedCamera?.enabled !== false
+    ? mediaSrc(`/api/stream/${selected}`, mediaTicket) : null;
+
+  useEffect(() => {
+    if (nextSrc && nextSrc !== activeSrc) setLoadingFeed(true);
+  }, [nextSrc, activeSrc]);
 
   const controls = (
     <div className="flex items-center gap-2">
@@ -126,24 +139,31 @@ function LiveFeed({ cameras }: { cameras: Camera[] }) {
       </Button>
       <Select value={selected} onChange={e => setSelected(e.target.value)} className="w-44">
         <option value="">Select camera</option>
-        {cameras.map(c => <option key={c.camera_id} value={c.camera_id}>{c.name}</option>)}
+        {cameras.map(c => <option key={c.camera_id} value={c.camera_id} disabled={c.enabled === false}>
+          {c.name}{c.enabled === false ? ' (disabled)' : ''}
+        </option>)}
       </Select>
     </div>
   );
   return (
     <Card title="Live Feed" icon="video" iconColor="accent" actions={controls} bodyClassName="p-6 pt-2">
       <div className="relative aspect-video w-full overflow-hidden rounded bg-black border border-default shadow-sm">
-        {selected ? (
+        {selected && selectedCamera?.enabled !== false ? (
           <>
+            {nextSrc && nextSrc !== activeSrc ? <img src={nextSrc} alt="" className="hidden" onLoad={() => { setActiveSrc(nextSrc); setLoadingFeed(false); }} onError={() => setLoadingFeed(false)} /> : null}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={mediaSrc(`/api/stream/${selected}`, mediaTicket)}
+              src={activeSrc || nextSrc || undefined}
               alt="Live camera feed"
               className="size-full object-contain"
-              onError={e => { (e.target as HTMLImageElement).style.opacity = '0.15'; }}
+              onLoad={() => setLoadingFeed(false)}
+              onError={e => { setLoadingFeed(false); (e.target as HTMLImageElement).style.opacity = '0.15'; }}
             />
+            {loadingFeed ? <div className="absolute inset-0 flex items-center justify-center bg-black/45 text-xs text-white">Connecting to camera…</div> : null}
             <HeatmapOverlay cameraId={selected} isVisible={heatmap} windowMinutes={5} />
           </>
+        ) : selectedCamera?.enabled === false ? (
+          <div className="flex size-full flex-col items-center justify-center gap-2 text-fg-subtle"><Icon name="video-slash" className="text-2xl opacity-60" /><p className="text-[0.85rem]">Camera disabled — enable it to view this feed</p></div>
         ) : (
           <div className="flex size-full flex-col items-center justify-center gap-2 text-fg-subtle">
             <Icon name="video-slash" className="text-2xl opacity-60" />
@@ -264,9 +284,9 @@ export default function DashboardPage() {
       {/* Stat Cards */}
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard icon="video" value={`${s.online_cameras}/${s.total_cameras}`} label="Cameras online" />
-        <StatCard icon="bell" value={s.unreviewed_alerts || 0} label="Active alerts" />
+        <StatCard icon="bell" value={s.open_incidents ?? s.unreviewed_alerts ?? 0} label="Open incidents" />
         <StatCard icon="route" value={s.active_tracks || 0} label="Active tracks" />
-        <StatCard icon="triangle-exclamation" value={s.critical_alerts || 0} label="Critical alerts" emphasis />
+        <StatCard icon="triangle-exclamation" value={s.critical_high_incidents ?? s.critical_alerts ?? 0} label="Critical / high incidents" emphasis />
       </div>
 
       {/* Live Feed + Pie Chart — above Threat Assessment */}

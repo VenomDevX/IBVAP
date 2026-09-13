@@ -83,6 +83,18 @@ def test_detector_mock_mode_returns_empty(monkeypatch):
     assert out.frame_id == 7 and out.detections == []
 
 
+def test_detector_uses_lowest_class_floor_for_inference(monkeypatch):
+    from src.detection import detector as detmod
+
+    monkeypatch.setattr(detmod.ObjectDetector, "_load_model", lambda self: None)
+    detector = detmod.ObjectDetector(
+        confidence_threshold=0.30,
+        class_thresholds={"License Plate": 0.22, "person": 0.30},
+    )
+    assert detector.inference_confidence == 0.22
+    assert detector.class_thresholds == {"license_plate": 0.22, "person": 0.30}
+
+
 # --------------------------------------------------------------------------- #
 # MultiObjectTracker — class mapping + lifecycle + eviction
 # --------------------------------------------------------------------------- #

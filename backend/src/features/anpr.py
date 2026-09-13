@@ -9,6 +9,8 @@ IBVAP — ANPR (automatic number-plate recognition)
 `extract_license_plate(crop) -> str` is the thin wrapper the pipeline calls today.
 """
 
+from collections import defaultdict
+
 import numpy as np
 
 from src.anpr.ocr import read_plate
@@ -73,3 +75,32 @@ def extract_plate(vehicle_crop: np.ndarray) -> dict:
 def extract_license_plate(crop: np.ndarray) -> str:
     """Backwards-compatible: plate string only ('Unknown' if nothing legible)."""
     return extract_plate(crop)["text"]
+
+
+class PlateConsensus:
+    """Confidence-weighted multi-frame OCR consensus without inventing text."""
+
+    def __init__(self, min_observations: int = 3, min_confidence: float = 0.55, max_observations: int = 12):
+        self.min_observations = max(1, int(min_observations))
+        self.min_confidence = float(min_confidence)
+        self.max_observations = max(self.min_observations, int(max_observations))
+
+    def add(self, track, text: str, confidence: float) -> tuple[str, float]:
+        normalized = "".join(ch for ch in (text or "").upper() if ch.isalnum())
+        if not normalized or normalized == "UNKNOWN" or confidence <= 0:
+            return "UNKNOWN", 0.0
+        track.plate_observations.append({"text": normalized, "confidence": float(confidence)})
+        track.plate_observations = track.plate_observations[-self.max_observations :]
+        if len(track.plate_observations) < self.min_observations:
+            return "UNKNOWN", 0.0
+        votes = defaultdict(float)
+        counts = defaultdict(int)
+        for observation in track.plate_observations:
+            votes[observation["text"]] += observation["confidence"]
+            counts[observation["text"]] += 1
+        winner = max(votes, key=lambda value: (votes[value], counts[value]))
+        consensus = counts[winner] / len(track.plate_observations)
+        confidence = votes[winner] / counts[winner]
+        if counts[winner] < self.min_observations or consensus < 0.5 or confidence < self.min_confidence:
+            return "UNKNOWN", 0.0
+        return winner, round(confidence * consensus, 3)

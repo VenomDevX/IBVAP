@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { formatEventType, riskMeta } from '../../api/client';
 import { useWebSocket } from '../../hooks/useWebSocket';
 import { onToast, type ToastPayload } from '../../lib/toast';
@@ -16,23 +16,42 @@ const TTL_MS = 4500;
 
 export default function ToastContainer() {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const timers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
 
   const add = useCallback((payload: ToastPayload) => {
-    const id = ++nextId;
-    setToasts(prev => [...prev, { id, ...payload }].slice(-MAX_VISIBLE));
-    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), TTL_MS);
+    let assignedId = 0;
+    setToasts(prev => {
+      const existing = payload.eventKey ? prev.find(item => item.eventKey === payload.eventKey) : undefined;
+      if (existing) {
+        assignedId = existing.id;
+        return prev.map(item => item.id === existing.id ? { ...item, ...payload } : item);
+      }
+      assignedId = ++nextId;
+      return [...prev, { id: assignedId, ...payload }].slice(-MAX_VISIBLE);
+    });
+    queueMicrotask(() => {
+      const previous = timers.current.get(assignedId);
+      if (previous) clearTimeout(previous);
+      timers.current.set(assignedId, setTimeout(() => {
+        setToasts(prev => prev.filter(t => t.id !== assignedId));
+        timers.current.delete(assignedId);
+      }, TTL_MS));
+    });
   }, []);
 
   const handleAlert = useCallback((alert: Alert) => {
+    if (!['high', 'critical'].includes(alert.risk_level)) return;
     add({
       title: formatEventType(alert.event_type),
       message: `${alert.camera_id} · score ${alert.risk_score?.toFixed(0) ?? 0}`,
       level: alert.risk_level,
+      eventKey: alert.event_id,
     });
   }, [add]);
 
   useWebSocket(handleAlert);
   useEffect(() => onToast(add), [add]);
+  useEffect(() => () => timers.current.forEach(timer => clearTimeout(timer)), []);
 
   const dismiss = (id: number) => setToasts(prev => prev.filter(t => t.id !== id));
 

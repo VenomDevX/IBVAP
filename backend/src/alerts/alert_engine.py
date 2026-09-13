@@ -53,6 +53,9 @@ class AlertEngine:
         self._alerts = deque(maxlen=5000)
         self._recent_alerts: dict[str, float] = {}  # dedup key -> timestamp
         self._recent_levels: dict[str, int] = {}
+        self._event_levels: dict[str, int] = {}
+        self._legacy_recent: dict[str, float] = {}
+        self._legacy_levels: dict[str, int] = {}
         self._rate_counter: dict[str, list] = defaultdict(list)  # camera_id -> [timestamps]
         self._snapshot_counter: dict[str, deque] = defaultdict(deque)
         self._snapshot_bytes: int | None = None
@@ -85,6 +88,8 @@ class AlertEngine:
         cutoff = now - self.cooldown_seconds
         self._recent_alerts = {k: t for k, t in self._recent_alerts.items() if t > cutoff}
         self._recent_levels = {k: v for k, v in self._recent_levels.items() if k in self._recent_alerts}
+        self._legacy_recent = {k: t for k, t in self._legacy_recent.items() if t > cutoff}
+        self._legacy_levels = {k: v for k, v in self._legacy_levels.items() if k in self._legacy_recent}
 
         # --- Check minimum risk ---
         if fused_event.risk_score < self.min_risk_score:
@@ -93,7 +98,15 @@ class AlertEngine:
         # --- Deduplication ---
         dedup_key = self._dedup_key(fused_event)
         level = self._level(fused_event.risk_level)
-        escalating = dedup_key in self._recent_levels and level > self._recent_levels[dedup_key]
+        previous_event_level = self._event_levels.get(dedup_key)
+        if previous_event_level is not None and level <= previous_event_level:
+            return None
+        escalating = previous_event_level is not None and level > previous_event_level
+        legacy_key = self._legacy_key(fused_event)
+        if legacy_key in self._legacy_recent:
+            legacy_escalating = level > self._legacy_levels.get(legacy_key, level)
+            if not legacy_escalating and now - self._legacy_recent[legacy_key] < self.cooldown_seconds:
+                return None
         if dedup_key in self._recent_alerts:
             if not escalating and now - self._recent_alerts[dedup_key] < self.cooldown_seconds:
                 return None
@@ -123,6 +136,7 @@ class AlertEngine:
             risk_score=fused_event.risk_score,
             risk_level=fused_event.risk_level,
             object_type=fused_event.object_type,
+            track_uuid=fused_event.track_uuid,
             contributing_factors=fused_event.contributing_factors,
             snapshot_path=snapshot_path,
             snapshot_hash=snapshot_hash,
@@ -140,8 +154,15 @@ class AlertEngine:
 
     @staticmethod
     def _dedup_key(event) -> str:
-        # Deliberately omit track_id. Trackers can churn IDs for one physical
-        # incident; a new ID must not create another alert and snapshot.
+        # Event lifecycle owns physical-incident dedupe. The alert invariant is
+        # consequently simple and strict: one alert per durable event ID.
+        track_uuid = getattr(event, "track_uuid", "")
+        if track_uuid:
+            return f"{event.camera_id}:{event.event_id}"
+        return f"legacy:{event.camera_id}:{event.object_type}:{event.event_type}"
+
+    @staticmethod
+    def _legacy_key(event) -> str:
         return f"{event.camera_id}:{event.object_type}:{event.event_type}"
 
     @staticmethod
@@ -155,6 +176,14 @@ class AlertEngine:
         self._alerts.append(alert)
         self._recent_alerts[dedup_key] = now
         self._recent_levels[dedup_key] = self._level(alert.risk_level)
+        self._event_levels[dedup_key] = self._level(alert.risk_level)
+        if not alert.track_uuid:
+            legacy_key = self._legacy_key(alert)
+            self._legacy_recent[legacy_key] = now
+            self._legacy_levels[legacy_key] = self._level(alert.risk_level)
+        if len(self._event_levels) > 10000:
+            live_ids = {self._dedup_key(item) for item in self._alerts}
+            self._event_levels = {key: value for key, value in self._event_levels.items() if key in live_ids}
         self._rate_counter[alert.camera_id].append(now)
 
         logger.info(

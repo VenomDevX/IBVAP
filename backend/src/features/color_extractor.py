@@ -1,48 +1,31 @@
 import cv2
 import numpy as np
 
-# Basic color boundaries in HSV
-COLORS = {
-    "Red": ([0, 50, 50], [10, 255, 255]),
-    "Orange": ([11, 50, 50], [25, 255, 255]),
-    "Yellow": ([26, 50, 50], [35, 255, 255]),
-    "Green": ([36, 50, 50], [89, 255, 255]),
-    "Blue": ([90, 50, 50], [128, 255, 255]),
-    "Purple": ([129, 50, 50], [158, 255, 255]),
-    "White": ([0, 0, 200], [180, 50, 255]),
-    "Black": ([0, 0, 0], [180, 255, 30]),
-    "Gray": ([0, 0, 31], [180, 50, 199]),
-}
-
 
 def get_dominant_color(crop: np.ndarray) -> str:
-    """Extract dominant color from a cropped BGR image."""
-    if crop is None or crop.size == 0:
+    """Estimate a broad vehicle body colour, returning Unknown when weak.
+
+    The central ROI reduces road/sky/background pixels; mutually exclusive HSV
+    masks and a coverage gate avoid producing a confident label from noise.
+    """
+    if crop is None or crop.size == 0 or crop.shape[0] < 20 or crop.shape[1] < 20:
         return "Unknown"
-
-    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
-
-    max_pixels = 0
-    dominant_color = "Unknown"
-
-    for color_name, (lower, upper) in COLORS.items():
-        lower_np = np.array(lower, dtype=np.uint8)
-        upper_np = np.array(upper, dtype=np.uint8)
-
-        mask = cv2.inRange(hsv, lower_np, upper_np)
-        pixels = cv2.countNonZero(mask)
-
-        if pixels > max_pixels:
-            max_pixels = pixels
-            dominant_color = color_name
-
-    # Fallback for red wrap-around in HSV
-    lower_red2 = np.array([160, 50, 50], dtype=np.uint8)
-    upper_red2 = np.array([180, 255, 255], dtype=np.uint8)
-    mask_red2 = cv2.inRange(hsv, lower_red2, upper_red2)
-    red2_pixels = cv2.countNonZero(mask_red2)
-
-    if red2_pixels > max_pixels:
-        dominant_color = "Red"
-
-    return dominant_color
+    height, width = crop.shape[:2]
+    roi = crop[int(height * 0.15):int(height * 0.88), int(width * 0.1):int(width * 0.9)]
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    hue, saturation, value = cv2.split(hsv)
+    masks = {
+        "Black": value < 45,
+        "White": (saturation < 35) & (value >= 210),
+        "Silver": (saturation < 50) & (value >= 145) & (value < 210),
+        "Grey": (saturation < 65) & (value >= 45) & (value < 145),
+        "Red": (((hue <= 10) | (hue >= 165)) & (saturation >= 65) & (value >= 45)),
+        "Brown": ((hue > 5) & (hue <= 25) & (saturation >= 65) & (value >= 35) & (value < 190)),
+        "Yellow": ((hue > 20) & (hue <= 38) & (saturation >= 65) & (value >= 80)),
+        "Green": ((hue > 38) & (hue <= 88) & (saturation >= 55) & (value >= 40)),
+        "Blue": ((hue > 88) & (hue <= 135) & (saturation >= 55) & (value >= 40)),
+    }
+    counts = {label: int(np.count_nonzero(mask)) for label, mask in masks.items()}
+    label, count = max(counts.items(), key=lambda item: item[1])
+    coverage = count / max(hue.size, 1)
+    return label if coverage >= 0.18 else "Unknown"

@@ -30,6 +30,9 @@ class CameraModel(Base):
     resolution = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_heartbeat = Column(DateTime, nullable=True)
+    last_frame_at = Column(DateTime, nullable=True)
+    stream_status = Column(String(20), default="offline")
 
     # Relationships
     events = relationship("EventModel", back_populates="camera")
@@ -43,13 +46,19 @@ class TrackModel(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     track_id = Column(Integer, nullable=False, index=True)
+    track_uuid = Column(String(64), unique=True, nullable=False, index=True)
+    session_id = Column(String(64), nullable=False, index=True)
     camera_id = Column(String(50), ForeignKey("cameras.camera_id"), nullable=False, index=True)
     object_type = Column(String(50), nullable=False)
     start_time = Column(DateTime, nullable=False)
     end_time = Column(DateTime, nullable=True)
+    last_seen = Column(DateTime, nullable=False, index=True)
+    status = Column(String(20), default="NEW", nullable=False, index=True)
     trajectory = Column(JSON, default=list)  # List of [x, y, timestamp]
     total_distance = Column(Float, default=0.0)
     average_speed = Column(Float, default=0.0)
+    best_snapshot = Column(String(500), nullable=True)
+    best_confidence = Column(Float, default=0.0)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -62,6 +71,8 @@ class EventModel(Base):
     event_id = Column(String(50), unique=True, nullable=False, index=True)
     camera_id = Column(String(50), ForeignKey("cameras.camera_id"), nullable=False, index=True)
     track_id = Column(Integer, nullable=True)
+    track_uuid = Column(String(64), nullable=True, index=True)
+    zone_id = Column(String(50), nullable=True, index=True)
     event_type = Column(String(100), nullable=False, index=True)
     timestamp = Column(DateTime, nullable=False, index=True)
     duration = Column(Float, default=0.0)
@@ -72,6 +83,12 @@ class EventModel(Base):
     contributing_factors = Column(JSON, default=list)
     spatial_context = Column(JSON, default=dict)
     temporal_context = Column(JSON, default=dict)
+    state = Column(String(20), default="OPEN", nullable=False, index=True)
+    opened_at = Column(DateTime, nullable=True, index=True)
+    last_updated = Column(DateTime, nullable=True, index=True)
+    closed_at = Column(DateTime, nullable=True)
+    score_breakdown = Column(JSON, default=dict)
+    dedupe_key = Column(String(500), nullable=True, index=True)
     evidence_path = Column(String(500), nullable=True)
     evidence_hash = Column(String(64), nullable=True)
     prev_hash = Column(String(64), nullable=True)
@@ -111,6 +128,9 @@ class AlertModel(Base):
     assignee = Column(String(100), nullable=True, index=True)
     acknowledged_at = Column(DateTime, nullable=True)
     resolved_at = Column(DateTime, nullable=True)
+    acknowledged_by = Column(String(100), nullable=True)
+    resolved_by = Column(String(100), nullable=True)
+    false_positive = Column(Boolean, default=False, nullable=False)
     prev_hash = Column(String(64), nullable=True)
     chain_hash = Column(String(64), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -222,3 +242,64 @@ class RevokedTokenModel(Base):
     token_hash = Column(String(64), unique=True, nullable=False, index=True)
     expires_at = Column(DateTime, nullable=False, index=True)
     revoked_at = Column(DateTime, default=datetime.utcnow)
+
+
+class CameraSessionModel(Base):
+    """A stream connection epoch; tracker IDs are unique only inside it."""
+
+    __tablename__ = "camera_sessions"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String(64), unique=True, nullable=False, index=True)
+    camera_id = Column(String(50), ForeignKey("cameras.camera_id"), nullable=False, index=True)
+    started_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    ended_at = Column(DateTime, nullable=True)
+    status = Column(String(20), default="ACTIVE", nullable=False, index=True)
+
+
+class VehicleProfileModel(Base):
+    """One deterministic dossier per persistent vehicle track."""
+
+    __tablename__ = "vehicle_profiles"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    track_uuid = Column(String(64), unique=True, nullable=False, index=True)
+    camera_id = Column(String(50), ForeignKey("cameras.camera_id"), nullable=False, index=True)
+    vehicle_class = Column(String(50), nullable=False)
+    first_seen = Column(DateTime, nullable=False)
+    last_seen = Column(DateTime, nullable=False, index=True)
+    track_duration = Column(Float, default=0.0)
+    zone_history = Column(JSON, default=list)
+    direction = Column(String(50), default="unknown")
+    best_confidence = Column(Float, default=0.0)
+    best_snapshot = Column(String(500), nullable=True)
+    color = Column(String(30), default="Unknown")
+    plate = Column(String(20), default="UNKNOWN", index=True)
+    plate_confidence = Column(Float, default=0.0)
+    watchlist_status = Column(String(30), default="UNKNOWN")
+    threat_score = Column(Float, default=0.0)
+    description = Column(String(1000), default="")
+
+
+class OperatorFeedbackModel(Base):
+    """Structured, append-only false-positive/quality feedback."""
+
+    __tablename__ = "operator_feedback"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event_id = Column(String(50), ForeignKey("events.event_id"), nullable=False, index=True)
+    alert_id = Column(String(50), ForeignKey("alerts.alert_id"), nullable=False, index=True)
+    operator = Column(String(100), nullable=False, index=True)
+    reason = Column(String(100), nullable=False)
+    camera_id = Column(String(50), nullable=False, index=True)
+    event_type = Column(String(100), nullable=False)
+    model_confidence = Column(Float, default=0.0)
+    track_information = Column(JSON, default=dict)
+    timestamp = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+class EventEvidenceModel(Base):
+    __tablename__ = "event_evidence"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event_id = Column(String(50), ForeignKey("events.event_id"), nullable=False, index=True)
+    snapshot_path = Column(String(500), nullable=True)
+    clip_path = Column(String(500), nullable=True)
+    evidence_type = Column(String(30), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)

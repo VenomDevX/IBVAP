@@ -11,10 +11,10 @@ cameras:
       - "anpr"
 
   - id: "CAM_PEOPLE"
-    name: "Pedestrian Surveillance"
-    source: "./data/demo/people_walking.mp4"
-    fps: 30
-    resolution: [1920, 1080]
+    name: "City Street Pedestrian Surveillance"
+    source: "./data/demo/city_street_pedestrians.mp4"
+    fps: 12
+    resolution: [1280, 720]
     capabilities:
       - "detection"
       - "tracking"
@@ -51,9 +51,9 @@ cameras:
       - "anpr"
 
   - id: "CAM_VIRAT_STREET"
-    name: "VIRAT Street Activity"
-    source: "./data/demo/virat_street_activity.mp4"
-    fps: 30
+    name: "Tram Crosswalk Pedestrians"
+    source: "./data/demo/tram_crosswalk_pedestrians.mp4"
+    fps: 12
     resolution: [1280, 720]
     capabilities:
       - "detection"
@@ -62,9 +62,9 @@ cameras:
       - "anpr"
 
   - id: "CAM_VIRAT_VEHICLE"
-    name: "VIRAT Vehicle Area"
-    source: "./data/demo/virat_vehicle_area.mp4"
-    fps: 30
+    name: "Overhead Highway Traffic"
+    source: "./data/demo/overhead_highway_traffic.mp4"
+    fps: 12
     resolution: [1280, 720]
     capabilities:
       - "detection"
@@ -99,11 +99,58 @@ cameras:
       - "face"
 
   - id: "CAM_MILITARY_TEST"
-    name: "Stage-2 Smoke Test (synthetic, aircraft frame looped)"
-    source: "./data/demo/military_test_aircraft.mp4"
-    fps: 10
-    resolution: [640, 640]
-    enabled: false  # disabled: 10 concurrent CUDA pipelines hard-crashes this 6GB GPU
+    name: "Night CCTV Intersection"
+    source: "./data/demo/night_cctv_intersection.mp4"
+    fps: 12
+    resolution: [1280, 720]
+    enabled: false
     capabilities:
       - "detection"
       - "tracking"
+      - "face"
+
+  - id: "CAM_URBAN_OVERHEAD"
+    name: "Urban Intersection Overhead"
+    source: "./data/demo/urban_intersection_overhead.mp4"
+    fps: 12
+    resolution: [1280, 720]
+    enabled: false
+    capabilities:
+      - "detection"
+      - "tracking"
+      - "face"
+      - "anpr"
+
+  - id: "CAM_HIGHWAY_JUNCTION"
+    name: "Multilane Highway Junction"
+    source: "./data/demo/multilane_highway_junction.mp4"
+    fps: 12
+    resolution: [1280, 720]
+    enabled: false
+    capabilities:
+      - "detection"
+      - "tracking"
+      - "anpr"
+
+  - id: "CAM_ROADSIDE_CROSSING"
+    name: "Roadside Pedestrian Crossing"
+    source: "./data/demo/roadside_pedestrian_crossing.mp4"
+    fps: 12
+    resolution: [1280, 720]
+    enabled: false
+    capabilities:
+      - "detection"
+      - "tracking"
+      - "face"
+
+  - id: "CAM_SCOOTER_INTERSECTION"
+    name: "Scooter Traffic Intersection"
+    source: "./data/demo/scooter_traffic_intersection.mp4"
+    fps: 12
+    resolution: [1280, 720]
+    enabled: false
+    capabilities:
+      - "detection"
+      - "tracking"
+      - "face"
+      - "anpr"

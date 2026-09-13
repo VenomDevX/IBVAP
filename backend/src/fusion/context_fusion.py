@@ -29,6 +29,7 @@ class FusedEvent:
 
     # Fused context
     event_type: str  # Primary event classification
+    track_uuid: str = ""
     risk_score: float = 0.0
     risk_level: str = "low"
 
@@ -47,12 +48,20 @@ class FusedEvent:
     evidence_path: str | None = None
     evidence_hash: str | None = None
     snapshot_path: str | None = None
+    zone_id: str | None = None
+    state: str = "PENDING"
+    opened_at: float | None = None
+    last_updated: float | None = None
+    closed_at: float | None = None
+    dedupe_key: str = ""
+    score_breakdown: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
             "event_id": self.event_id,
             "camera_id": self.camera_id,
             "track_id": self.track_id,
+            "track_uuid": self.track_uuid,
             "timestamp": self.timestamp,
             "object_type": self.object_type,
             "event_type": self.event_type,
@@ -66,6 +75,13 @@ class FusedEvent:
             "evidence_path": self.evidence_path,
             "evidence_hash": self.evidence_hash,
             "duration": round(self.duration, 1),
+            "zone_id": self.zone_id,
+            "state": self.state,
+            "opened_at": self.opened_at,
+            "last_updated": self.last_updated,
+            "closed_at": self.closed_at,
+            "dedupe_key": self.dedupe_key,
+            "score_breakdown": self.score_breakdown,
         }
 
 
@@ -116,6 +132,7 @@ class ContextFusion:
         behavior_events: list[BehaviorEvent],
         spatial_context: dict,
         temporal_context: dict,
+        track_uuid: str = "",
         identity_context: dict | None = None,
         vehicle_context: dict | None = None,
         track_duration: float = 0.0,
@@ -190,6 +207,7 @@ class ContextFusion:
             event_id=f"EVT_{uuid.uuid4().hex}",
             camera_id=camera_id,
             track_id=track_id,
+            track_uuid=track_uuid,
             timestamp=now,
             object_type=object_type,
             event_type=event_type,
@@ -200,6 +218,7 @@ class ContextFusion:
             identity_context=identity_context or {},
             vehicle_context=vehicle_context or {},
             duration=track_duration,
+            zone_id=(temporal_context.get("loiter_zone") or next(iter(spatial_context.get("zones", [])), None)),
         )
 
         return fused

@@ -28,6 +28,7 @@ export default function AlertsPage() {
   const [selected, setSelected] = useState<Alert | null>(null);
   const [assignee, setAssignee] = useState('');
   const [note, setNote] = useState('');
+  const [pending, setPending] = useState<Set<string>>(new Set());
   const deferredQuery = useDeferredValue(query);
   const pageSize = 25;
 
@@ -62,6 +63,8 @@ export default function AlertsPage() {
   useEffect(() => { setPage(1); }, [level, reviewed, status, camera, deferredQuery, startTime, endTime]);
 
   const updateIncident = async (alertId: string, changes: Record<string, string>) => {
+    if (pending.has(alertId)) return;
+    setPending(current => new Set(current).add(alertId));
     try {
       const response = await apiFetch(`/api/alerts/${alertId}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(changes),
@@ -71,7 +74,22 @@ export default function AlertsPage() {
       if (selected?.alert_id === alertId) await openIncident(alertId);
     } catch (err) {
       console.error('Review error:', err);
+    } finally {
+      setPending(current => { const next = new Set(current); next.delete(alertId); return next; });
     }
+  };
+
+  const markFalsePositive = async (alertId: string) => {
+    const entered = window.prompt(
+      'False-positive reason: Wrong object detection, Duplicate alert, Authorized person, Authorized vehicle, Incorrect zone, Behavior incorrectly classified, or Other',
+      'Other',
+    );
+    if (entered === null) return;
+    const allowed = ['Wrong object detection', 'Duplicate alert', 'Authorized person', 'Authorized vehicle', 'Incorrect zone', 'Behavior incorrectly classified'];
+    await updateIncident(alertId, {
+      status: 'false_positive', disposition: 'false_alarm',
+      false_positive_reason: allowed.includes(entered) ? entered : 'Other',
+    });
   };
 
   const openIncident = async (alertId: string) => {
@@ -105,10 +123,10 @@ export default function AlertsPage() {
       render: a => (
         <span className="inline-flex justify-end gap-1.5">
           <ButtonLink href={`/event?id=${a.event_id}`} size="xs" variant="outline">View</ButtonLink>
-          <Button size="xs" variant="outline" onClick={() => openIncident(a.alert_id)}>Manage</Button>
-          {(a.status ?? 'open') === 'open' && <Button size="xs" onClick={() => updateIncident(a.alert_id, { status: 'acknowledged' })}>Acknowledge</Button>}
-          {!a.reviewed && <Button size="xs" variant="success" onClick={() => updateIncident(a.alert_id, { status: 'resolved', disposition: 'true_alarm' })}>Resolve</Button>}
-          {!a.reviewed && <Button size="xs" variant="outline" onClick={() => updateIncident(a.alert_id, { status: 'false_positive', disposition: 'false_alarm' })}>False alarm</Button>}
+          <Button size="xs" variant="outline" disabled={pending.has(a.alert_id)} onClick={() => openIncident(a.alert_id)}>Manage</Button>
+          {(a.status ?? 'open') === 'open' && <Button size="xs" disabled={pending.has(a.alert_id)} onClick={() => updateIncident(a.alert_id, { status: 'acknowledged' })}>Acknowledge</Button>}
+          {!a.reviewed && <Button size="xs" variant="success" disabled={pending.has(a.alert_id)} onClick={() => updateIncident(a.alert_id, { status: 'resolved', disposition: 'true_alarm' })}>Resolve</Button>}
+          {!a.reviewed && <Button size="xs" variant="outline" disabled={pending.has(a.alert_id)} onClick={() => markFalsePositive(a.alert_id)}>False alarm</Button>}
         </span>
       ),
     },

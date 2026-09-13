@@ -9,8 +9,13 @@ Hardening notes:
 - operator contact details are redacted in logs.
 """
 
+import hashlib
+import hmac
+import json
 import os
 import smtplib
+import time
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from email.message import EmailMessage
 
@@ -45,6 +50,8 @@ class NotificationManager:
         self.twilio_token = os.getenv("TWILIO_AUTH_TOKEN", "")
         self.twilio_from = os.getenv("TWILIO_FROM_NUM", "")
         self.target_phone = os.getenv("ALERT_TARGET_PHONE", "")
+        self.webhook_url = os.getenv("IBVAP_CRITICAL_WEBHOOK_URL", "").strip()
+        self.webhook_secret = os.getenv("IBVAP_WEBHOOK_SECRET", "")
 
         self.twilio_client = None
         if self.twilio_sid and self.twilio_token:
@@ -97,3 +104,36 @@ class NotificationManager:
                 logger.error(f"SMS notification failed: {e}")
         else:
             logger.info(f"(mock sms) critical alert -> {_redact_phone(self.target_phone)}")
+
+        # --- Signed command/control webhook ---
+        if self.webhook_url and self.webhook_secret:
+            self._send_webhook(alert)
+        elif self.webhook_url:
+            logger.error(
+                "Critical webhook configured without IBVAP_WEBHOOK_SECRET; delivery suppressed"
+            )
+
+    def _send_webhook(self, alert: dict) -> None:
+        body = json.dumps(alert, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        signature = hmac.new(self.webhook_secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+        idempotency_key = str(alert.get("alert_id") or alert.get("event_id") or "")
+        for attempt in range(3):
+            request = urllib.request.Request(
+                self.webhook_url, data=body, method="POST",
+                headers={
+                    "Content-Type": "application/json",
+                    "X-IBVAP-Signature": f"sha256={signature}",
+                    "Idempotency-Key": idempotency_key,
+                },
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=10) as response:
+                    if 200 <= response.status < 300:
+                        logger.info("Critical webhook delivered alert_id={}", idempotency_key)
+                        return
+                    raise OSError(f"HTTP {response.status}")
+            except Exception as exc:
+                if attempt == 2:
+                    logger.error("Critical webhook failed alert_id={} error={}", idempotency_key, type(exc).__name__)
+                    return
+                time.sleep(2 ** attempt)

@@ -5,7 +5,6 @@ import { apiFetch } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { useTheme } from '@/src/context/ThemeContext';
 import { cn } from '@/src/lib/cn';
-import Card from '@/src/components/ui/Card';
 import Badge from '@/src/components/ui/Badge';
 import StatusDot from '@/src/components/ui/StatusDot';
 import { Button } from '@/src/components/ui/Button';
@@ -25,7 +24,7 @@ function Row({ label, children, description }: { label: string; children: ReactN
   );
 }
 
-const ROLE_TONE = { admin: 'accent', operator: 'info', auditor: 'warning' } as const;
+const ROLE_TONE = { admin: 'accent', commander: 'danger', supervisor: 'danger', operator: 'info', viewer: 'neutral', auditor: 'warning' } as const;
 
 export default function SettingsPage() {
   const { user, role, allowedAreas, profileError, logout } = useAuth();
@@ -211,7 +210,7 @@ export default function SettingsPage() {
                     </span>
                   </div>
                   
-                  <Row label="Active Alerts" description="Unreviewed incidents">{summary?.unreviewed_alerts ?? 0}</Row>
+                  <Row label="Open Incidents" description="Open or acknowledged incidents">{summary?.open_incidents ?? summary?.unreviewed_alerts ?? 0}</Row>
                   <Row label="Active Tracks" description="Entities currently tracked">{summary?.active_tracks ?? 0}</Row>
                   <Row label="Evidence Capture" description="Automated snapshot recording">
                     <span className={cn(

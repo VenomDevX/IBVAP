@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/src/context/AuthContext';
 import { apiFetch, formatEventType, formatTime, mediaSrc, riskMeta } from '@/src/api/client';
 import Icon from '@/src/components/ui/Icon';
-import { ButtonLink } from '@/src/components/ui/Button';
+import { Button, ButtonLink } from '@/src/components/ui/Button';
 import { EmptyState, Loading } from '@/src/components/ui/States';
 import { cn } from '@/src/lib/cn';
 import type { Event } from '@/src/types';
@@ -63,6 +63,16 @@ function EventDetail() {
 
   const meta = riskMeta(event.risk_level);
   const evidenceFile = event.evidence_path?.replace(/\\/g, '/').split('/').pop();
+  const downloadEvidence = async (url: string, evidenceId: number) => {
+    const response = await apiFetch(url);
+    if (!response.ok) return;
+    const href = URL.createObjectURL(await response.blob());
+    const anchor = document.createElement('a');
+    anchor.href = href;
+    anchor.download = `${event.event_id}-evidence-${evidenceId}`;
+    anchor.click();
+    URL.revokeObjectURL(href);
+  };
 
   return (
     <div className="max-w-6xl mx-auto pb-10">
@@ -82,6 +92,7 @@ function EventDetail() {
           <span className="flex items-center gap-2"><Icon name="video" className="text-fg-muted" /> Camera {event.camera_id}</span>
           <span className="flex items-center gap-2"><Icon name="clock" className="text-fg-muted" /> {formatTime(event.timestamp)}</span>
           <span className="flex items-center gap-2"><Icon name="person" className="text-fg-muted" /> {event.object_type} (Track #{event.track_id})</span>
+          {event.track_uuid && <span className="flex items-center gap-2 font-mono text-xs"><Icon name="fingerprint" className="text-fg-muted" /> {event.track_uuid}</span>}
         </p>
       </header>
 
@@ -119,6 +130,20 @@ function EventDetail() {
           <ContextRow label="Duration" description="Length of recorded event" value={`${event.duration?.toFixed(1) || 0}s`} />
         </PremiumCard>
 
+        {event.score_breakdown && Object.keys(event.score_breakdown).length > 0 && (
+          <PremiumCard title="Threat Score Breakdown" icon="chart-simple" colorClass="bg-info/10 text-info" className="md:col-span-2 xl:col-span-3">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+              {Object.entries(event.score_breakdown).map(([category, item]) => (
+                <div key={category} className="rounded border border-default bg-bg p-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-fg-muted">{category}</p>
+                  <p className="mt-1 text-lg font-semibold text-fg">+{item.contribution.toFixed(1)}</p>
+                  <p className="text-xs text-fg-subtle">{item.raw_score.toFixed(0)} × {item.weight}</p>
+                </div>
+              ))}
+            </div>
+          </PremiumCard>
+        )}
+
         {evidenceFile && (
           <PremiumCard title="Evidence Snapshot" icon="image" colorClass="bg-success/10 text-success" className="md:col-span-2 xl:col-span-3">
             {imgFailed ? (
@@ -146,9 +171,20 @@ function EventDetail() {
             )}
           </PremiumCard>
         )}
+        {!!event.evidence?.length && (
+          <PremiumCard title="Evidence Files" icon="file-shield" colorClass="bg-success/10 text-success" className="md:col-span-2 xl:col-span-3">
+            <div className="flex flex-wrap gap-2">
+              {event.evidence.map(item => (
+                <Button key={item.evidence_id} size="xs" variant="outline" onClick={() => void downloadEvidence(item.download_url, item.evidence_id)}>
+                  Download {item.type.replaceAll('_', ' ')}
+                </Button>
+              ))}
+            </div>
+          </PremiumCard>
+        )}
       </div>
 
-      <ButtonLink href="/events" icon="arrow-left" variant="secondary" className="px-6 py-2.5 shadow-sm rounded-lg">
+      <ButtonLink href="/events" icon="arrow-left" variant="outline" className="px-6 py-2.5 shadow-sm rounded-lg">
         Back to Event History
       </ButtonLink>
     </div>

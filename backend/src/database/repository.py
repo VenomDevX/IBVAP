@@ -5,7 +5,7 @@ CRUD operations for all entities.
 
 from datetime import datetime
 
-from sqlalchemy import asc, desc, or_
+from sqlalchemy import asc, case, desc, or_
 from sqlalchemy.orm import Session
 
 from src.alerts import evidence
@@ -14,10 +14,15 @@ from src.database.models import (
     ANPRResultModel,
     AuditLogModel,
     CameraModel,
+    CameraSessionModel,
+    EventEvidenceModel,
     EventModel,
     IdentityResultModel,
     IncidentNoteModel,
+    OperatorFeedbackModel,
+    TrackModel,
     UserModel,
+    VehicleProfileModel,
     ZoneModel,
 )
 
@@ -74,6 +79,18 @@ class Repository:
             camera.updated_at = datetime.utcnow()
             self.session.commit()
 
+    def update_camera_runtime(self, camera_id: str, status: str, last_frame_at: float | None = None) -> None:
+        camera = self.get_camera(camera_id)
+        if camera is None:
+            return
+        camera.status = status
+        camera.stream_status = status
+        camera.last_heartbeat = datetime.utcnow()
+        if last_frame_at is not None:
+            camera.last_frame_at = datetime.utcfromtimestamp(last_frame_at)
+        camera.updated_at = datetime.utcnow()
+        self.session.commit()
+
     def update_camera(self, camera_id: str, changes: dict) -> CameraModel | None:
         camera = self.get_camera(camera_id)
         if camera is None:
@@ -100,6 +117,22 @@ class Repository:
         self.session.commit()
         return camera
 
+    def start_camera_session(self, camera_id: str, session_id: str) -> CameraSessionModel:
+        row = self.session.query(CameraSessionModel).filter_by(session_id=session_id).first()
+        if row is None:
+            row = CameraSessionModel(session_id=session_id, camera_id=camera_id, status="ACTIVE")
+            self.session.add(row)
+            self.session.commit()
+        return row
+
+    def close_camera_session(self, session_id: str) -> CameraSessionModel | None:
+        row = self.session.query(CameraSessionModel).filter_by(session_id=session_id).first()
+        if row is not None and row.status != "CLOSED":
+            row.status = "CLOSED"
+            row.ended_at = datetime.utcnow()
+            self.session.commit()
+        return row
+
     # ======================== EVENTS ========================
 
     def create_event(self, event_data: dict, commit: bool = True) -> EventModel:
@@ -113,7 +146,7 @@ class Repository:
             camera_id=event_data["camera_id"],
             track_id=event_data.get("track_id"),
             event_type=event_data["event_type"],
-            timestamp=datetime.fromtimestamp(event_data["timestamp"]),
+            timestamp=datetime.utcfromtimestamp(event_data["timestamp"]),
             duration=event_data.get("duration", 0.0),
             object_type=event_data.get("object_type", ""),
             confidence=event_data.get("confidence", 0.0),
@@ -122,6 +155,14 @@ class Repository:
             contributing_factors=event_data.get("contributing_factors", []),
             spatial_context=event_data.get("spatial_context", {}),
             temporal_context=event_data.get("temporal_context", {}),
+            track_uuid=event_data.get("track_uuid") or None,
+            zone_id=event_data.get("zone_id"),
+            state=event_data.get("state", "OPEN"),
+            opened_at=self._utc_from_epoch(event_data.get("opened_at")),
+            last_updated=self._utc_from_epoch(event_data.get("last_updated")),
+            closed_at=self._utc_from_epoch(event_data.get("closed_at")),
+            score_breakdown=event_data.get("score_breakdown", {}),
+            dedupe_key=event_data.get("dedupe_key") or None,
             evidence_path=event_data.get("evidence_path"),
             evidence_hash=event_data.get("evidence_hash"),
         )
@@ -145,6 +186,49 @@ class Repository:
         if commit:
             self.session.commit()
         return event
+
+    @staticmethod
+    def _utc_from_epoch(value):
+        return datetime.utcfromtimestamp(value) if value is not None else None
+
+    def update_event_lifecycle(self, event_data: dict, commit: bool = True) -> EventModel | None:
+        event = self.get_event(event_data["event_id"])
+        if event is None:
+            return None
+        event.duration = event_data.get("duration", event.duration)
+        event.confidence = event_data.get("confidence", event.confidence)
+        event.risk_score = event_data.get("risk_score", event.risk_score)
+        event.risk_level = event_data.get("risk_level", event.risk_level)
+        event.contributing_factors = event_data.get("contributing_factors", event.contributing_factors)
+        event.spatial_context = event_data.get("spatial_context", event.spatial_context)
+        event.temporal_context = event_data.get("temporal_context", event.temporal_context)
+        event.score_breakdown = event_data.get("score_breakdown", event.score_breakdown)
+        event.state = event_data.get("state", event.state)
+        event.last_updated = self._utc_from_epoch(event_data.get("last_updated")) or datetime.utcnow()
+        event.closed_at = self._utc_from_epoch(event_data.get("closed_at"))
+        if commit:
+            self.session.commit()
+        else:
+            self.session.flush()
+        return event
+
+    def create_event_evidence(
+        self, event_id: str, evidence_type: str, snapshot_path: str | None = None,
+        clip_path: str | None = None, commit: bool = True,
+    ) -> EventEvidenceModel:
+        row = EventEvidenceModel(
+            event_id=event_id, evidence_type=evidence_type,
+            snapshot_path=snapshot_path, clip_path=clip_path,
+        )
+        self.session.add(row)
+        if commit:
+            self.session.commit()
+        else:
+            self.session.flush()
+        return row
+
+    def get_event_evidence(self, event_id: str) -> list[EventEvidenceModel]:
+        return self.session.query(EventEvidenceModel).filter_by(event_id=event_id).order_by(EventEvidenceModel.created_at).all()
 
     def _chain(self, row, model, fields):
         """Attach prev_hash / chain_hash linking this row to the previous one."""
@@ -240,13 +324,16 @@ class Repository:
     # ======================== ALERTS ========================
 
     def create_alert(self, alert_data: dict, commit: bool = True) -> AlertModel:
+        existing = self.session.query(AlertModel).filter_by(event_id=alert_data["event_id"]).first()
+        if existing is not None:
+            return existing
         alert = AlertModel(
             alert_id=alert_data["alert_id"],
             camera_id=alert_data["camera_id"],
             event_id=alert_data["event_id"],
             track_id=alert_data.get("track_id"),
             event_type=alert_data["event_type"],
-            timestamp=datetime.fromtimestamp(alert_data["timestamp"]),
+            timestamp=datetime.utcfromtimestamp(alert_data["timestamp"]),
             risk_score=alert_data.get("risk_score", 0.0),
             risk_level=alert_data.get("risk_level", "low"),
             object_type=alert_data.get("object_type", ""),
@@ -289,14 +376,19 @@ class Repository:
         limit: int = 100,
         offset: int = 0,
         status: str = None,
+        active_only: bool = False,
         start_time: datetime = None,
         end_time: datetime = None,
         search: str = None,
-        sort_by: str = "timestamp",
+        sort_by: str = "priority",
         sort_order: str = "desc",
         allowed_cameras=None,
     ) -> list[AlertModel]:
         query = self.session.query(AlertModel)
+        if active_only:
+            query = query.join(EventModel, AlertModel.event_id == EventModel.event_id).filter(
+                EventModel.state.in_(("OPEN", "ACTIVE"))
+            )
         if allowed_cameras is not None:
             query = query.filter(AlertModel.camera_id.in_(allowed_cameras or ["__none__"]))
         if camera_id:
@@ -324,9 +416,27 @@ class Repository:
             "status": AlertModel.status,
             "camera_id": AlertModel.camera_id,
         }
+        if sort_by == "priority":
+            status_rank = case(
+                (AlertModel.status == "open", 0),
+                (AlertModel.status == "reopened", 0),
+                (AlertModel.status == "investigating", 1),
+                (AlertModel.status == "acknowledged", 2),
+                (AlertModel.status == "resolved", 3),
+                (AlertModel.status == "false_positive", 4),
+                else_=5,
+            )
+            severity_rank = case(
+                (AlertModel.risk_level == "critical", 0),
+                (AlertModel.risk_level == "high", 1),
+                (AlertModel.risk_level == "medium", 2),
+                (AlertModel.risk_level == "low", 3),
+                else_=4,
+            )
+            return query.order_by(status_rank, severity_rank, desc(AlertModel.timestamp)).offset(offset).limit(limit).all()
         column = sort_columns.get(sort_by, AlertModel.timestamp)
         ordering = asc(column) if sort_order == "asc" else desc(column)
-        return query.order_by(ordering).offset(offset).limit(limit).all()
+        return query.order_by(ordering, desc(AlertModel.timestamp)).offset(offset).limit(limit).all()
 
     def count_alerts(
         self,
@@ -334,12 +444,17 @@ class Repository:
         risk_level: str = None,
         reviewed: bool = None,
         status: str = None,
+        active_only: bool = False,
         start_time: datetime = None,
         end_time: datetime = None,
         search: str = None,
         allowed_cameras=None,
     ) -> int:
         query = self.session.query(AlertModel)
+        if active_only:
+            query = query.join(EventModel, AlertModel.event_id == EventModel.event_id).filter(
+                EventModel.state.in_(("OPEN", "ACTIVE"))
+            )
         if allowed_cameras is not None:
             query = query.filter(AlertModel.camera_id.in_(allowed_cameras or ["__none__"]))
         if camera_id:
@@ -390,13 +505,18 @@ class Repository:
             alert.status = status
             if status in {"acknowledged", "investigating"} and alert.acknowledged_at is None:
                 alert.acknowledged_at = now
+                alert.acknowledged_by = actor
             if status in {"resolved", "false_positive"}:
                 alert.resolved_at = now
+                alert.resolved_by = actor
+                alert.false_positive = status == "false_positive"
                 alert.reviewed = True
                 alert.reviewed_by = actor
                 alert.reviewed_at = now
             elif status == "reopened":
                 alert.resolved_at = None
+                alert.resolved_by = None
+                alert.false_positive = False
                 alert.reviewed = False
         if disposition is not None:
             alert.disposition = disposition or None
@@ -407,6 +527,75 @@ class Repository:
         self.session.commit()
         return alert
 
+    def update_alert_from_event(self, event_data: dict, commit: bool = True) -> AlertModel | None:
+        alert = self.session.query(AlertModel).filter_by(event_id=event_data["event_id"]).first()
+        if alert is None:
+            return None
+        alert.risk_score = event_data.get("risk_score", alert.risk_score)
+        alert.risk_level = event_data.get("risk_level", alert.risk_level)
+        alert.contributing_factors = event_data.get("contributing_factors", alert.contributing_factors)
+        if commit:
+            self.session.commit()
+        else:
+            self.session.flush()
+        return alert
+
+    def upsert_track(self, track, commit: bool = True) -> TrackModel:
+        row = self.session.query(TrackModel).filter_by(track_uuid=track.track_uuid).first()
+        if row is None:
+            row = TrackModel(
+                track_id=track.track_id, track_uuid=track.track_uuid, session_id=track.session_id,
+                camera_id=track.camera_id, object_type=track.object_type,
+                start_time=datetime.utcfromtimestamp(track.first_seen),
+                last_seen=datetime.utcfromtimestamp(track.last_seen), status=track.status,
+            )
+            self.session.add(row)
+        row.last_seen = datetime.utcfromtimestamp(track.last_seen)
+        row.end_time = datetime.utcfromtimestamp(track.last_seen) if track.status == "CLOSED" else None
+        row.status = track.status
+        row.trajectory = [list(point) for point in track.trajectory]
+        row.total_distance = track.total_distance
+        row.average_speed = track.average_speed
+        row.best_snapshot = track.best_snapshot_path
+        row.best_confidence = track.confidence
+        if commit:
+            self.session.commit()
+        else:
+            self.session.flush()
+        return row
+
+    def upsert_vehicle_profile(self, track, commit: bool = True) -> VehicleProfileModel:
+        from src.features.vehicle_description import describe_vehicle
+
+        row = self.session.query(VehicleProfileModel).filter_by(track_uuid=track.track_uuid).first()
+        if row is None:
+            row = VehicleProfileModel(
+                track_uuid=track.track_uuid, camera_id=track.camera_id,
+                vehicle_class=track.object_type,
+                first_seen=datetime.utcfromtimestamp(track.first_seen),
+                last_seen=datetime.utcfromtimestamp(track.last_seen),
+            )
+            self.session.add(row)
+        row.last_seen = datetime.utcfromtimestamp(track.last_seen)
+        row.track_duration = track.duration
+        row.direction = track.movement_direction
+        row.best_confidence = max(row.best_confidence or 0.0, track.confidence)
+        row.best_snapshot = track.best_snapshot_path
+        row.color = track.color
+        row.plate = track.license_plate.upper() if track.license_plate else "UNKNOWN"
+        row.plate_confidence = track.plate_confidence
+        row.threat_score = track.risk_score
+        row.description = describe_vehicle(track)
+        row.zone_history = [
+            {"zone_id": zone_id, "session_id": session_id, "entered_at": track.zone_entry_times.get(zone_id)}
+            for zone_id, session_id in track.zone_session_ids.items()
+        ]
+        if commit:
+            self.session.commit()
+        else:
+            self.session.flush()
+        return row
+
     def get_incident_notes(self, alert_id: str) -> list[IncidentNoteModel]:
         return (
             self.session.query(IncidentNoteModel)
@@ -414,6 +603,22 @@ class Repository:
             .order_by(IncidentNoteModel.created_at.asc())
             .all()
         )
+
+    def create_operator_feedback(self, alert: AlertModel, operator: str, reason: str) -> OperatorFeedbackModel:
+        existing = self.session.query(OperatorFeedbackModel).filter_by(
+            alert_id=alert.alert_id, operator=operator, reason=reason
+        ).first()
+        if existing:
+            return existing
+        row = OperatorFeedbackModel(
+            event_id=alert.event_id, alert_id=alert.alert_id, operator=operator,
+            reason=reason, camera_id=alert.camera_id, event_type=alert.event_type,
+            model_confidence=alert.risk_score,
+            track_information={"track_id": alert.track_id, "object_type": alert.object_type},
+        )
+        self.session.add(row)
+        self.session.flush()
+        return row
 
     # ======================== USERS ========================
 
@@ -569,7 +774,11 @@ class Repository:
             camera_query = camera_query.filter(CameraModel.camera_id.in_(allowed_cameras))
         total_events = events.count()
         total_alerts = alerts.count()
-        unreviewed = alerts.filter_by(reviewed=False).count()
+        open_alerts = alerts.join(EventModel, AlertModel.event_id == EventModel.event_id).filter(
+            AlertModel.status.in_(("open", "acknowledged", "investigating", "reopened")),
+            EventModel.state.in_(("OPEN", "ACTIVE")),
+        )
+        unreviewed = open_alerts.count()
         cameras = camera_query.count()
 
         # Risk level distribution
@@ -591,7 +800,7 @@ class Repository:
             "cameras": cameras,
             "risk_distribution": risk_dist,
             "event_distribution": event_dist,
-            "critical_alerts": alerts.filter_by(risk_level="critical").count(),
+            "critical_alerts": open_alerts.filter(AlertModel.risk_level.in_(("critical", "high"))).count(),
         }
 
     def get_alert_timeseries(self, hours: int = 24, allowed_cameras=None) -> dict:

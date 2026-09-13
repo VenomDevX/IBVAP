@@ -2,6 +2,18 @@
 
 import numpy as np
 
+
+def test_evidence_buffer_downscales_before_encoding(tmp_path):
+    import cv2
+
+    from src.alerts.evidence_clip import EvidenceClipBuffer
+
+    buffer = EvidenceClipBuffer("cam", tmp_path, capture_fps=5, max_width=320)
+    buffer.add_frame(np.zeros((720, 1280, 3), dtype=np.uint8), timestamp=10.0)
+    _, encoded = buffer._frames[-1]
+    decoded = cv2.imdecode(np.frombuffer(encoded, np.uint8), cv2.IMREAD_COLOR)
+    assert decoded.shape[:2] == (180, 320)
+
 # --------------------------------------------------------------------------- #
 # ANPR
 # --------------------------------------------------------------------------- #

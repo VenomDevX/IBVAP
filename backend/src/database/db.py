@@ -25,7 +25,7 @@ class Database:
         self.db_url = db_url or os.getenv("DATABASE_URL", DEFAULT_DB_URL)
         is_sqlite = self.db_url.startswith("sqlite")
         is_postgres = self.db_url.startswith("postgres")
-        
+
         if is_postgres:
             connect_args = {
                 "keepalives": 1,
@@ -69,7 +69,7 @@ class Database:
         Base.metadata.create_all(bind=self.engine)
         self._run_migrations()
         self._initialized = True
-        
+
         # Mask password in log output
         safe_url = re.sub(r"://([^:]+):([^@]+)@", r"://\1:***@", self.db_url)
         logger.success(f"Database initialized: {safe_url}")
@@ -90,6 +90,8 @@ class Database:
             (2, self._migration_indexes),
             (3, self._migration_incident_workflow),
             (4, self._migration_camera_runtime),
+            (5, self._migration_incident_state),
+            (6, self._migration_profile_description),
         ]
         for version, migration in migrations:
             if version in applied:
@@ -159,6 +161,61 @@ class Database:
             for name, ddl in columns.items():
                 if name not in existing:
                     conn.execute(text(f"ALTER TABLE cameras ADD COLUMN {name} {ddl}"))
+
+    def _migration_incident_state(self, insp, text):
+        timestamp_type = "TIMESTAMP" if self.db_url.startswith("postgres") else "DATETIME"
+        json_type = "JSONB" if self.db_url.startswith("postgres") else "JSON"
+        boolean_type = "BOOLEAN NOT NULL DEFAULT FALSE" if self.db_url.startswith("postgres") else "BOOLEAN NOT NULL DEFAULT 0"
+        wanted = {
+            "cameras": {
+                "last_heartbeat": timestamp_type, "last_frame_at": timestamp_type,
+                "stream_status": "VARCHAR(20) DEFAULT 'offline'",
+            },
+            "tracks": {
+                "track_uuid": "VARCHAR(64)", "session_id": "VARCHAR(64)",
+                "last_seen": timestamp_type, "status": "VARCHAR(20) DEFAULT 'CLOSED'",
+                "best_snapshot": "VARCHAR(500)", "best_confidence": "FLOAT DEFAULT 0",
+            },
+            "events": {
+                "track_uuid": "VARCHAR(64)", "zone_id": "VARCHAR(50)",
+                "state": "VARCHAR(20) NOT NULL DEFAULT 'OPEN'", "opened_at": timestamp_type,
+                "last_updated": timestamp_type, "closed_at": timestamp_type,
+                "score_breakdown": json_type, "dedupe_key": "VARCHAR(500)",
+            },
+            "alerts": {
+                "acknowledged_by": "VARCHAR(100)", "resolved_by": "VARCHAR(100)",
+                "false_positive": boolean_type,
+            },
+            "vehicle_profiles": {"description": "VARCHAR(1000) DEFAULT ''"},
+        }
+        with self.engine.begin() as conn:
+            for table, columns in wanted.items():
+                if not insp.has_table(table):
+                    continue
+                existing = {column["name"] for column in insp.get_columns(table)}
+                for name, ddl in columns.items():
+                    if name not in existing:
+                        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+            for statement in (
+                "CREATE INDEX IF NOT EXISTS ix_tracks_track_uuid ON tracks(track_uuid)",
+                "CREATE INDEX IF NOT EXISTS ix_tracks_last_seen ON tracks(last_seen)",
+                "CREATE INDEX IF NOT EXISTS ix_tracks_status ON tracks(status)",
+                "CREATE INDEX IF NOT EXISTS ix_events_track_uuid ON events(track_uuid)",
+                "CREATE INDEX IF NOT EXISTS ix_events_zone_id ON events(zone_id)",
+                "CREATE INDEX IF NOT EXISTS ix_events_state ON events(state)",
+                "CREATE INDEX IF NOT EXISTS ix_events_last_updated ON events(last_updated)",
+                "CREATE INDEX IF NOT EXISTS ix_events_dedupe_key ON events(dedupe_key)",
+                "CREATE INDEX IF NOT EXISTS ix_alerts_event_status ON alerts(event_id, status)",
+            ):
+                conn.execute(text(statement))
+
+    def _migration_profile_description(self, insp, text):
+        if not insp.has_table("vehicle_profiles"):
+            return
+        existing = {column["name"] for column in insp.get_columns("vehicle_profiles")}
+        if "description" not in existing:
+            with self.engine.begin() as conn:
+                conn.execute(text("ALTER TABLE vehicle_profiles ADD COLUMN description VARCHAR(1000) DEFAULT ''"))
 
     def get_session(self) -> Session:
         """Get a new database session."""

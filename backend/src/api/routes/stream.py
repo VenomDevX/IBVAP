@@ -4,6 +4,7 @@ MJPEG video stream and frame capture endpoints.
 """
 
 import asyncio
+import threading
 import time
 
 import cv2
@@ -18,6 +19,40 @@ router = APIRouter()
 
 # ~1 hour hard cap so a forgotten tab cannot pin a connection forever
 _MAX_FRAMES = 60 * 60 * 30
+_STREAM_FPS = 10.0
+_STREAM_MAX_WIDTH = 960
+_STREAM_JPEG_QUALITY = 65
+_stream_cache: dict[str, dict] = {}
+_stream_cache_guard = threading.Lock()
+
+
+def _encoded_frame(camera_id: str, cam_pipeline) -> bytes | None:
+    """Encode once per camera/frame and share the JPEG across all viewers."""
+    with _stream_cache_guard:
+        cache = _stream_cache.setdefault(
+            camera_id,
+            {"lock": threading.Lock(), "revision": -1, "jpeg": None},
+        )
+    with cache["lock"]:
+        revision = cam_pipeline.get_stats().get("frames_processed", 0)
+        if cache["jpeg"] is not None and cache["revision"] == revision:
+            return cache["jpeg"]
+        frame = cam_pipeline.get_latest_annotated_frame()
+        if frame is None:
+            frame = cam_pipeline.get_latest_frame()
+        if frame is None:
+            return None
+        if frame.shape[1] > _STREAM_MAX_WIDTH:
+            height = max(1, round(frame.shape[0] * _STREAM_MAX_WIDTH / frame.shape[1]))
+            frame = cv2.resize(frame, (_STREAM_MAX_WIDTH, height), interpolation=cv2.INTER_AREA)
+        ok, buffer = cv2.imencode(
+            ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, _STREAM_JPEG_QUALITY]
+        )
+        if not ok:
+            return None
+        cache["revision"] = revision
+        cache["jpeg"] = buffer.tobytes()
+        return cache["jpeg"]
 
 
 async def generate_mjpeg(camera_id: str, request: Request, user: dict):
@@ -45,16 +80,11 @@ async def generate_mjpeg(camera_id: str, request: Request, user: dict):
                 break
             checked_at = time.time()
 
-        frame = cam_pipeline.get_latest_annotated_frame()
-        if frame is None:
-            frame = cam_pipeline.get_latest_frame()
-
-        if frame is not None:
-            ok, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
-            if ok:
-                yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n")
-                frames += 1
-            await asyncio.sleep(0.033)  # ~30 FPS cap
+        jpeg = await asyncio.to_thread(_encoded_frame, camera_id, cam_pipeline)
+        if jpeg is not None:
+            yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpeg + b"\r\n")
+            frames += 1
+            await asyncio.sleep(1.0 / _STREAM_FPS)
         else:
             await asyncio.sleep(0.1)
 

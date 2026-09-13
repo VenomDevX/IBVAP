@@ -54,8 +54,6 @@ dataset/
 *.mkv
 
 # --- External Dataset Drive ---
-# If your dataset is on J:\Data set or similar, it's outside the repo
-# but this ensures any copied/symlinked data dirs are excluded
 **/Data set/
 **/data set/
 
@@ -112,3 +110,10 @@ supabase/.branches/
 *.db-wal
 *.db-journal
 .playwright-mcp/
+
+# --- Backup archives (never push to GitHub) ---
+*.zip
+*.tar.gz
+*.7z
+*.rar
+*_backup*

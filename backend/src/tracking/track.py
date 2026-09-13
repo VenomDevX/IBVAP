@@ -4,7 +4,9 @@ Represents a tracked object with trajectory history.
 """
 
 import time
+import uuid
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
@@ -14,11 +16,14 @@ class Track:
     track_id: int
     object_type: str  # "person", "car", etc.
     camera_id: str
+    session_id: str = "legacy"
+    track_uuid: str = ""
 
     # Current state
     bbox: tuple[int, int, int, int] = (0, 0, 0, 0)
     confidence: float = 0.0
     is_active: bool = True
+    status: str = "NEW"  # NEW | ACTIVE | LOST | CLOSED
 
     # Trajectory history — list of (centroid_x, centroid_y, timestamp)
     trajectory: list[tuple[int, int, float]] = field(default_factory=list)
@@ -30,6 +35,7 @@ class Track:
     # Zone context (updated by spatial module)
     current_zones: list[str] = field(default_factory=list)
     zone_entry_times: dict = field(default_factory=dict)  # zone_id -> entry_time
+    zone_session_ids: dict = field(default_factory=dict)  # zone_id -> collision-safe visit id
 
     # Behavior flags (updated by behavior engine)
     is_loitering: bool = False
@@ -56,6 +62,23 @@ class Track:
     risk_score: float = 0.0
     risk_level: str = "low"
     risk_factors: list[str] = field(default_factory=list)
+    score_breakdown: dict = field(default_factory=dict)
+
+    # Best-frame state. The image itself is stored by the evidence service; the
+    # track only keeps the quality decision and path.
+    best_frame_score: float = 0.0
+    best_frame_timestamp: float | None = None
+    best_snapshot_path: str | None = None
+    best_frame: Any = field(default=None, repr=False, compare=False)
+    best_face_quality: float = 0.0
+    plate_observations: list[dict] = field(default_factory=list)
+
+    def __post_init__(self):
+        if not self.track_uuid:
+            # UUID5 is stable for the same camera session/tracker tuple and
+            # cannot collide when ByteTrack restarts its numeric counter.
+            identity = f"{self.camera_id}:{self.session_id}:{self.track_id}"
+            self.track_uuid = str(uuid.uuid5(uuid.NAMESPACE_URL, f"ibvap:{identity}"))
 
     @property
     def centroid(self) -> tuple[int, int]:
@@ -100,6 +123,7 @@ class Track:
         self.confidence = confidence
         self.last_seen = timestamp or time.time()
         self.is_active = True
+        self.status = "ACTIVE"
 
         # Calculate centroid and add to trajectory
         x1, y1, x2, y2 = bbox
@@ -130,12 +154,15 @@ class Track:
         """JSON-serializable representation."""
         return {
             "track_id": self.track_id,
+            "track_uuid": self.track_uuid,
+            "session_id": self.session_id,
             "object_type": self.object_type,
             "camera_id": self.camera_id,
             "bbox": list(self.bbox),
             "centroid": list(self.centroid),
             "confidence": round(self.confidence, 3),
             "is_active": self.is_active,
+            "status": self.status,
             "duration": round(self.duration, 2),
             "trajectory_length": self.trajectory_length,
             "total_distance": round(self.total_distance, 1),
@@ -155,6 +182,12 @@ class Track:
             "risk_score": round(self.risk_score, 1),
             "risk_level": self.risk_level,
             "risk_factors": self.risk_factors,
+            "score_breakdown": self.score_breakdown,
+            "zone_entered_at": self.zone_entry_times,
+            "zone_session_ids": self.zone_session_ids,
+            "best_frame_score": round(self.best_frame_score, 3),
+            "best_frame_timestamp": self.best_frame_timestamp,
+            "best_snapshot_path": self.best_snapshot_path,
             "first_seen": self.first_seen,
             "last_seen": self.last_seen,
         }

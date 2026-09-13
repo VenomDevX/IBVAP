@@ -67,12 +67,13 @@ async def get_summary(user: dict = Depends(require_auth)):
         summary["total_alerts"] = stored.get("total_alerts", 0)
         summary["unreviewed_alerts"] = stored.get("unreviewed_alerts", 0)
         summary["critical_alerts"] = stored.get("critical_alerts", 0)
+        summary["open_incidents"] = stored.get("unreviewed_alerts", 0)
+        summary["critical_high_incidents"] = stored.get("critical_alerts", 0)
     finally:
         session.close()
 
     if pipeline:
         cameras = [p for cam, p in pipeline.camera_pipelines.items() if can_access_camera(user, cam)]
-        summary["total_cameras"] = len(cameras)
         summary["online_cameras"] = sum(
             1 for p in cameras if p.video_source.status.value == "online"
         )

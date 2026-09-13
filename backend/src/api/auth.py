@@ -58,7 +58,7 @@ if _DEV_BYPASS and _IS_DEV:
         "IBVAP_DEV_BYPASS is set — a static bearer token grants admin. Never use this outside local development."
     )
 
-VALID_ROLES = ("admin", "supervisor", "operator", "auditor")
+VALID_ROLES = ("admin", "commander", "operator", "viewer", "supervisor", "auditor")
 DEFAULT_ROLE = "operator"
 
 security = HTTPBearer()

@@ -66,12 +66,26 @@ class ObjectDetector:
         device: str = "auto",
         imgsz: int = 640,
         detect_all: bool = False,
+        class_thresholds: dict[str, float] | None = None,
+        half_precision: bool = True,
+        fallback_model_path: str | None = None,
     ):
         self.confidence_threshold = confidence_threshold
         self.nms_threshold = nms_threshold
         self.target_classes = target_classes or [0, 2, 3, 5, 7]
         self.detect_all = detect_all
         self.imgsz = imgsz
+        self.class_thresholds = {
+            _normalize_class(name): float(value)
+            for name, value in (class_thresholds or {}).items()
+        }
+        self.inference_confidence = min(
+            [self.confidence_threshold, *self.class_thresholds.values()]
+        )
+        self.half_precision = bool(half_precision)
+        self._fallback_model_path = fallback_model_path
+        self._fallback_model = None
+        self._fallback_id2name: dict[int, str] = {}
         self._model = None
         self._device = device
         self._model_path = model_path
@@ -83,6 +97,8 @@ class ObjectDetector:
 
         # Performance tracking
         self._inference_times = deque(maxlen=200)
+        self._queue_wait_times = deque(maxlen=200)
+        self._service_times = deque(maxlen=200)
         self._total_detections: int = 0
 
         self._load_model()
@@ -97,16 +113,32 @@ class ObjectDetector:
             logger.info(f"Loading detection model: {self._model_path}")
             self._model = YOLO(self._model_path)
 
-            # Auto-detect device
+            import torch
+            # Auto-detect device, or enforce an explicitly requested GPU.
             if self._device == "auto":
-                import torch
-
                 self._device = "cuda" if torch.cuda.is_available() else "cpu"
+            if str(self._device).startswith("cuda"):
+                if not torch.cuda.is_available():
+                    raise RuntimeError(f"CUDA requested ({self._device}) but PyTorch cannot access it")
+                torch.backends.cudnn.benchmark = True
+                torch.backends.cuda.matmul.allow_tf32 = True
 
             # Prefer the model's own class names (custom coarse model)
             model_names = getattr(self._model, "names", None)
             if model_names:
                 self._id2name = {int(k): _normalize_class(v) for k, v in dict(model_names).items()}
+
+            if self._fallback_model_path and self._fallback_model_path != self._model_path:
+                try:
+                    self._fallback_model = YOLO(self._fallback_model_path)
+                    fallback_names = getattr(self._fallback_model, "names", None) or COCO_TARGET_CLASSES
+                    self._fallback_id2name = {
+                        int(k): _normalize_class(v) for k, v in dict(fallback_names).items()
+                    }
+                    logger.info(f"Loaded empty-frame fallback detector: {self._fallback_model_path}")
+                except Exception as fallback_error:
+                    self._fallback_model = None
+                    logger.warning(f"Fallback detector unavailable: {fallback_error}")
 
             logger.success(
                 f"Detection model loaded on {self._device} ({len(self._id2name)} classes, detect_all={self.detect_all})"
@@ -135,22 +167,24 @@ class ObjectDetector:
             return FrameDetections(frame_id=frame_id, camera_id=camera_id, timestamp=timestamp, detections=detections)
 
         try:
-            start_time = time.time()
+            service_started = time.perf_counter()
 
             # Run inference
+            queue_started = time.perf_counter()
             with self._inference_lock:
+                inference_started = time.perf_counter()
                 results = self._model(
                     frame,
-                    conf=self.confidence_threshold,
+                    conf=self.inference_confidence,
                     iou=self.nms_threshold,
                     imgsz=self.imgsz,
                     device=self._device,
+                    half=self.half_precision and str(self._device).startswith("cuda"),
                     classes=None if self.detect_all else self.target_classes,
                     verbose=False,
                 )
-
-            inference_time = time.time() - start_time
-            self._inference_times.append(inference_time)
+                inference_seconds = time.perf_counter() - inference_started
+            self._queue_wait_times.append(inference_started - queue_started)
 
             # Parse results
             if results and len(results) > 0:
@@ -164,6 +198,9 @@ class ObjectDetector:
                         cls_id = int(box.cls[0].cpu().numpy())
 
                         class_name = self._id2name.get(cls_id, f"class_{cls_id}")
+                        class_floor = self.class_thresholds.get(class_name, self.confidence_threshold)
+                        if conf < class_floor:
+                            continue
 
                         detection = DetectionResult(
                             bbox=(int(x1), int(y1), int(x2), int(y2)),
@@ -173,6 +210,45 @@ class ObjectDetector:
                         )
                         detections.append(detection)
 
+            # The custom border model owns the primary taxonomy. A lightweight
+            # COCO fallback is invoked only when it returns nothing, improving
+            # recall on domain-shifted traffic/crowd clips without doubling the
+            # cost of every frame.
+            if not detections and self._fallback_model is not None:
+                queue_started = time.perf_counter()
+                with self._inference_lock:
+                    fallback_started = time.perf_counter()
+                    fallback_results = self._fallback_model(
+                        frame,
+                        conf=self.inference_confidence,
+                        iou=self.nms_threshold,
+                        imgsz=self.imgsz,
+                        device=self._device,
+                        half=self.half_precision and str(self._device).startswith("cuda"),
+                        classes=self.target_classes,
+                        verbose=False,
+                    )
+                    inference_seconds += time.perf_counter() - fallback_started
+                self._queue_wait_times.append(fallback_started - queue_started)
+                if fallback_results:
+                    fallback_boxes = fallback_results[0].boxes
+                    if fallback_boxes is not None:
+                        for box in fallback_boxes:
+                            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
+                            conf = float(box.conf[0].cpu().numpy())
+                            cls_id = int(box.cls[0].cpu().numpy())
+                            class_name = self._fallback_id2name.get(cls_id, f"class_{cls_id}")
+                            if conf < self.class_thresholds.get(class_name, self.confidence_threshold):
+                                continue
+                            detections.append(DetectionResult(
+                                bbox=(int(x1), int(y1), int(x2), int(y2)),
+                                class_id=cls_id,
+                                class_name=class_name,
+                                confidence=conf,
+                            ))
+
+            self._inference_times.append(inference_seconds)
+            self._service_times.append(time.perf_counter() - service_started)
             self._total_detections += len(detections)
 
         except Exception as e:
@@ -191,6 +267,20 @@ class ObjectDetector:
         """Get approximate detection FPS."""
         avg_ms = self.get_average_inference_time()
         return 1000.0 / avg_ms if avg_ms > 0 else 0.0
+
+    def get_average_queue_wait_time(self) -> float:
+        """Get recent average time waiting for the shared GPU, in milliseconds."""
+        if not self._queue_wait_times:
+            return 0.0
+        recent = list(self._queue_wait_times)[-100:]
+        return (sum(recent) / len(recent)) * 1000
+
+    def get_average_service_time(self) -> float:
+        """Get recent end-to-end detector call latency, in milliseconds."""
+        if not self._service_times:
+            return 0.0
+        recent = list(self._service_times)[-100:]
+        return (sum(recent) / len(recent)) * 1000
 
     @staticmethod
     def draw_detections(

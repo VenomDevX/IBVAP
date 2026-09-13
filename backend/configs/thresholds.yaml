@@ -3,14 +3,34 @@
 # =============================================================================
 
 detection:
-  confidence_threshold: 0.40
+  # The model runs at the lowest class floor, then applies per-class gates.
+  # This preserves small-object recall without lowering every class equally.
+  confidence_threshold: 0.30
   nms_threshold: 0.45            # NOTE: currently read by ObjectDetector default only
+  half_precision: true           # CUDA FP16: substantially faster with negligible detector drift
+  device: "auto"
+  class_thresholds:
+    person: 0.30
+    car: 0.30
+    bus: 0.32
+    truck: 0.32
+    motorcycle: 0.30
+    bicycle: 0.30
+    license_plate: 0.22
+    military_ground_vehicle: 0.35
+    aircraft: 0.35
+    helicopter: 0.35
+    drone_uav: 0.32
+    night_vision_object: 0.40
+    animal: 0.35
   # Custom coarse detector weights (backend/ml/taxonomy.py, 13 classes).
   # When set and the file exists, the pipeline loads it and emits ALL its classes
   # (detect_all=True) and target_classes below is ignored. Leave "" for the stock model.
-  # 3-epoch smoke-test model (person/car/plate/bike solid; aerial classes pending
-  # the full Colab run -> notebooks/train_colab.ipynb). Swap in ibvap_coarse_best.pt.
+  # This file is the 50-epoch best checkpoint (validation mAP50 0.738).
   weights_path: "models/ibvap_coarse.pt"
+  # Local COCO model runs only when the custom detector returns no objects.
+  # It improves domain-shifted road/crowd recall at bounded cost.
+  fallback_weights_path: "models/detection/yolov8n.pt"
   # target_classes only applies to the STOCK model (COCO ids):
   # 0=person, 2=car, 3=motorcycle, 5=bus, 7=truck
   target_classes: [0, 2, 3, 5, 7]
@@ -24,7 +44,7 @@ tracking:
   # Track is considered lost after N frames without detection
   max_age: 30
   # Minimum consecutive detections to confirm a track
-  min_hits: 3
+  min_hits: 1
   # IoU threshold for matching
   iou_threshold: 0.3
 
@@ -42,6 +62,16 @@ behavior:
   direction_min_points: 5
   # Speed calculation: pixels per second threshold for "stationary"
   stationary_speed_threshold: 5.0
+  # Darkness is context by default, not an incident on its own.
+  night_movement_event_enabled: false
+
+events:
+  temporal_confirmation_frames: 3
+  temporal_confirmation_window: 5
+  exit_grace_seconds: 2
+  event_cooldown_seconds: 30
+  update_interval_seconds: 1
+  track_ttl_seconds: 10
 
 fusion:
   # Stable incident throttles. The camera-level cooldown also protects against
@@ -54,6 +84,10 @@ face:
   # Face recognition needs `insightface` + the buffalo_l model (~300 MB).
   # Leave false unless the dependency is installed and a gallery exists.
   enabled: true
+  # Never silently fall back to CPU. If ONNX Runtime's CUDA provider is not
+  # installed, face recognition disables itself and the real-time pipeline
+  # continues using the CUDA object detector.
+  device: "auto"
   gallery_path: "./models/face/gallery.json"
   similarity_threshold: 0.45   # >= this => "known"
   uncertain_threshold: 0.35    # >= this => "uncertain"
@@ -63,6 +97,9 @@ anpr:
   # OCR engine cascade: easyocr -> paddleocr -> pytesseract -> mock.
   # Override with the IBVAP_OCR_ENGINE env var.
   ocr_engine: "auto"
+  recheck_seconds: 1.0
+  consensus_min_observations: 3
+  consensus_min_confidence: 0.55
 
 alerts:
   # Cooldown: seconds before re-alerting on same track + same event type
@@ -75,6 +112,14 @@ alerts:
   max_snapshot_storage_mb: 2048
   min_free_storage_mb: 1024
 
+evidence:
+  clips_enabled: true
+  pre_event_seconds: 3
+  post_event_seconds: 3
+  capture_fps: 5
+  max_width: 960
+  jpeg_quality: 65
+
 classifier:
   # Stage 2: names the specific type of a military detection (F16 rather than
   # "aircraft"). Runs only on aircraft / helicopter / drone_uav /
@@ -84,6 +129,7 @@ classifier:
   # If the file is absent the classifier disables itself and the pipeline runs
   # single-stage exactly as before.
   enabled: true
+  device: "cuda:0"
   weights: "./models/classifier/ibvap_fine.pt"
   min_confidence: 0.55   # below this, keep the coarse label rather than guess
   recheck_seconds: 2.0   # a track's airframe does not change; do not run per frame

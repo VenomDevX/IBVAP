@@ -3,6 +3,8 @@ IBVAP — ByteTrack Multi-Object Tracker
 Integrates ByteTrack for persistent object tracking across frames.
 """
 
+import uuid
+
 import cv2
 import numpy as np
 from loguru import logger
@@ -46,11 +48,13 @@ class MultiObjectTracker:
         min_hits: int = 3,
         iou_threshold: float = 0.3,
         frame_rate: float = 30,
+        session_id: str | None = None,
     ):
         self.max_age = max_age
         self.min_hits = min_hits
         self.iou_threshold = iou_threshold
         self.frame_rate = frame_rate
+        self.session_id = session_id or str(uuid.uuid4())
 
         # ByteTrack tracker
         self._tracker = self._make_bytetrack(max_age, iou_threshold, min_hits, frame_rate)
@@ -134,6 +138,7 @@ class MultiObjectTracker:
                             track_id=tid,
                             object_type=class_name,
                             camera_id=camera_id,
+                            session_id=self.session_id,
                             bbox=bbox,
                             confidence=conf,
                             first_seen=timestamp,
@@ -187,6 +192,7 @@ class MultiObjectTracker:
                     age = timestamp - track.last_seen
                     if age > self.max_age / self.frame_rate:
                         track.is_active = False
+                        track.status = "LOST"
 
         except Exception as e:
             logger.error(f"Tracking error: {e}")
@@ -203,7 +209,9 @@ class MultiObjectTracker:
             age = current_time - track.last_seen
             if track.is_active and age > inactive_after:
                 track.is_active = False
+                track.status = "LOST"
             if not track.is_active and age > evict_after:
+                track.status = "CLOSED"
                 dead.append(tid)
         for tid in dead:
             del self._tracks[tid]
@@ -229,9 +237,13 @@ class MultiObjectTracker:
             logger.error(f"sv.ByteTrack unavailable ({e}) - tracker running in basic mode")
             return None
 
-    def reset(self):
+    def reset(self, session_id: str | None = None):
         """Reset all tracking state."""
+        for track in self._tracks.values():
+            track.is_active = False
+            track.status = "CLOSED"
         self._tracks.clear()
+        self.session_id = session_id or str(uuid.uuid4())
         self._tracker = self._make_bytetrack(self.max_age, self.iou_threshold, self.min_hits, self.frame_rate)
 
     @staticmethod

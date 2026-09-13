@@ -61,6 +61,7 @@ class FineClassifier:
         self._model = None
         self._torch = None
         self._device = device
+        self._use_half = False
 
         if not enabled:
             return
@@ -89,6 +90,9 @@ class FineClassifier:
             self._model = self._build(arch, len(self.classes))
             self._model.load_state_dict(ckpt["model"])
             self._model.to(self._device).eval()
+            self._use_half = str(self._device).startswith("cuda")
+            if self._use_half:
+                self._model.half()
 
             logger.info(
                 f"FineClassifier: {len(self.classes)} classes, arch={arch}, "
@@ -145,8 +149,10 @@ class FineClassifier:
         try:
             tensor = preprocess_crop(crop, self.imgsz)
             t = self._torch
-            with t.no_grad():
+            with t.inference_mode():
                 x = t.from_numpy(tensor).unsqueeze(0).to(self._device)
+                if self._use_half:
+                    x = x.half()
                 probs = t.softmax(self._model(x), dim=1)[0]
                 conf, idx = t.max(probs, dim=0)
             confidence = float(conf)

@@ -8,7 +8,6 @@ import { Button, ButtonLink } from '@/src/components/ui/Button';
 import { Input, SearchInput, Select } from '@/src/components/ui/Field';
 import { Toolbar } from '@/src/components/ui/Toolbar';
 import { Loading } from '@/src/components/ui/States';
-import Card from '@/src/components/ui/Card';
 import type { Camera, Event } from '@/src/types';
 
 const TYPES = [
