@@ -26,6 +26,8 @@ class CameraModel(Base):
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
     enabled = Column(Boolean, default=True)
+    fps_limit = Column(Integer, default=15)
+    resolution = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -41,7 +43,7 @@ class TrackModel(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     track_id = Column(Integer, nullable=False, index=True)
-    camera_id = Column(String(50), ForeignKey("cameras.camera_id"), nullable=False)
+    camera_id = Column(String(50), ForeignKey("cameras.camera_id"), nullable=False, index=True)
     object_type = Column(String(50), nullable=False)
     start_time = Column(DateTime, nullable=False)
     end_time = Column(DateTime, nullable=True)
@@ -89,7 +91,7 @@ class AlertModel(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     alert_id = Column(String(50), unique=True, nullable=False, index=True)
     camera_id = Column(String(50), ForeignKey("cameras.camera_id"), nullable=False, index=True)
-    event_id = Column(String(50), ForeignKey("events.event_id"), nullable=False)
+    event_id = Column(String(50), ForeignKey("events.event_id"), nullable=False, index=True)
     track_id = Column(Integer, nullable=True)
     event_type = Column(String(100), nullable=False)
     timestamp = Column(DateTime, nullable=False, index=True)
@@ -104,6 +106,11 @@ class AlertModel(Base):
     reviewed = Column(Boolean, default=False, index=True)
     reviewed_by = Column(String(100), nullable=True)
     reviewed_at = Column(DateTime, nullable=True)
+    status = Column(String(30), default="open", nullable=False, index=True)
+    disposition = Column(String(30), nullable=True, index=True)
+    assignee = Column(String(100), nullable=True, index=True)
+    acknowledged_at = Column(DateTime, nullable=True)
+    resolved_at = Column(DateTime, nullable=True)
     prev_hash = Column(String(64), nullable=True)
     chain_hash = Column(String(64), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -111,6 +118,21 @@ class AlertModel(Base):
     # Relationships
     camera = relationship("CameraModel", back_populates="alerts")
     event = relationship("EventModel", back_populates="alerts")
+    notes = relationship("IncidentNoteModel", back_populates="alert", order_by="IncidentNoteModel.created_at")
+
+
+class IncidentNoteModel(Base):
+    """Append-only operator notes attached to an alert/incident."""
+
+    __tablename__ = "incident_notes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    alert_id = Column(String(50), ForeignKey("alerts.alert_id"), nullable=False, index=True)
+    author = Column(String(100), nullable=False)
+    note = Column(String(4000), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    alert = relationship("AlertModel", back_populates="notes")
 
 
 class IdentityResultModel(Base):
@@ -121,7 +143,7 @@ class IdentityResultModel(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     identity_id = Column(String(50), unique=True, nullable=False)
     track_id = Column(Integer, nullable=False)
-    camera_id = Column(String(50), nullable=False)
+    camera_id = Column(String(50), ForeignKey("cameras.camera_id"), nullable=False, index=True)
     identity_label = Column(String(200), default="unknown")
     similarity_score = Column(Float, default=0.0)
     timestamp = Column(DateTime, nullable=False)
@@ -136,7 +158,7 @@ class ANPRResultModel(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     plate_id = Column(String(50), unique=True, nullable=False)
     track_id = Column(Integer, nullable=False)
-    camera_id = Column(String(50), nullable=False)
+    camera_id = Column(String(50), ForeignKey("cameras.camera_id"), nullable=False, index=True)
     plate_text = Column(String(20), default="")
     ocr_confidence = Column(Float, default=0.0)
     timestamp = Column(DateTime, nullable=False)
@@ -180,7 +202,7 @@ class ZoneModel(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     zone_id = Column(String(50), unique=True, nullable=False)
-    camera_id = Column(String(50), nullable=False)
+    camera_id = Column(String(50), ForeignKey("cameras.camera_id"), nullable=False, index=True)
     name = Column(String(200), nullable=False)
     zone_type = Column(String(50), default="restricted")
     points = Column(JSON, default=list)

@@ -20,9 +20,15 @@ from src.tracking.track import Track
 
 
 def event(camera="a", **kwargs):
-    return FusedEvent(event_id=kwargs.pop("event_id", "event"), camera_id=camera, track_id=1,
-                      timestamp=time.time(), object_type="person", event_type="restricted_zone_entry",
-                      **kwargs)
+    return FusedEvent(
+        event_id=kwargs.pop("event_id", "event"),
+        camera_id=kwargs.pop("camera_id", camera),
+        track_id=kwargs.pop("track_id", 1),
+        timestamp=kwargs.pop("timestamp", time.time()),
+        object_type=kwargs.pop("object_type", "person"),
+        event_type=kwargs.pop("event_type", "restricted_zone_entry"),
+        **kwargs,
+    )
 
 
 @pytest.fixture
@@ -72,6 +78,28 @@ def test_scoped_lists_counts_reports_and_review(client, records, scoped_user):
     assert {a["camera_id"] for a in report["alerts"]} == {"a"}
     stats = client.get("/api/statistics", headers=scoped_user).json()["database"]
     assert stats["total_events"] == stats["total_alerts"] == stats["cameras"] == 1
+
+
+def test_server_pagination_and_incident_workflow(client, records, scoped_user):
+    alerts = client.get("/api/alerts/query?page=1&page_size=1", headers=scoped_user)
+    assert alerts.status_code == 200
+    assert alerts.json()["total"] == 1
+    assert [item["camera_id"] for item in alerts.json()["items"]] == ["a"]
+
+    events = client.get("/api/events/query?page=1&page_size=1&search=e-a", headers=scoped_user)
+    assert events.status_code == 200
+    assert events.json()["total"] == 1
+
+    updated = client.patch(
+        "/api/alerts/al-a",
+        headers=scoped_user,
+        json={"status": "resolved", "disposition": "true_alarm", "assignee": "scoped", "note": "Verified"},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["status"] == "resolved"
+    detail = client.get("/api/alerts/al-a", headers=scoped_user).json()
+    assert detail["reviewed"] is True
+    assert detail["notes"][0]["note"] == "Verified"
 
 
 def test_snapshot_ownership_uses_database(client, records, scoped_user, tmp_path, monkeypatch):
@@ -152,6 +180,26 @@ def test_fusion_ids_and_escalation(monkeypatch):
     assert engine.should_record(second)
 
 
+def test_fusion_deduplicates_tracker_churn_and_keeps_escalation():
+    engine = ContextFusion(incident_cooldown=60)
+    first = event(camera_id="a", track_id=1, risk_level="medium")
+    engine.mark_recorded(first)
+
+    replacement_track = event(camera_id="a", track_id=999, risk_level="medium")
+    assert not engine.should_record(replacement_track)
+
+    replacement_track.risk_level = "critical"
+    assert engine.should_record(replacement_track)
+
+
+def test_fusion_enforces_per_camera_persistence_budget():
+    engine = ContextFusion(incident_cooldown=1, max_events_per_minute=1)
+    first = event(camera_id="a", event_type="one")
+    engine.mark_recorded(first)
+    assert not engine.should_record(event(camera_id="a", event_type="two"))
+    assert engine.should_record(event(camera_id="b", event_type="two"))
+
+
 def test_alert_dedup_is_camera_scoped_and_escalates(tmp_path):
     engine = AlertEngine(snapshots_dir=str(tmp_path))
     engine.notification_manager.notify_critical = Mock()
@@ -159,6 +207,34 @@ def test_alert_dedup_is_camera_scoped_and_escalates(tmp_path):
     assert engine.generate_alert(event("b", risk_score=40, risk_level="medium"))
     assert engine.generate_alert(event("a", risk_score=40, risk_level="medium")) is None
     assert engine.generate_alert(event("a", risk_score=80, risk_level="critical"))
+
+
+def test_alert_dedup_survives_tracker_id_churn(tmp_path):
+    engine = AlertEngine(snapshots_dir=str(tmp_path))
+    assert engine.generate_alert(event("a", track_id=1, risk_score=40, risk_level="medium"))
+    assert engine.generate_alert(event("a", track_id=999, risk_score=40, risk_level="medium")) is None
+
+
+def test_snapshot_capture_stops_at_storage_budget(tmp_path):
+    engine = AlertEngine(snapshots_dir=str(tmp_path), max_snapshot_storage_mb=0)
+    alert = engine.generate_alert(
+        event("a", risk_score=40, risk_level="medium"),
+        np.full((20, 20, 3), 255, dtype=np.uint8),
+    )
+    assert alert is not None
+    assert alert.snapshot_path is None
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_sqlite_foreign_keys_and_migrations_are_enabled(tmp_db):
+    from sqlalchemy import text
+
+    with tmp_db.engine.connect() as connection:
+        assert connection.execute(text("PRAGMA foreign_keys")).scalar() == 1
+        versions = {
+            row[0] for row in connection.execute(text("SELECT version FROM schema_migrations"))
+        }
+    assert versions >= {1, 2}
 
 
 def camera_pipeline(tmp_path, **kwargs):
@@ -181,6 +257,9 @@ def test_event_persists_when_alert_is_suppressed(tmp_db, tmp_path, suppression):
         engine.max_alerts_per_minute = 0
     else:
         engine.generate_alert(event(risk_score=60, risk_level="high"))
+    pipeline.night_detector.get_night_context = Mock(
+        return_value={"is_night": False, "is_night_time": False, "brightness": 255}
+    )
     with tmp_db.get_session() as session:
         Repository(session).create_camera("a", "A", "test")
     track = Track(1, "person", "a", bbox=(20, 20, 40, 40))
@@ -228,6 +307,8 @@ def test_zones_restore_and_deleted_defaults_stay_deleted(tmp_db):
     config = {"zones": {"a": [{"id": "default", "name": "Default", "type": "restricted",
                                 "points": [[0, 0], [100, 0], [0, 100]]}]}}
     pipeline = IBVAPPipeline()
+    with tmp_db.get_session() as session:
+        Repository(session).create_camera("a", "A", "test")
     pipeline._restore_zones(config)
     with tmp_db.get_session() as session:
         repo = Repository(session)

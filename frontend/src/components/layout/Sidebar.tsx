@@ -57,12 +57,12 @@ export default function Sidebar({ open, onClose }: { open: boolean; onClose: () 
 
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-[100] flex w-60 flex-col border-r border-default bg-surface transition-transform duration-200',
+          'fixed inset-y-0 left-0 z-[100] flex w-60 flex-col border-r border-default bg-base transition-transform duration-200',
           'lg:sticky lg:top-0 lg:h-screen lg:translate-x-0',
           open ? 'translate-x-0' : '-translate-x-full',
         )}
       >
-        <div className="flex items-center gap-2.5 border-b border-default px-5 py-4">
+        <div className="flex items-center gap-2.5 px-5 py-4">
           <Icon name="shield-halved" className="text-lg text-accent" />
           <div className="leading-tight">
             <div className="text-base font-bold text-fg">IBVAP</div>
@@ -82,7 +82,7 @@ export default function Sidebar({ open, onClose }: { open: boolean; onClose: () 
                 className={cn(
                   'mb-1 flex items-center gap-3 rounded-sm px-4 py-2.5 text-[0.85rem] font-medium transition-colors',
                   active
-                    ? 'border-l-2 border-accent bg-elevated text-accent'
+                    ? 'border-l-2 border-accent bg-elevated text-white'
                     : 'text-fg-muted hover:bg-elevated hover:text-fg',
                 )}
               >

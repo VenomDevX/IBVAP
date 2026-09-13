@@ -43,10 +43,17 @@ behavior:
   # Speed calculation: pixels per second threshold for "stationary"
   stationary_speed_threshold: 5.0
 
+fusion:
+  # Stable incident throttles. The camera-level cooldown also protects against
+  # tracker ID churn, which otherwise produces a new DB row for every new ID.
+  track_cooldown_seconds: 120
+  incident_cooldown_seconds: 60
+  max_events_per_minute_per_camera: 20
+
 face:
   # Face recognition needs `insightface` + the buffalo_l model (~300 MB).
   # Leave false unless the dependency is installed and a gallery exists.
-  enabled: false
+  enabled: true
   gallery_path: "./models/face/gallery.json"
   similarity_threshold: 0.45   # >= this => "known"
   uncertain_threshold: 0.35    # >= this => "uncertain"
@@ -64,6 +71,9 @@ alerts:
   max_alerts_per_minute: 10
   # Minimum risk score to generate an alert
   min_alert_risk_score: 20
+  max_snapshots_per_hour_per_camera: 60
+  max_snapshot_storage_mb: 2048
+  min_free_storage_mb: 1024
 
 classifier:
   # Stage 2: names the specific type of a military detection (F16 rather than

@@ -11,6 +11,7 @@ dist/
 build/
 backend/venv/
 .venv/
+.venv*/
 venv/
 
 # --- Node ---
@@ -61,6 +62,7 @@ dataset/
 # --- YOLO Training Runs ---
 runs/
 backend/runs/
+backend/Ultralytics/
 
 # --- Model Weights ---
 *.pt

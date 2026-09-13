@@ -6,7 +6,7 @@ This is the CORE NOVELTY of IBVAP.
 
 import time
 import uuid
-from collections import deque
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
 
 from loguru import logger
@@ -89,12 +89,24 @@ class ContextFusion:
             Contributing: zone entry, loitering (48s), movement toward boundary, unknown identity.
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        fusion_cooldown: float = 120.0,
+        incident_cooldown: float = 60.0,
+        max_events_per_minute: int = 20,
+    ):
         self._event_counter: int = 0
         self._fused_events = deque(maxlen=5000)
-        # Deduplication: track_id -> last fused event time
+        # Track-level deduplication handles stable trackers. Incident-level
+        # deduplication also handles tracker churn, where the same person is
+        # repeatedly assigned a new track id and previously flooded the DB.
         self._last_fusion: dict[tuple, tuple[float, tuple]] = {}
-        self._fusion_cooldown: float = 30.0  # seconds
+        self._last_incident: dict[tuple, tuple[float, int]] = {}
+        self._record_times: dict[str, deque[float]] = defaultdict(deque)
+        self._last_budget_warning: dict[str, float] = {}
+        self._fusion_cooldown = max(1.0, float(fusion_cooldown))
+        self._incident_cooldown = max(1.0, float(incident_cooldown))
+        self._max_events_per_minute = max(0, int(max_events_per_minute))
 
     def fuse_events(
         self,
@@ -194,21 +206,75 @@ class ContextFusion:
 
     @staticmethod
     def _signature(event: FusedEvent) -> tuple:
-        return (event.event_type, event.risk_level, event.spatial_context.get("fence_crossed", False))
+        return (
+            event.event_type,
+            event.risk_level,
+            event.spatial_context.get("fence_crossed", False),
+            tuple(sorted(event.spatial_context.get("zones", []))),
+        )
+
+    @staticmethod
+    def _incident_key(event: FusedEvent) -> tuple:
+        """A stable incident identity that survives tracker-id churn."""
+        return (
+            event.camera_id,
+            event.event_type,
+            event.object_type,
+            tuple(sorted(event.spatial_context.get("zones", []))),
+            bool(event.spatial_context.get("fence_crossed", False)),
+        )
+
+    @staticmethod
+    def _level(level: str) -> int:
+        return {"low": 0, "medium": 1, "high": 2, "critical": 3}.get(level, 0)
 
     def should_record(self, event: FusedEvent) -> bool:
-        """Throttle unchanged records, never live scoring or a changed incident."""
+        """Bound persistence while preserving state changes and escalations."""
         now = time.time()
-        cutoff = now - self._fusion_cooldown * 4
+        cutoff = now - max(self._fusion_cooldown, self._incident_cooldown) * 4
         self._last_fusion = {k: v for k, v in self._last_fusion.items() if v[0] > cutoff}
+        self._last_incident = {k: v for k, v in self._last_incident.items() if v[0] > cutoff}
+
         previous = self._last_fusion.get((event.camera_id, event.track_id))
-        return (previous is None or previous[1] != self._signature(event)
-                or now - previous[0] >= self._fusion_cooldown)
+        track_changed = previous is None or previous[1] != self._signature(event)
+        track_due = previous is None or now - previous[0] >= self._fusion_cooldown
+        if not track_changed and not track_due:
+            return False
+
+        incident = self._last_incident.get(self._incident_key(event))
+        if incident is not None:
+            escalating = self._level(event.risk_level) > incident[1]
+            if not escalating and now - incident[0] < self._incident_cooldown:
+                return False
+
+        times = self._record_times[event.camera_id]
+        while times and now - times[0] >= 60:
+            times.popleft()
+        if len(times) >= self._max_events_per_minute:
+            last_warning = self._last_budget_warning.get(event.camera_id, 0.0)
+            if now - last_warning >= 60:
+                logger.warning(
+                    "Event persistence budget reached for camera {} ({} per minute)",
+                    event.camera_id,
+                    self._max_events_per_minute,
+                )
+                self._last_budget_warning[event.camera_id] = now
+            return False
+        return True
 
     def mark_recorded(self, event: FusedEvent) -> None:
-        self._last_fusion[(event.camera_id, event.track_id)] = (time.time(), self._signature(event))
+        now = time.time()
+        self._last_fusion[(event.camera_id, event.track_id)] = (now, self._signature(event))
+        self._last_incident[self._incident_key(event)] = (now, self._level(event.risk_level))
+        self._record_times[event.camera_id].append(now)
         self._fused_events.append(event)
-        logger.info(f"Recorded event: {event.event_type} | Camera: {event.camera_id} | Track: {event.track_id}")
+        logger.info(
+            "Recorded event {} camera={} track={} risk={}",
+            event.event_type,
+            event.camera_id,
+            event.track_id,
+            event.risk_level,
+        )
 
     def _classify_fused_event(
         self,

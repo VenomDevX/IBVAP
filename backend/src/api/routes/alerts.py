@@ -3,13 +3,49 @@ IBVAP — Alerts API Routes
 Alert querying, review, and management endpoints.
 """
 
+from datetime import datetime
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from src.api.auth import can_access_camera, require_auth, require_camera_access, require_role, scoped_cameras
 from src.database.db import get_database
 from src.database.repository import Repository
 
 router = APIRouter()
+
+
+class IncidentUpdate(BaseModel):
+    status: Literal["open", "acknowledged", "investigating", "resolved", "false_positive", "reopened"] | None = None
+    disposition: Literal["true_alarm", "false_alarm", "test", "escalated"] | None = None
+    assignee: str | None = Field(default=None, max_length=100)
+    note: str | None = Field(default=None, max_length=4000)
+
+
+def _serialize_alert(alert) -> dict:
+    return {
+        "alert_id": alert.alert_id,
+        "camera_id": alert.camera_id,
+        "event_id": alert.event_id,
+        "track_id": alert.track_id,
+        "event_type": alert.event_type,
+        "timestamp": alert.timestamp.isoformat() if alert.timestamp else None,
+        "risk_score": alert.risk_score,
+        "risk_level": alert.risk_level,
+        "object_type": alert.object_type,
+        "contributing_factors": alert.contributing_factors,
+        "snapshot_path": alert.snapshot_path,
+        "snapshot_hash": alert.snapshot_hash,
+        "reviewed": alert.reviewed,
+        "reviewed_by": alert.reviewed_by,
+        "reviewed_at": alert.reviewed_at.isoformat() if alert.reviewed_at else None,
+        "status": alert.status,
+        "disposition": alert.disposition,
+        "assignee": alert.assignee,
+        "acknowledged_at": alert.acknowledged_at.isoformat() if alert.acknowledged_at else None,
+        "resolved_at": alert.resolved_at.isoformat() if alert.resolved_at else None,
+    }
 
 
 @router.get("")
@@ -25,27 +61,43 @@ async def list_alerts(
     session = db.get_session()
     repo = Repository(session)
     alerts_list = repo.get_alerts(camera_id, risk_level, reviewed, limit, allowed_cameras=scoped_cameras(user))
-    result = [
-        {
-            "alert_id": a.alert_id,
-            "camera_id": a.camera_id,
-            "event_id": a.event_id,
-            "track_id": a.track_id,
-            "event_type": a.event_type,
-            "timestamp": a.timestamp.isoformat() if a.timestamp else None,
-            "risk_score": a.risk_score,
-            "risk_level": a.risk_level,
-            "object_type": a.object_type,
-            "contributing_factors": a.contributing_factors,
-            "snapshot_path": a.snapshot_path,
-            "snapshot_hash": a.snapshot_hash,
-            "reviewed": a.reviewed,
-            "reviewed_by": a.reviewed_by,
-        }
-        for a in alerts_list
-    ]
+    result = [_serialize_alert(a) for a in alerts_list]
     session.close()
     return result
+
+
+@router.get("/query")
+async def query_alerts(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+    camera_id: str | None = None,
+    risk_level: str | None = None,
+    reviewed: bool | None = None,
+    status: str | None = None,
+    start_time: datetime | None = None,
+    end_time: datetime | None = None,
+    search: str | None = Query(default=None, max_length=200),
+    sort_by: Literal["timestamp", "risk_score", "status", "camera_id"] = "timestamp",
+    sort_order: Literal["asc", "desc"] = "desc",
+    user: dict = Depends(require_auth),
+):
+    """Server-paginated incident query over the complete alert history."""
+    session = get_database().get_session()
+    try:
+        repo = Repository(session)
+        filters = dict(
+            camera_id=camera_id, risk_level=risk_level, reviewed=reviewed, status=status,
+            start_time=start_time, end_time=end_time, search=search,
+            allowed_cameras=scoped_cameras(user),
+        )
+        total = repo.count_alerts(**filters)
+        rows = repo.get_alerts(
+            **filters, limit=page_size, offset=(page - 1) * page_size,
+            sort_by=sort_by, sort_order=sort_order,
+        )
+        return {"items": [_serialize_alert(row) for row in rows], "page": page, "page_size": page_size, "total": total}
+    finally:
+        session.close()
 
 
 @router.get("/live")
@@ -63,34 +115,44 @@ async def get_live_alerts(user: dict = Depends(require_auth)):
 @router.get("/{alert_id}")
 async def get_alert(alert_id: str, user: dict = Depends(require_auth)):
     """Get a specific alert's full details."""
-    db = get_database()
-    session = db.get_session()
-    repo = Repository(session)
-    alert = repo.get_alert(alert_id)
-    session.close()
+    session = get_database().get_session()
+    try:
+        repo = Repository(session)
+        alert = repo.get_alert(alert_id)
+        if not alert:
+            raise HTTPException(status_code=404, detail="Alert not found")
+        require_camera_access(user, alert.camera_id)
+        result = _serialize_alert(alert)
+        result["notes"] = [
+            {"author": note.author, "note": note.note, "created_at": note.created_at.isoformat()}
+            for note in alert.notes
+        ]
+        return result
+    finally:
+        session.close()
 
-    if not alert:
-        raise HTTPException(status_code=404, detail="Alert not found")
 
-    require_camera_access(user, alert.camera_id)
-
-    return {
-        "alert_id": alert.alert_id,
-        "camera_id": alert.camera_id,
-        "event_id": alert.event_id,
-        "track_id": alert.track_id,
-        "event_type": alert.event_type,
-        "timestamp": alert.timestamp.isoformat() if alert.timestamp else None,
-        "risk_score": alert.risk_score,
-        "risk_level": alert.risk_level,
-        "object_type": alert.object_type,
-        "contributing_factors": alert.contributing_factors,
-        "snapshot_path": alert.snapshot_path,
-        "snapshot_hash": alert.snapshot_hash,
-        "reviewed": alert.reviewed,
-        "reviewed_by": alert.reviewed_by,
-        "reviewed_at": alert.reviewed_at.isoformat() if alert.reviewed_at else None,
-    }
+@router.patch("/{alert_id}")
+async def update_incident(
+    alert_id: str,
+    update: IncidentUpdate,
+    user: dict = Depends(require_role("operator", "supervisor")),
+):
+    """Advance an incident and append an immutable operator note."""
+    actor = user.get("email") or user.get("user_id") or "unknown"
+    session = get_database().get_session()
+    try:
+        repo = Repository(session)
+        alert = repo.get_alert(alert_id)
+        if alert is None:
+            raise HTTPException(status_code=404, detail="Alert not found")
+        require_camera_access(user, alert.camera_id)
+        changes = update.model_dump(exclude_unset=True)
+        updated = repo.update_alert_workflow(alert_id, actor, **changes)
+        repo.create_audit_log("update_incident", actor, {"alert_id": alert_id, "changes": changes})
+        return _serialize_alert(updated)
+    finally:
+        session.close()
 
 
 @router.post("/{alert_id}/review")

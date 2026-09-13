@@ -23,6 +23,8 @@ from src.features.anpr import extract_plate
 from src.features.color_extractor import get_dominant_color
 from src.fusion.context_fusion import ContextFusion
 from src.ingestion.video_source import CameraInfo, CameraStatus, VideoSource
+from src.paths import backend_path, snapshots_dir
+from src.paths import config_dir as default_config_dir
 from src.risk.risk_engine import RiskEngine
 from src.spatial.direction_analyzer import DirectionAnalyzer
 from src.spatial.fence_detector import FenceDetector
@@ -78,7 +80,12 @@ class CameraPipeline:
             brightness_threshold=behavior.get("low_light_brightness_threshold", 60),
         )
         self.behavior_engine = BehaviorEngine()
-        self.context_fusion = ContextFusion()
+        fusion = thresholds.get("fusion", {})
+        self.context_fusion = ContextFusion(
+            fusion_cooldown=fusion.get("track_cooldown_seconds", 120),
+            incident_cooldown=fusion.get("incident_cooldown_seconds", 60),
+            max_events_per_minute=fusion.get("max_events_per_minute_per_camera", 20),
+        )
         self.risk_engine = RiskEngine(risk_config)
         self.alert_engine = alert_engine
         self.face_recognizer = face_recognizer or FaceRecognizer(enabled=False)
@@ -87,6 +94,9 @@ class CameraPipeline:
         self._fine_check_times: dict[int, float] = {}
         self._FACE_RECHECK_S = 2.0
         self._FINE_RECHECK_S = 2.0
+        self._persist_events = os.getenv("IBVAP_PERSIST_EVENTS", "true").strip().lower() not in {
+            "0", "false", "no", "off"
+        }
 
         self._running = False
         self._stop_event = threading.Event()
@@ -384,10 +394,24 @@ class CameraPipeline:
         if not self.context_fusion.should_record(fused_event):
             return
 
-        # Print risk summary for significant events
+        # Keep operational logs bounded. Full explanation remains on the event.
         if fused_event.risk_level in ("high", "critical"):
-            summary = self.risk_engine.get_explainable_summary(fused_event)
-            logger.info(f"\n{summary}")
+            logger.warning(
+                "High-risk event camera={} track={} type={} score={:.0f}",
+                camera_id,
+                track.track_id,
+                fused_event.event_type,
+                fused_event.risk_score,
+            )
+
+        if not self._persist_events:
+            alert = self.alert_engine.generate_alert(fused_event, frame=None, publish=False)
+            self.context_fusion.mark_recorded(fused_event)
+            self._stats["events_generated"] += 1
+            if alert:
+                self.alert_engine.publish_alert(alert)
+                self._stats["alerts_generated"] += 1
+            return
 
         # Serialize chain appends across camera workers; publish only committed alerts.
         with self.alert_engine.persistence_lock:
@@ -457,8 +481,8 @@ class IBVAPPipeline:
     Entry point for the IBVAP processing system.
     """
 
-    def __init__(self, config_dir: str = "./configs"):
-        self.config_dir = Path(config_dir)
+    def __init__(self, config_dir: str | None = None):
+        self.config_dir = Path(config_dir).resolve() if config_dir else default_config_dir()
         self.camera_pipelines: dict[str, CameraPipeline] = {}
         self.detector: ObjectDetector | None = None
         self.zone_manager = ZoneManager()
@@ -467,6 +491,8 @@ class IBVAPPipeline:
         self.face_recognizer: FaceRecognizer | None = None
         self.fine_classifier: FineClassifier | None = None
         self._risk_config = {}
+        self._thresholds_config = {}
+        self._started = False
 
     def initialize(self):
         """Load configs and initialize all components."""
@@ -476,11 +502,14 @@ class IBVAPPipeline:
         cameras_config = self._load_yaml("cameras.yaml")
         zones_config = self._load_yaml("zones.yaml")
         thresholds_config = self._load_yaml("thresholds.yaml")
+        self._thresholds_config = thresholds_config
         self._risk_config = self._load_yaml("risk_weights.yaml")
 
         # Initialize detector (shared across cameras)
         det_cfg = thresholds_config.get("detection", {})
         weights_path = det_cfg.get("weights_path") or ""
+        if weights_path:
+            weights_path = str(backend_path(weights_path))
         use_custom = bool(weights_path) and os.path.exists(weights_path)
         if weights_path and not use_custom:
             logger.warning(f"detection.weights_path set but not found ({weights_path}) - using stock model")
@@ -493,9 +522,6 @@ class IBVAPPipeline:
             detect_all=use_custom,  # custom coarse model: emit all its classes
         )
 
-        # Import YAML defaults once; database rows (including deletions) take precedence.
-        self._restore_zones(zones_config)
-
         # Initialize fences
         self.fence_detector.load_from_config(zones_config)
 
@@ -505,13 +531,17 @@ class IBVAPPipeline:
             cooldown_seconds=alert_cfg.get("cooldown_seconds", 60),
             max_alerts_per_minute=alert_cfg.get("max_alerts_per_minute", 10),
             min_risk_score=alert_cfg.get("min_alert_risk_score", 20),
+            snapshots_dir=str(snapshots_dir()),
+            max_snapshots_per_hour=alert_cfg.get("max_snapshots_per_hour_per_camera", 60),
+            max_snapshot_storage_mb=alert_cfg.get("max_snapshot_storage_mb", 2048),
+            min_free_storage_mb=alert_cfg.get("min_free_storage_mb", 1024),
         )
 
         # Face recognition (shared model, off by default — see thresholds.yaml)
         fc = thresholds_config.get("face", {})
         self.face_recognizer = FaceRecognizer(
             enabled=bool(fc.get("enabled", False)),
-            gallery_path=fc.get("gallery_path", "./models/face/gallery.json"),
+            gallery_path=str(backend_path(fc.get("gallery_path", "./models/face/gallery.json"))),
             similarity_threshold=fc.get("similarity_threshold", 0.45),
             uncertain_threshold=fc.get("uncertain_threshold", 0.35),
             min_face_confidence=fc.get("min_face_confidence", 0.6),
@@ -522,12 +552,35 @@ class IBVAPPipeline:
         cc = thresholds_config.get("classifier", {})
         self.fine_classifier = FineClassifier(
             enabled=bool(cc.get("enabled", True)),
-            weights=cc.get("weights", "./models/classifier/ibvap_fine.pt"),
+            weights=str(backend_path(cc.get("weights", "./models/classifier/ibvap_fine.pt"))),
             min_confidence=float(cc.get("min_confidence", 0.55)),
         )
 
         # Initialize database
         db = get_database()
+
+        # Seed every configured camera, including disabled cameras, before zones
+        # so foreign-key enforcement never depends on startup ordering.
+        with db.get_session() as session:
+            repo = Repository(session)
+            for cam_cfg in cameras_config.get("cameras", []):
+                if not repo.get_camera(cam_cfg["id"]):
+                    repo.create_camera(
+                        camera_id=cam_cfg["id"],
+                        name=cam_cfg["name"],
+                        stream_url=cam_cfg["source"],
+                        camera_type=cam_cfg.get("type", "general"),
+                        location_label=cam_cfg.get("location", ""),
+                        latitude=cam_cfg.get("latitude"),
+                        longitude=cam_cfg.get("longitude"),
+                        enabled=cam_cfg.get("enabled", True),
+                        fps_limit=cam_cfg.get("fps", cam_cfg.get("fps_limit", 15)),
+                        resolution=cam_cfg.get("resolution"),
+                    )
+
+        # Import YAML zone defaults once; database rows, including soft
+        # deletions, take precedence after their parent cameras exist.
+        self._restore_zones(zones_config)
 
         # Initialize camera pipelines
         for cam_cfg in cameras_config.get("cameras", []):
@@ -544,10 +597,13 @@ class IBVAPPipeline:
             # demo cameras that were configured to downscale to 1080p and still
             # connected, and crashed, at their native 3840x2160.
             res_cfg = cam_cfg.get("resolution")
+            camera_source = cam_cfg["source"]
+            if "://" not in camera_source and not os.path.isabs(camera_source):
+                camera_source = str((Path(__file__).resolve().parents[2] / camera_source).resolve())
             camera_info = CameraInfo(
                 camera_id=cam_cfg["id"],
                 name=cam_cfg["name"],
-                source=cam_cfg["source"],
+                source=camera_source,
                 camera_type=cam_cfg.get("type", "general"),
                 fps_limit=cam_cfg.get("fps", cam_cfg.get("fps_limit", 15)),
                 resolution=tuple(res_cfg) if res_cfg else None,
@@ -573,20 +629,13 @@ class IBVAPPipeline:
                 repo = Repository(session)
                 existing = repo.get_camera(camera_info.camera_id)
                 if not existing:
-                    # Mock locations for the map view based on camera ID
-                    lat, lng = 28.6139, 77.2090  # Default to New Delhi coordinates
-                    if camera_info.camera_id == "cam_north":
-                        lat, lng = 28.6150, 77.2100
-                    elif camera_info.camera_id == "cam_south":
-                        lat, lng = 28.6120, 77.2080
-
                     repo.create_camera(
                         camera_id=camera_info.camera_id,
                         name=camera_info.name,
                         stream_url=camera_info.source,
                         camera_type=camera_info.camera_type,
-                        latitude=lat,
-                        longitude=lng,
+                        latitude=None,
+                        longitude=None,
                     )
                 session.close()
             except Exception as e:
@@ -596,6 +645,7 @@ class IBVAPPipeline:
 
     def start_all(self):
         """Start all camera pipelines."""
+        self._started = True
         for cam_id, pipeline in self.camera_pipelines.items():
             pipeline.start()
 
@@ -618,11 +668,59 @@ class IBVAPPipeline:
 
     def stop_all(self):
         """Stop all camera pipelines."""
+        self._started = False
         for cam_id, pipeline in self.camera_pipelines.items():
             pipeline.stop()
 
     def get_pipeline(self, camera_id: str) -> CameraPipeline | None:
         return self.camera_pipelines.get(camera_id)
+
+    def configure_camera(self, camera) -> None:
+        """Create or replace one runtime pipeline from a persisted camera row."""
+        existing = self.camera_pipelines.pop(camera.camera_id, None)
+        if existing:
+            existing.stop()
+        if not camera.enabled:
+            return
+        source = camera.stream_url
+        if "://" not in source and not os.path.isabs(source):
+            source = str((Path(__file__).resolve().parents[2] / source).resolve())
+        info = CameraInfo(
+            camera_id=camera.camera_id,
+            name=camera.name,
+            source=source,
+            camera_type=camera.camera_type,
+            enabled=camera.enabled,
+            fps_limit=camera.fps_limit or 15,
+            resolution=tuple(camera.resolution) if camera.resolution else None,
+        )
+        runtime = CameraPipeline(
+            camera_info=info,
+            detector=self.detector,
+            zone_manager=self.zone_manager,
+            fence_detector=self.fence_detector,
+            risk_config=self._risk_config,
+            alert_engine=self.alert_engine,
+            face_recognizer=self.face_recognizer,
+            fine_classifier=self.fine_classifier,
+            thresholds=self._thresholds_config,
+        )
+        self.camera_pipelines[camera.camera_id] = runtime
+        if self._started:
+            runtime.start()
+
+    def remove_camera(self, camera_id: str) -> None:
+        runtime = self.camera_pipelines.pop(camera_id, None)
+        if runtime:
+            runtime.stop()
+
+    def restart_camera(self, camera_id: str) -> bool:
+        runtime = self.camera_pipelines.get(camera_id)
+        if runtime is None:
+            return False
+        runtime.stop()
+        runtime.start()
+        return True
 
     def get_all_stats(self) -> dict[str, dict]:
         return {cam_id: pipeline.get_stats() for cam_id, pipeline in self.camera_pipelines.items()}

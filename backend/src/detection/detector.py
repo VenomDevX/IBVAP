@@ -3,6 +3,7 @@ IBVAP — YOLOv8 Object Detector
 Wrapper around Ultralytics YOLO for person/vehicle detection.
 """
 
+import os
 import threading
 import time
 from collections import deque
@@ -10,6 +11,15 @@ from collections import deque
 import cv2
 import numpy as np
 from loguru import logger
+
+from src.paths import output_dir
+
+# Ultralytics otherwise writes global user configuration during import. Runtime
+# state belongs in the configured project data root and must remain writable in
+# containers/restricted service accounts.
+_ultralytics_config_dir = output_dir() / "ultralytics"
+_ultralytics_config_dir.mkdir(parents=True, exist_ok=True)
+os.environ.setdefault("YOLO_CONFIG_DIR", str(_ultralytics_config_dir))
 
 try:
     from ultralytics import YOLO

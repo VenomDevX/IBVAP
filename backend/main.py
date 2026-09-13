@@ -10,11 +10,12 @@ from pathlib import Path
 import uvicorn
 from dotenv import load_dotenv
 from loguru import logger
+from src.paths import output_dir
 
 
 def setup_logging():
     """Configure loguru logging."""
-    log_dir = Path("./outputs/logs")
+    log_dir = output_dir() / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
 
     logger.add(
@@ -57,7 +58,7 @@ def main():
     setup_logging()
 
     # Create required directories
-    output_base = os.getenv("IBVAP_OUTPUT_DIR", "./outputs")
+    output_base = str(output_dir())
     model_base = os.getenv("IBVAP_MODEL_DIR", "./models")
     data_base = os.getenv("IBVAP_DATA_DIR", "./data")
 

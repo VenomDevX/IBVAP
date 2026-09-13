@@ -18,12 +18,12 @@ function ThreatRow({ threat }: { threat: Threat }) {
   const sev = severity(threat.risk_score);
   const meta = riskMeta(threat.risk_level);
   return (
-    <div className="rounded-sm border-l-2 bg-elevated px-3.5 py-3" style={{ borderColor: meta.color }}>
+    <div className="rounded-lg border-l-4 bg-elevated shadow-sm px-4 py-3" style={{ borderColor: meta.color }}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <span className="size-2 shrink-0 rounded-full" style={{ background: meta.color }} aria-hidden />
           <strong className="text-[0.9rem] font-semibold capitalize text-fg">{threat.object_type}</strong>
-          <span className="rounded-sm border border-default bg-input px-1.5 py-0.5 text-[0.68rem] tracking-wide text-fg-subtle">
+          <span className="rounded border border-default bg-input px-2 py-0.5 text-[0.68rem] tracking-wide text-fg-subtle">
             {threat.camera_id}
           </span>
         </div>
@@ -39,7 +39,7 @@ function ThreatRow({ threat }: { threat: Threat }) {
       {threat.risk_factors.length > 0 && (
         <div className="mt-2.5 flex flex-wrap gap-1.5">
           {threat.risk_factors.map((factor, i) => (
-            <span key={i} className="inline-flex items-center gap-1 rounded-sm border border-default bg-card px-1.5 py-0.5 text-[0.72rem] text-fg-muted">
+            <span key={i} className="inline-flex items-center gap-1.5 rounded border border-default bg-card px-2 py-0.5 text-[0.72rem] text-fg-muted shadow-sm">
               <Icon name="triangle-exclamation" className="text-[0.6rem] text-warning" />
               {factor}
             </span>
@@ -69,7 +69,7 @@ export default function ThreatScorePanel() {
   useInterval(fetchThreats, 3000);
 
   return (
-    <Card title="Live Threat Assessment" icon="shield-halved" className="mb-6">
+    <Card title="Live Threat Assessment" icon="shield-halved" iconColor="danger" className="mb-6">
       {loading ? (
         <Loading label="Loading threat scores…" />
       ) : threats.length === 0 ? (

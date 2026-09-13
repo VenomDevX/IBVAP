@@ -12,12 +12,12 @@ import Icon from '@/src/components/ui/Icon';
 import { Button, ButtonLink } from '@/src/components/ui/Button';
 import { Select } from '@/src/components/ui/Field';
 import { EmptyState, Loading } from '@/src/components/ui/States';
+import HeatmapOverlay from '@/src/components/camera/HeatmapOverlay';
 import { RiskDot } from '@/src/components/ui/RiskBadge';
 import StatusDot from '@/src/components/ui/StatusDot';
 import AlertTrendChart from '@/src/components/charts/AlertTrendChart';
 import AlertTypeChart from '@/src/components/charts/AlertTypeChart';
 import ThreatScorePanel from '@/src/components/dashboard/ThreatScorePanel';
-import HeatmapOverlay from '@/src/components/camera/HeatmapOverlay';
 import type {
   DashboardSummary, Camera, Alert, Event, TimeseriesData, AlertStats,
 } from '@/src/types';
@@ -42,28 +42,34 @@ function useDashboardData() {
   const [error, setError] = useState(false);
 
   const refresh = useCallback(async () => {
-    try {
-      const [sum, cam, alert, event, ts, stat] = await Promise.all([
+    const responses = await Promise.allSettled([
         apiFetch('/api/statistics/summary'),
         apiFetch('/api/cameras'),
-        apiFetch('/api/alerts/live'),
+        apiFetch('/api/alerts/query?status=open&page_size=10'),
         apiFetch('/api/events?limit=10'),
         apiFetch('/api/statistics/timeseries'),
         apiFetch('/api/statistics'),
       ]);
-      const statData: { alert_stats?: AlertStats } = await stat.json();
-      setData({
-        summary: await sum.json(),
-        cameras: await cam.json(),
-        alerts: await alert.json(),
-        events: await event.json(),
-        timeseries: await ts.json(),
-        byType: statData.alert_stats?.by_type ?? {},
-      });
-      setError(false);
-    } catch {
-      // Startup/offline state is rendered below and retried automatically.
-      setError(true);
+    const json = async <T,>(index: number): Promise<T | null> => {
+      const result = responses[index];
+      if (result.status !== 'fulfilled' || !result.value.ok) return null;
+      return result.value.json() as Promise<T>;
+    };
+    try {
+      const [summary, cameras, alertsPage, events, timeseries, statistics] = await Promise.all([
+        json<DashboardSummary>(0), json<Camera[]>(1), json<{ items: Alert[] }>(2),
+        json<Event[]>(3), json<TimeseriesData>(4),
+        json<{ alert_stats?: AlertStats; database?: { event_distribution?: Record<string, number> } }>(5),
+      ]);
+      setData(previous => ({
+        summary: summary ?? previous.summary,
+        cameras: cameras ?? previous.cameras,
+        alerts: alertsPage?.items ?? previous.alerts,
+        events: events ?? previous.events,
+        timeseries: timeseries ?? previous.timeseries,
+        byType: statistics?.database?.event_distribution ?? statistics?.alert_stats?.by_type ?? previous.byType,
+      }));
+      setError(!summary);
     } finally {
       setLoading(false);
     }
@@ -82,7 +88,8 @@ function ReportButtons() {
     try {
       const { fetchDailyReport, generateCSV, generatePDF } = await import('@/src/api/reports');
       const report = await fetchDailyReport();
-      (kind === 'csv' ? generateCSV : generatePDF)(report);
+      if (kind === 'csv') generateCSV(report);
+      else await generatePDF();
     } catch (e) {
       console.error(e);
       pushToast({ title: 'Export failed', message: 'Could not build the daily report.', level: 'high' });
@@ -99,8 +106,7 @@ function ReportButtons() {
 }
 
 function LiveFeed({ cameras }: { cameras: Camera[] }) {
-  const { session } = useAuth();
-  const token = session?.access_token;
+  const { mediaTicket } = useAuth();
   const [selected, setSelected] = useState('');
   const [heatmap, setHeatmap] = useState(false);
 
@@ -118,24 +124,23 @@ function LiveFeed({ cameras }: { cameras: Camera[] }) {
       >
         Heatmap
       </Button>
-      <Select value={selected} onChange={e => setSelected(e.target.value)} className="w-40">
+      <Select value={selected} onChange={e => setSelected(e.target.value)} className="w-44">
         <option value="">Select camera</option>
         {cameras.map(c => <option key={c.camera_id} value={c.camera_id}>{c.name}</option>)}
       </Select>
     </div>
   );
-
   return (
-    <Card title="Live Feed" icon="video" actions={controls}>
-      <div className="relative aspect-video w-full overflow-hidden rounded-sm bg-black">
+    <Card title="Live Feed" icon="video" iconColor="accent" actions={controls} bodyClassName="p-6 pt-2">
+      <div className="relative aspect-video w-full overflow-hidden rounded bg-black border border-default shadow-sm">
         {selected ? (
           <>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={mediaSrc(`/api/stream/${selected}`, token)}
+              src={mediaSrc(`/api/stream/${selected}`, mediaTicket)}
               alt="Live camera feed"
               className="size-full object-contain"
-              onError={e => { (e.target as HTMLImageElement).style.visibility = 'hidden'; }}
+              onError={e => { (e.target as HTMLImageElement).style.opacity = '0.15'; }}
             />
             <HeatmapOverlay cameraId={selected} isVisible={heatmap} windowMinutes={5} />
           </>
@@ -155,6 +160,7 @@ function RecentAlerts({ alerts }: { alerts: Alert[] }) {
     <Card
       title="Recent Alerts"
       icon="bell"
+      iconColor="danger"
       actions={<ButtonLink href="/alerts" size="xs" variant="ghost">View all</ButtonLink>}
       bodyClassName="p-0"
     >
@@ -186,6 +192,7 @@ function EventTimeline({ events }: { events: Event[] }) {
     <Card
       title="Event Timeline"
       icon="timeline"
+      iconColor="purple"
       actions={<ButtonLink href="/events" size="xs" variant="ghost">View all</ButtonLink>}
       bodyClassName="p-0"
     >
@@ -211,7 +218,7 @@ function EventTimeline({ events }: { events: Event[] }) {
 
 function CameraStatus({ cameras }: { cameras: Camera[] }) {
   return (
-    <Card title="Camera Status" icon="signal" bodyClassName="p-0">
+    <Card title="Camera Status" icon="signal" iconColor="info" bodyClassName="p-0">
       {cameras.length === 0 ? (
         <EmptyState icon="video-slash" message="No cameras configured" />
       ) : (
@@ -249,33 +256,41 @@ export default function DashboardPage() {
   }
 
   const s = data.summary;
-  const cards: ReactNode = (
-    <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      <StatCard icon="video" value={`${s.online_cameras}/${s.total_cameras}`} label="Cameras online" />
-      <StatCard icon="bell" value={s.unreviewed_alerts || 0} label="Active alerts" />
-      <StatCard icon="route" value={s.active_tracks || 0} label="Active tracks" />
-      <StatCard icon="triangle-exclamation" value={s.critical_alerts || 0} label="Critical alerts" emphasis />
-    </div>
-  );
 
   return (
     <div>
       <ReportButtons />
-      {cards}
 
-      <div className="mb-6 grid gap-4 lg:grid-cols-[2fr_1fr]">
-        <Card title="Alert Trend — last 24h" icon="chart-line">
-          <AlertTrendChart data={data.timeseries} />
-        </Card>
-        <Card title="Alert Breakdown" icon="chart-pie">
-          <AlertTypeChart byType={data.byType} />
+      {/* Stat Cards */}
+      <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard icon="video" value={`${s.online_cameras}/${s.total_cameras}`} label="Cameras online" />
+        <StatCard icon="bell" value={s.unreviewed_alerts || 0} label="Active alerts" />
+        <StatCard icon="route" value={s.active_tracks || 0} label="Active tracks" />
+        <StatCard icon="triangle-exclamation" value={s.critical_alerts || 0} label="Critical alerts" emphasis />
+      </div>
+
+      {/* Live Feed + Pie Chart — above Threat Assessment */}
+      <div className="mb-6 grid gap-4 lg:grid-cols-2 items-stretch">
+        <LiveFeed cameras={data.cameras} />
+        <Card title="Alert Breakdown" icon="chart-pie" iconColor="warning" bodyClassName="flex-1 flex flex-col justify-center">
+          <div className="flex items-center justify-center w-full min-h-[280px]">
+            <AlertTypeChart byType={data.byType} />
+          </div>
         </Card>
       </div>
 
+      {/* Threat Score */}
       <ThreatScorePanel />
 
+      {/* Alert Trend — full width */}
+      <div className="mb-6">
+        <Card title="Alert Trend — last 24h" icon="chart-line">
+          <AlertTrendChart data={data.timeseries} />
+        </Card>
+      </div>
+
+      {/* Bottom grid */}
       <div className="grid gap-4 xl:grid-cols-2">
-        <LiveFeed cameras={data.cameras} />
         <RecentAlerts alerts={data.alerts} />
         <EventTimeline events={data.events} />
         <CameraStatus cameras={data.cameras} />

@@ -17,6 +17,7 @@ from src.api.auth import can_access_camera, require_auth_media
 from src.api.ratelimit import limiter
 from src.database.db import get_database
 from src.database.repository import Repository
+from src.paths import snapshots_dir
 
 router = APIRouter()
 
@@ -24,7 +25,7 @@ _NAME_RE = re.compile(r"^[A-Za-z0-9._-]+\.(jpg|jpeg|png)$", re.IGNORECASE)
 
 
 def _snapshots_dir() -> str:
-    return os.path.realpath(os.getenv("IBVAP_SNAPSHOTS_DIR", "./outputs/snapshots"))
+    return os.path.realpath(snapshots_dir())
 
 
 @router.get("/{name}")

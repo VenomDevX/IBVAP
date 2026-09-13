@@ -11,7 +11,6 @@ const nextConfig: NextConfig = {
   trailingSlash: true,
   images: { unoptimized: true },
   devIndicators: false,
-  eslint: { ignoreDuringBuilds: true },
 };
 
 export default nextConfig;

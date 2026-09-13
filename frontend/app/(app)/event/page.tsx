@@ -1,24 +1,43 @@
 'use client';
 
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useEffect, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useAuth } from '@/src/context/AuthContext';
 import { apiFetch, formatEventType, formatTime, mediaSrc, riskMeta } from '@/src/api/client';
-import Card from '@/src/components/ui/Card';
 import Icon from '@/src/components/ui/Icon';
 import { ButtonLink } from '@/src/components/ui/Button';
 import { EmptyState, Loading } from '@/src/components/ui/States';
+import { cn } from '@/src/lib/cn';
 import type { Event } from '@/src/types';
 
 function yesNo(v: boolean | undefined) {
   return v ? 'Yes' : 'No';
 }
 
-function ContextRow({ label, value }: { label: string; value: string }) {
+function ContextRow({ label, value, description }: { label: string; value: string; description?: string }) {
   return (
-    <div className="flex justify-between gap-4 border-b border-default py-2.5 text-[0.85rem] last:border-0">
-      <span className="text-fg-muted">{label}</span>
-      <span className="text-fg">{value}</span>
+    <div className="flex items-center justify-between gap-4 border-b border-default py-4 text-[0.85rem] last:border-0">
+      <div>
+        <div className="text-fg font-medium">{label}</div>
+        {description && <div className="text-fg-subtle text-xs mt-0.5">{description}</div>}
+      </div>
+      <div className="flex items-center gap-2 text-right text-fg-muted font-medium">{value}</div>
+    </div>
+  );
+}
+
+function PremiumCard({ title, icon, colorClass, children, className }: { title: string; icon: string; colorClass?: string; children: ReactNode; className?: string }) {
+  return (
+    <div className={cn("border border-default rounded bg-surface p-6 shadow-sm", className)}>
+      <div className="flex items-center gap-3 mb-2">
+        <div className={cn("w-10 h-10 rounded-full flex items-center justify-center", colorClass || "bg-accent/10 text-accent")}>
+          <Icon name={icon} className="text-lg" />
+        </div>
+        <h2 className="text-lg font-medium text-fg">{title}</h2>
+      </div>
+      <div className="mt-4">
+        {children}
+      </div>
     </div>
   );
 }
@@ -26,7 +45,7 @@ function ContextRow({ label, value }: { label: string; value: string }) {
 function EventDetail() {
   const params = useSearchParams();
   const eventId = params.get('id');
-  const { session } = useAuth();
+  const { mediaTicket } = useAuth();
   const [event, setEvent] = useState<Event | null>(null);
   const [error, setError] = useState(false);
   const [imgFailed, setImgFailed] = useState(false);
@@ -46,80 +65,92 @@ function EventDetail() {
   const evidenceFile = event.evidence_path?.replace(/\\/g, '/').split('/').pop();
 
   return (
-    <div>
-      <header className="mb-6">
+    <div className="max-w-6xl mx-auto pb-10">
+      <header className="mb-10 mt-2">
         <span
-          className="mb-3 inline-flex items-center gap-3 rounded-sm border px-4 py-2 text-[0.85rem] font-semibold"
+          className="mb-4 inline-flex items-center gap-3 rounded-full border px-4 py-1.5 text-[0.85rem] font-semibold bg-surface shadow-sm"
           style={{ borderColor: meta.color, color: meta.color }}
         >
-          <span className="size-2 rounded-full" style={{ background: meta.color }} aria-hidden />
+          <span className="size-2.5 rounded-full shadow-[0_0_8px_currentColor]" style={{ background: meta.color }} aria-hidden />
           {meta.label}
-          <span className="tabular-nums opacity-80">{event.risk_score?.toFixed(0) || 0}/100</span>
+          <span className="tabular-nums opacity-80 border-l pl-3 ml-1" style={{ borderColor: meta.color }}>
+            {event.risk_score?.toFixed(0) || 0} / 100 Risk Score
+          </span>
         </span>
-        <h2 className="text-xl font-semibold text-fg">{formatEventType(event.event_type)}</h2>
-        <p className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-[0.82rem] text-fg-subtle">
-          <span className="flex items-center gap-1.5"><Icon name="video" /> {event.camera_id}</span>
-          <span className="flex items-center gap-1.5"><Icon name="clock" /> {formatTime(event.timestamp)}</span>
-          <span className="flex items-center gap-1.5"><Icon name="person" /> {event.object_type} · track {event.track_id}</span>
+        <h2 className="text-3xl font-bold text-fg mb-3">{formatEventType(event.event_type)}</h2>
+        <p className="flex flex-wrap gap-x-6 gap-y-2 text-[0.9rem] text-fg-subtle">
+          <span className="flex items-center gap-2"><Icon name="video" className="text-fg-muted" /> Camera {event.camera_id}</span>
+          <span className="flex items-center gap-2"><Icon name="clock" className="text-fg-muted" /> {formatTime(event.timestamp)}</span>
+          <span className="flex items-center gap-2"><Icon name="person" className="text-fg-muted" /> {event.object_type} (Track #{event.track_id})</span>
         </p>
       </header>
 
       {event.temporal_context?.semantic_description && (
-        <Card title="Scene Description" icon="align-left" className="mb-6">
-          <p className="text-[0.9rem] leading-relaxed text-fg">{event.temporal_context.semantic_description}</p>
-        </Card>
+        <PremiumCard title="Scene Description" icon="align-left" colorClass="bg-info/10 text-info" className="mb-6">
+          <p className="text-[0.95rem] leading-relaxed text-fg p-2">{event.temporal_context.semantic_description}</p>
+        </PremiumCard>
       )}
 
-      <div className="mb-6 grid items-start gap-4 md:grid-cols-2 xl:grid-cols-3">
-        <Card title="Contributing Factors" icon="list">
+      <div className="mb-8 grid items-start gap-6 md:grid-cols-2 xl:grid-cols-3">
+        <PremiumCard title="Contributing Factors" icon="list" colorClass="bg-warning/10 text-warning">
           {(event.contributing_factors ?? []).length === 0 ? (
-            <p className="text-[0.85rem] text-fg-subtle">None recorded</p>
+            <p className="text-[0.85rem] text-fg-subtle p-2">None recorded in system</p>
           ) : (
-            <ul className="space-y-2.5">
+            <ul className="space-y-3 p-1">
               {event.contributing_factors.map((f, i) => (
-                <li key={i} className="flex items-center gap-2 text-[0.85rem] text-fg">
-                  <Icon name="circle-check" className="text-fg-subtle" /> {f}
+                <li key={i} className="flex items-start gap-3 text-[0.9rem] text-fg">
+                  <Icon name="circle-check" className="text-success mt-1 shadow-sm rounded-full bg-success/10" /> 
+                  <span className="leading-snug">{f}</span>
                 </li>
               ))}
             </ul>
           )}
-        </Card>
+        </PremiumCard>
 
-        <Card title="Spatial Context" icon="location-dot">
-          <ContextRow label="In restricted zone" value={yesNo(event.spatial_context?.in_restricted)} />
-          <ContextRow label="Fence crossed" value={yesNo(event.spatial_context?.fence_crossed)} />
-          <ContextRow label="Zones" value={(event.spatial_context?.zones ?? []).join(', ') || 'None'} />
-        </Card>
+        <PremiumCard title="Spatial Context" icon="location-dot" colorClass="bg-accent/10 text-accent">
+          <ContextRow label="In restricted zone" description="Breached geofenced area" value={yesNo(event.spatial_context?.in_restricted)} />
+          <ContextRow label="Fence crossed" description="Perimeter violation detected" value={yesNo(event.spatial_context?.fence_crossed)} />
+          <ContextRow label="Zones" description="Triggered regions" value={(event.spatial_context?.zones ?? []).join(', ') || 'None'} />
+        </PremiumCard>
 
-        <Card title="Temporal Context" icon="clock">
-          <ContextRow label="Night time" value={yesNo(event.temporal_context?.is_night)} />
-          <ContextRow label="Loitering" value={yesNo(event.temporal_context?.is_loitering)} />
-          <ContextRow label="Duration" value={`${event.duration?.toFixed(1) || 0}s`} />
-        </Card>
+        <PremiumCard title="Temporal Context" icon="clock" colorClass="bg-purple-500/10 text-purple-400">
+          <ContextRow label="Night time" description="Incident occurred after dark" value={yesNo(event.temporal_context?.is_night)} />
+          <ContextRow label="Loitering" description="Prolonged static presence" value={yesNo(event.temporal_context?.is_loitering)} />
+          <ContextRow label="Duration" description="Length of recorded event" value={`${event.duration?.toFixed(1) || 0}s`} />
+        </PremiumCard>
 
         {evidenceFile && (
-          <Card title="Evidence" icon="image" className="md:col-span-2 xl:col-span-1">
+          <PremiumCard title="Evidence Snapshot" icon="image" colorClass="bg-success/10 text-success" className="md:col-span-2 xl:col-span-3">
             {imgFailed ? (
-              <EmptyState icon="image" message="Evidence image unavailable" />
+              <EmptyState icon="image" message="Evidence image unavailable or expired" />
             ) : (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={mediaSrc(`/snapshots/${evidenceFile}`, session?.access_token)}
-                alt="Evidence snapshot"
-                className="w-full rounded-sm border border-default"
-                onError={() => setImgFailed(true)}
-              />
+              <div className="relative rounded-lg overflow-hidden border-2 border-default shadow-md group">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={mediaSrc(`/snapshots/${evidenceFile}`, mediaTicket)}
+                  alt="Evidence snapshot"
+                  className="w-full h-auto object-cover max-h-[600px] transition-transform duration-500 group-hover:scale-[1.01]"
+                  onError={() => setImgFailed(true)}
+                />
+                <div className="absolute inset-0 ring-1 ring-inset ring-black/10 rounded-lg pointer-events-none"></div>
+              </div>
             )}
             {event.evidence_hash && (
-              <p className="mt-2.5 break-all text-[0.72rem] text-fg-subtle">
-                <span className="font-medium text-fg-muted">SHA-256</span> {event.evidence_hash}
-              </p>
+              <div className="mt-4 flex items-center justify-between bg-bg rounded p-3 border border-default">
+                <div className="flex flex-col">
+                  <span className="text-[0.65rem] font-bold uppercase tracking-wider text-fg-muted mb-1">SHA-256 Checksum</span>
+                  <span className="font-mono text-xs text-fg-subtle break-all">{event.evidence_hash}</span>
+                </div>
+                <Icon name="shield-check" className="text-success text-xl ml-4" />
+              </div>
             )}
-          </Card>
+          </PremiumCard>
         )}
       </div>
 
-      <ButtonLink href="/events" icon="arrow-left">Back to events</ButtonLink>
+      <ButtonLink href="/events" icon="arrow-left" variant="secondary" className="px-6 py-2.5 shadow-sm rounded-lg">
+        Back to Event History
+      </ButtonLink>
     </div>
   );
 }

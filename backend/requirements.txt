@@ -14,6 +14,7 @@ shapely==2.1.2
 torch==2.5.1
 torchvision==0.20.1
 ultralytics==8.4.140
+timm==1.0.20
 supervision==0.30.2          # NOTE: sv.ByteTrack removed in 0.31 — do not bump without code changes
 
 # --- Backend / API ---

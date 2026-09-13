@@ -12,7 +12,7 @@
   /* Local builds must not depend on fonts.googleapis.com being reachable. */
   --font-inter: Inter, "Segoe UI", Arial, sans-serif;
   --font-jetbrains: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
-  --bg-primary: #121212;
+  --bg-primary: #000000;
   --bg-secondary: #1a1a1a;
   --bg-card: #222222;
   --bg-card-hover: #2a2a2a;
@@ -98,9 +98,9 @@
   --color-risk-critical: var(--risk-critical);
   --color-risk-unknown: var(--risk-unknown);
 
-  --radius-sm: 2px;
-  --radius-md: 2px;
-  --radius-lg: 3px;
+  --radius-sm: 5px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
 
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-mono: var(--font-jetbrains), ui-monospace, "JetBrains Mono", "Fira Code", monospace;
@@ -110,7 +110,7 @@
 
 @layer base {
   html {
-    font-size: 14px;
+    font-size: 15px;
   }
   body {
     background: var(--bg-primary);

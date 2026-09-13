@@ -26,17 +26,20 @@ from src.database.models import (
     IdentityResultModel,
     TrackModel,
 )
+from src.paths import snapshots_dir
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BACKEND = os.path.dirname(HERE)
 CFG = os.path.join(BACKEND, "configs", "retention.yaml")
 
 MODELS = {
-    "events": (EventModel, "timestamp"),
+    # Child rows must be removed before their parents now that SQLite foreign
+    # keys are enforced on every connection.
     "alerts": (AlertModel, "timestamp"),
-    "tracks": (TrackModel, "start_time"),
     "identity_results": (IdentityResultModel, "timestamp"),
     "anpr_results": (ANPRResultModel, "timestamp"),
+    "tracks": (TrackModel, "start_time"),
+    "events": (EventModel, "timestamp"),
     "audit_logs": (AuditLogModel, "timestamp"),
 }
 
@@ -64,20 +67,31 @@ def main():
                 q.delete(synchronize_session=False)
                 session.commit()
 
-        # orphaned snapshot files
-        snap_dir = os.getenv("IBVAP_SNAPSHOTS_DIR", os.path.join(BACKEND, "outputs", "snapshots"))
+        # Enforce the snapshot window independently from alert-row retention,
+        # then also remove any unreferenced evidence regardless of age.
+        snap_dir = str(snapshots_dir())
         referenced = {
             os.path.basename(p)
             for (p,) in session.query(AlertModel.snapshot_path).filter(AlertModel.snapshot_path.isnot(None)).all()
         }
-        orphans = (
-            [f for f in os.listdir(snap_dir) if f.lower().endswith(".jpg") and f not in referenced]
+        snapshot_days = days.get("snapshots")
+        snapshot_cutoff = (now - timedelta(days=snapshot_days)).timestamp() if snapshot_days else None
+        candidates = (
+            [f for f in os.listdir(snap_dir) if f.lower().endswith((".jpg", ".jpeg", ".png"))]
             if os.path.isdir(snap_dir)
             else []
         )
+        expired = [
+            f for f in candidates
+            if snapshot_cutoff is not None and os.path.getmtime(os.path.join(snap_dir, f)) < snapshot_cutoff
+        ]
+        orphans = [f for f in candidates if f not in referenced]
+        removable = sorted(set(expired) | set(orphans))
+        print(f"expired snapshot files: {len(expired)}")
         print(f"orphaned snapshot files: {len(orphans)}")
+        print(f"snapshot files to remove: {len(removable)}")
         if not args.dry_run:
-            for f in orphans:
+            for f in removable:
                 os.remove(os.path.join(snap_dir, f))
     finally:
         session.close()

@@ -205,6 +205,43 @@ def _deny_if_revoked(token: str) -> None:
 _media_security = HTTPBearer(auto_error=False)
 
 
+def issue_media_ticket(user: dict, lifetime_seconds: int = 120) -> str:
+    """Issue a narrow, short-lived credential safe for media element URLs."""
+    secret = os.getenv("EVIDENCE_HMAC_KEY") or os.getenv("SUPABASE_JWT_SECRET")
+    if not secret:
+        raise HTTPException(status_code=503, detail="Media ticket signing is not configured")
+    now = int(time.time())
+    return jwt.encode(
+        {
+            "sub": user["user_id"], "email": user.get("email", ""),
+            "app_role": user["app_role"], "allowed_areas": user["allowed_areas"],
+            "iat": now, "exp": now + lifetime_seconds, "type": "media",
+        },
+        secret,
+        algorithm="HS256",
+    )
+
+
+def _verify_media_ticket(ticket: str) -> dict:
+    secret = os.getenv("EVIDENCE_HMAC_KEY") or os.getenv("SUPABASE_JWT_SECRET")
+    if not secret:
+        raise _unauth("Media ticket signing is not configured")
+    try:
+        payload = jwt.decode(ticket, secret, algorithms=["HS256"], options={"require": ["sub", "exp", "type"]})
+    except jwt.PyJWTError as exc:
+        raise _unauth("Invalid or expired media ticket") from exc
+    if payload.get("type") != "media" or payload.get("app_role") not in VALID_ROLES:
+        raise _unauth("Invalid media ticket")
+    areas = payload.get("allowed_areas")
+    if not isinstance(areas, list):
+        raise _unauth("Invalid media scope")
+    return {
+        "token": ticket, "user_id": payload["sub"], "exp": payload["exp"],
+        "email": payload.get("email", ""), "app_role": payload["app_role"],
+        "allowed_areas": areas, "role": payload["app_role"],
+    }
+
+
 async def require_auth_media(
     request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(_media_security),
@@ -216,6 +253,9 @@ async def require_auth_media(
     access logs — acceptable for these read-only media routes; nginx.conf turns
     logging off for them. Do not copy this pattern to data endpoints.)
     """
+    ticket = request.query_params.get("ticket")
+    if ticket:
+        return _verify_media_ticket(ticket)
     token = credentials.credentials if credentials else request.query_params.get("token")
     if not token:
         raise HTTPException(

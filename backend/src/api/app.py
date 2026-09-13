@@ -8,25 +8,27 @@ import asyncio
 import os
 import time
 from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import jwt
 from fastapi import Depends, FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.responses import JSONResponse
 from loguru import logger
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
-from src.api.auth import require_auth
+from src.api.auth import issue_media_ticket, require_auth
 from src.api.middleware.input_validator import InputValidationMiddleware
 from src.api.middleware.security import RequestLoggingMiddleware, SecurityHeadersMiddleware
 from src.api.ratelimit import limiter
 from src.api.routes import alerts, audit, cameras, events, reports, snapshots, statistics, stream, tracks, zones
 from src.api.token_revocation import revoke_token
 from src.api.websocket import authenticate_ws, ws_manager
+from src.paths import snapshots_dir
+
 if TYPE_CHECKING:
     from src.pipeline.pipeline import IBVAPPipeline
 
@@ -42,11 +44,14 @@ async def lifespan(app: FastAPI):
     logger.info("Starting IBVAP application...")
     loop = asyncio.get_running_loop()
     ws_manager.attach_loop(loop)
-    app.state.pipeline_status = "starting"
-    startup_task = asyncio.create_task(
-        asyncio.to_thread(_initialize_pipeline, app),
-        name="ibvap-pipeline-startup",
-    )
+    pipeline_enabled = os.getenv("IBVAP_PIPELINE_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}
+    app.state.pipeline_status = "starting" if pipeline_enabled else "disabled"
+    startup_task = None
+    if pipeline_enabled:
+        startup_task = asyncio.create_task(
+            asyncio.to_thread(_initialize_pipeline, app),
+            name="ibvap-pipeline-startup",
+        )
 
     yield
 
@@ -54,7 +59,7 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down IBVAP...")
     if pipeline:
         await asyncio.to_thread(pipeline.stop_all)
-    if not startup_task.done():
+    if startup_task is not None and not startup_task.done():
         startup_task.cancel()
 
 
@@ -167,7 +172,7 @@ def create_app() -> FastAPI:
     app.add_middleware(InputValidationMiddleware)
 
     # Snapshots dir (evidence images) — served via an authenticated route, NOT a static mount
-    Path(os.getenv("IBVAP_SNAPSHOTS_DIR", "./outputs/snapshots")).mkdir(parents=True, exist_ok=True)
+    snapshots_dir().mkdir(parents=True, exist_ok=True)
 
     # ======================== API Routes ========================
     app.include_router(cameras.router, prefix="/api/cameras", tags=["Cameras"])
@@ -218,13 +223,48 @@ def create_app() -> FastAPI:
             await ws_manager.disconnect(websocket)
 
     # ======================== Health Check ========================
+    def health_payload(request: Request) -> dict:
+        pipeline_status = getattr(request.app.state, "pipeline_status", "starting")
+        camera_total = 0
+        camera_online = 0
+        model_status = {"detector": False, "fine_classifier": False, "face_recognition": False}
+        storage = None
+        if pipeline is not None:
+            stats = pipeline.get_all_stats()
+            camera_total = len(stats)
+            camera_online = sum(1 for row in stats.values() if row.get("camera_status") == "online")
+            model_status = {
+                "detector": pipeline.detector is not None,
+                "fine_classifier": bool(pipeline.fine_classifier and pipeline.fine_classifier.active),
+                "face_recognition": bool(pipeline.face_recognizer and pipeline.face_recognizer.active),
+            }
+            storage = pipeline.alert_engine.get_storage_status()
+        ready = pipeline_status == "ready" and camera_total > 0 and camera_online > 0
+        return {
+            "status": "ok" if ready else "degraded",
+            "service": "ibvap-backend",
+            "api": "online",
+            "pipeline": pipeline_status,
+            "ready": ready,
+            "cameras": {"online": camera_online, "total": camera_total},
+            "models": model_status,
+            "storage": storage,
+            "persistence_enabled": os.getenv("IBVAP_PERSIST_EVENTS", "true").strip().lower()
+            not in {"0", "false", "no", "off"},
+        }
+
+    @app.get("/api/health/live")
+    async def liveness():
+        return {"status": "ok", "service": "ibvap-backend"}
+
     @app.get("/api/health")
     async def health_check(request: Request):
-        return {
-            "status": "ok",
-            "service": "ibvap-backend",
-            "pipeline": getattr(request.app.state, "pipeline_status", "starting"),
-        }
+        return health_payload(request)
+
+    @app.get("/api/health/ready")
+    async def readiness(request: Request):
+        payload = health_payload(request)
+        return JSONResponse(payload, status_code=200 if payload["ready"] else 503)
 
     # ======================== Auth ========================
     @app.get("/api/auth/me", tags=["Auth"])
@@ -237,6 +277,10 @@ def create_app() -> FastAPI:
             "role": user["app_role"],
             "allowed_areas": user["allowed_areas"],
         }
+
+    @app.post("/api/auth/media-ticket", tags=["Auth"])
+    async def media_ticket(user: dict = Depends(require_auth)):
+        return {"ticket": issue_media_ticket(user), "expires_in": 120}
 
     @app.post("/api/auth/logout", tags=["Auth"])
     @limiter.limit("10/minute")

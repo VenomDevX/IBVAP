@@ -5,7 +5,7 @@ CRUD operations for all entities.
 
 from datetime import datetime
 
-from sqlalchemy import desc, or_
+from sqlalchemy import asc, desc, or_
 from sqlalchemy.orm import Session
 
 from src.alerts import evidence
@@ -16,6 +16,7 @@ from src.database.models import (
     CameraModel,
     EventModel,
     IdentityResultModel,
+    IncidentNoteModel,
     UserModel,
     ZoneModel,
 )
@@ -38,6 +39,9 @@ class Repository:
         location_label: str = "",
         latitude: float = None,
         longitude: float = None,
+        enabled: bool = True,
+        fps_limit: int = 15,
+        resolution: list | None = None,
     ) -> CameraModel:
         """Create a new camera configuration."""
         cam = CameraModel(
@@ -49,7 +53,9 @@ class Repository:
             latitude=latitude,
             longitude=longitude,
             status="offline",
-            enabled=True,
+            enabled=enabled,
+            fps_limit=fps_limit,
+            resolution=resolution,
         )
         self.session.add(cam)
         self.session.commit()
@@ -68,6 +74,32 @@ class Repository:
             camera.updated_at = datetime.utcnow()
             self.session.commit()
 
+    def update_camera(self, camera_id: str, changes: dict) -> CameraModel | None:
+        camera = self.get_camera(camera_id)
+        if camera is None:
+            return None
+        mapping = {
+            "name": "name", "source": "stream_url", "type": "camera_type",
+            "location": "location_label", "latitude": "latitude", "longitude": "longitude",
+            "enabled": "enabled", "fps_limit": "fps_limit", "resolution": "resolution",
+        }
+        for source, target in mapping.items():
+            if source in changes:
+                setattr(camera, target, changes[source])
+        camera.updated_at = datetime.utcnow()
+        self.session.commit()
+        return camera
+
+    def retire_camera(self, camera_id: str) -> CameraModel | None:
+        camera = self.get_camera(camera_id)
+        if camera is None:
+            return None
+        camera.enabled = False
+        camera.status = "retired"
+        camera.updated_at = datetime.utcnow()
+        self.session.commit()
+        return camera
+
     # ======================== EVENTS ========================
 
     def create_event(self, event_data: dict, commit: bool = True) -> EventModel:
@@ -84,6 +116,7 @@ class Repository:
             timestamp=datetime.fromtimestamp(event_data["timestamp"]),
             duration=event_data.get("duration", 0.0),
             object_type=event_data.get("object_type", ""),
+            confidence=event_data.get("confidence", 0.0),
             risk_score=event_data.get("risk_score", 0.0),
             risk_level=event_data.get("risk_level", "low"),
             contributing_factors=event_data.get("contributing_factors", []),
@@ -142,6 +175,11 @@ class Repository:
         risk_level: str = None,
         limit: int = 100,
         offset: int = 0,
+        start_time: datetime = None,
+        end_time: datetime = None,
+        search: str = None,
+        sort_by: str = "timestamp",
+        sort_order: str = "desc",
         allowed_cameras=None,
     ) -> list[EventModel]:
         query = self.session.query(EventModel)
@@ -153,14 +191,50 @@ class Repository:
             query = query.filter_by(event_type=event_type)
         if risk_level:
             query = query.filter_by(risk_level=risk_level)
-        return query.order_by(desc(EventModel.timestamp)).offset(offset).limit(limit).all()
+        if start_time:
+            query = query.filter(EventModel.timestamp >= start_time)
+        if end_time:
+            query = query.filter(EventModel.timestamp <= end_time)
+        if search:
+            term = f"%{search}%"
+            query = query.filter(or_(
+                EventModel.event_id.ilike(term), EventModel.event_type.ilike(term),
+                EventModel.camera_id.ilike(term), EventModel.object_type.ilike(term),
+            ))
+        sort_columns = {
+            "timestamp": EventModel.timestamp,
+            "risk_score": EventModel.risk_score,
+            "camera_id": EventModel.camera_id,
+            "event_type": EventModel.event_type,
+        }
+        column = sort_columns.get(sort_by, EventModel.timestamp)
+        ordering = asc(column) if sort_order == "asc" else desc(column)
+        return query.order_by(ordering).offset(offset).limit(limit).all()
 
-    def get_event_count(self, camera_id: str = None, allowed_cameras=None) -> int:
+    def get_event_count(
+        self, camera_id: str = None, event_type: str = None, risk_level: str = None,
+        start_time: datetime = None, end_time: datetime = None, search: str = None,
+        allowed_cameras=None,
+    ) -> int:
         query = self.session.query(EventModel)
         if allowed_cameras is not None:
             query = query.filter(EventModel.camera_id.in_(allowed_cameras or ["__none__"]))
         if camera_id:
             query = query.filter_by(camera_id=camera_id)
+        if event_type:
+            query = query.filter_by(event_type=event_type)
+        if risk_level:
+            query = query.filter_by(risk_level=risk_level)
+        if start_time:
+            query = query.filter(EventModel.timestamp >= start_time)
+        if end_time:
+            query = query.filter(EventModel.timestamp <= end_time)
+        if search:
+            term = f"%{search}%"
+            query = query.filter(or_(
+                EventModel.event_id.ilike(term), EventModel.event_type.ilike(term),
+                EventModel.camera_id.ilike(term), EventModel.object_type.ilike(term),
+            ))
         return query.count()
 
     # ======================== ALERTS ========================
@@ -213,6 +287,13 @@ class Repository:
         risk_level: str = None,
         reviewed: bool = None,
         limit: int = 100,
+        offset: int = 0,
+        status: str = None,
+        start_time: datetime = None,
+        end_time: datetime = None,
+        search: str = None,
+        sort_by: str = "timestamp",
+        sort_order: str = "desc",
         allowed_cameras=None,
     ) -> list[AlertModel]:
         query = self.session.query(AlertModel)
@@ -224,7 +305,63 @@ class Repository:
             query = query.filter_by(risk_level=risk_level)
         if reviewed is not None:
             query = query.filter_by(reviewed=reviewed)
-        return query.order_by(desc(AlertModel.timestamp)).limit(limit).all()
+        if status:
+            query = query.filter_by(status=status)
+        if start_time:
+            query = query.filter(AlertModel.timestamp >= start_time)
+        if end_time:
+            query = query.filter(AlertModel.timestamp <= end_time)
+        if search:
+            term = f"%{search}%"
+            query = query.filter(or_(
+                AlertModel.alert_id.ilike(term), AlertModel.event_type.ilike(term),
+                AlertModel.camera_id.ilike(term), AlertModel.object_type.ilike(term),
+                AlertModel.assignee.ilike(term),
+            ))
+        sort_columns = {
+            "timestamp": AlertModel.timestamp,
+            "risk_score": AlertModel.risk_score,
+            "status": AlertModel.status,
+            "camera_id": AlertModel.camera_id,
+        }
+        column = sort_columns.get(sort_by, AlertModel.timestamp)
+        ordering = asc(column) if sort_order == "asc" else desc(column)
+        return query.order_by(ordering).offset(offset).limit(limit).all()
+
+    def count_alerts(
+        self,
+        camera_id: str = None,
+        risk_level: str = None,
+        reviewed: bool = None,
+        status: str = None,
+        start_time: datetime = None,
+        end_time: datetime = None,
+        search: str = None,
+        allowed_cameras=None,
+    ) -> int:
+        query = self.session.query(AlertModel)
+        if allowed_cameras is not None:
+            query = query.filter(AlertModel.camera_id.in_(allowed_cameras or ["__none__"]))
+        if camera_id:
+            query = query.filter_by(camera_id=camera_id)
+        if risk_level:
+            query = query.filter_by(risk_level=risk_level)
+        if reviewed is not None:
+            query = query.filter_by(reviewed=reviewed)
+        if status:
+            query = query.filter_by(status=status)
+        if start_time:
+            query = query.filter(AlertModel.timestamp >= start_time)
+        if end_time:
+            query = query.filter(AlertModel.timestamp <= end_time)
+        if search:
+            term = f"%{search}%"
+            query = query.filter(or_(
+                AlertModel.alert_id.ilike(term), AlertModel.event_type.ilike(term),
+                AlertModel.camera_id.ilike(term), AlertModel.object_type.ilike(term),
+                AlertModel.assignee.ilike(term),
+            ))
+        return query.count()
 
     def mark_alert_reviewed(self, alert_id: str, reviewed_by: str = "operator") -> bool:
         alert = self.get_alert(alert_id)
@@ -235,6 +372,48 @@ class Repository:
             self.session.commit()
             return True
         return False
+
+    def update_alert_workflow(
+        self,
+        alert_id: str,
+        actor: str,
+        status: str | None = None,
+        disposition: str | None = None,
+        assignee: str | None = None,
+        note: str | None = None,
+    ) -> AlertModel | None:
+        alert = self.get_alert(alert_id)
+        if alert is None:
+            return None
+        now = datetime.utcnow()
+        if status is not None:
+            alert.status = status
+            if status in {"acknowledged", "investigating"} and alert.acknowledged_at is None:
+                alert.acknowledged_at = now
+            if status in {"resolved", "false_positive"}:
+                alert.resolved_at = now
+                alert.reviewed = True
+                alert.reviewed_by = actor
+                alert.reviewed_at = now
+            elif status == "reopened":
+                alert.resolved_at = None
+                alert.reviewed = False
+        if disposition is not None:
+            alert.disposition = disposition or None
+        if assignee is not None:
+            alert.assignee = assignee or None
+        if note:
+            self.session.add(IncidentNoteModel(alert_id=alert_id, author=actor, note=note))
+        self.session.commit()
+        return alert
+
+    def get_incident_notes(self, alert_id: str) -> list[IncidentNoteModel]:
+        return (
+            self.session.query(IncidentNoteModel)
+            .filter_by(alert_id=alert_id)
+            .order_by(IncidentNoteModel.created_at.asc())
+            .all()
+        )
 
     # ======================== USERS ========================
 
@@ -356,6 +535,18 @@ class Repository:
             query = query.filter_by(camera_id=camera_id)
         return query.all()
 
+    def update_zone(self, zone_id: str, changes: dict) -> ZoneModel | None:
+        zone = self.session.query(ZoneModel).filter_by(zone_id=zone_id, deleted=False).first()
+        if zone is None:
+            return None
+        mapping = {"camera_id": "camera_id", "name": "name", "type": "zone_type", "points": "points", "color": "color", "enabled": "enabled"}
+        for source, target in mapping.items():
+            if source in changes:
+                setattr(zone, target, changes[source])
+        zone.updated_at = datetime.utcnow()
+        self.session.commit()
+        return zone
+
     def delete_zone(self, zone_id: str) -> bool:
         zone = self.session.query(ZoneModel).filter_by(zone_id=zone_id).first()
         if zone and not zone.deleted:
@@ -400,7 +591,28 @@ class Repository:
             "cameras": cameras,
             "risk_distribution": risk_dist,
             "event_distribution": event_dist,
+            "critical_alerts": alerts.filter_by(risk_level="critical").count(),
         }
+
+    def get_alert_timeseries(self, hours: int = 24, allowed_cameras=None) -> dict:
+        """Return persisted alert counts in stable hourly buckets."""
+        from datetime import timedelta
+
+        now = datetime.utcnow()
+        start = now - timedelta(hours=hours)
+        query = self.session.query(AlertModel.timestamp).filter(AlertModel.timestamp >= start)
+        if allowed_cameras is not None:
+            query = query.filter(AlertModel.camera_id.in_(allowed_cameras or ["__none__"]))
+        buckets = [0] * hours
+        for (timestamp,) in query.all():
+            age = int((now - timestamp).total_seconds() // 3600)
+            if 0 <= age < hours:
+                buckets[hours - 1 - age] += 1
+        labels = [
+            (now - timedelta(hours=hours - 1 - index)).strftime("%H:00")
+            for index in range(hours)
+        ]
+        return {"labels": labels, "data": buckets}
 
     def close(self):
         self.session.close()

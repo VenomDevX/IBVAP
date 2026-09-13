@@ -5,7 +5,7 @@ IBVAP — Reports API Routes
 import time
 from datetime import datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 
 from src.api.auth import can_access_camera, require_auth, scoped_cameras
 from src.database.db import get_database
@@ -81,3 +81,17 @@ async def get_daily_report(user: dict = Depends(require_auth)):
         "alerts": alert_data,
         "active_threats": active_threats,
     }
+
+
+@router.get("/daily.pdf")
+async def get_daily_pdf(user: dict = Depends(require_auth)):
+    """Return a real PDF file instead of browser print-preview HTML."""
+    from src.reports.pdf import daily_report_pdf
+
+    report = await get_daily_report(user)
+    stamp = datetime.now().strftime("%Y-%m-%d")
+    return Response(
+        content=daily_report_pdf(report),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="ibvap-report-{stamp}.pdf"'},
+    )

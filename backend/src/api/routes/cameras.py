@@ -3,17 +3,90 @@ IBVAP — Camera API Routes
 Camera management and status endpoints.
 """
 
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
+from pydantic import BaseModel, Field, field_validator
 
-from src.api.auth import require_auth, require_auth_media, require_camera_access, scoped_cameras
+from src.api.auth import require_admin, require_auth, require_auth_media, require_camera_access, scoped_cameras
 from src.api.middleware.input_validator import sanitize_camera_id
 from src.api.ratelimit import limiter
 from src.database.db import get_database
 from src.database.repository import Repository
 
 router = APIRouter()
+
+
+class CameraCreate(BaseModel):
+    camera_id: str = Field(min_length=1, max_length=50, pattern=r"^[A-Za-z0-9_-]+$")
+    name: str = Field(min_length=1, max_length=200)
+    source: str = Field(min_length=1, max_length=500)
+    type: str = Field(default="general", min_length=1, max_length=50)
+    location: str = Field(default="", max_length=200)
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+    enabled: bool = True
+    fps_limit: int = Field(default=15, ge=1, le=120)
+    resolution: tuple[int, int] | None = None
+
+    @field_validator("source")
+    @classmethod
+    def safe_source(cls, source: str):
+        if any(char in source for char in ("\x00", "\r", "\n")):
+            raise ValueError("Invalid camera source")
+        return source.strip()
+
+    @field_validator("resolution")
+    @classmethod
+    def valid_resolution(cls, resolution):
+        if resolution and not (160 <= resolution[0] <= 7680 and 120 <= resolution[1] <= 4320):
+            raise ValueError("Resolution is outside the supported range")
+        return resolution
+
+
+class CameraUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    source: str | None = Field(default=None, min_length=1, max_length=500)
+    type: str | None = Field(default=None, min_length=1, max_length=50)
+    location: str | None = Field(default=None, max_length=200)
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
+    enabled: bool | None = None
+    fps_limit: int | None = Field(default=None, ge=1, le=120)
+    resolution: tuple[int, int] | None = None
+
+    @field_validator("source")
+    @classmethod
+    def safe_source(cls, source: str | None):
+        if source is not None and any(char in source for char in ("\x00", "\r", "\n")):
+            raise ValueError("Invalid camera source")
+        return source.strip() if source is not None else source
+
+    @field_validator("resolution")
+    @classmethod
+    def valid_resolution(cls, resolution):
+        if resolution and not (160 <= resolution[0] <= 7680 and 120 <= resolution[1] <= 4320):
+            raise ValueError("Resolution is outside the supported range")
+        return resolution
+
+
+def _serialize_camera(camera, include_source: bool = False) -> dict:
+    result = {
+        "camera_id": camera.camera_id,
+        "name": camera.name,
+        "location": camera.location_label,
+        "latitude": camera.latitude,
+        "longitude": camera.longitude,
+        "type": camera.camera_type,
+        "status": camera.status,
+        "enabled": camera.enabled,
+        "fps_limit": camera.fps_limit,
+        "resolution": camera.resolution,
+    }
+    if include_source:
+        result["source"] = camera.stream_url
+    return result
 
 
 @router.get("")
@@ -34,6 +107,8 @@ async def list_cameras(user: dict = Depends(require_auth)):
             "type": c.camera_type,
             "status": c.status,
             "enabled": c.enabled,
+            "fps_limit": c.fps_limit,
+            "resolution": c.resolution,
         }
         for c in cameras
     ]
@@ -53,6 +128,123 @@ async def list_cameras(user: dict = Depends(require_auth)):
 
     session.close()
     return result
+
+
+@router.post("", status_code=201)
+async def create_camera(camera: CameraCreate, user: dict = Depends(require_admin)):
+    session = get_database().get_session()
+    try:
+        repo = Repository(session)
+        if repo.get_camera(camera.camera_id):
+            raise HTTPException(status_code=409, detail="Camera ID already exists")
+        row = repo.create_camera(
+            camera.camera_id, camera.name, camera.source, camera.type, camera.location,
+            camera.latitude, camera.longitude, camera.enabled, camera.fps_limit,
+            list(camera.resolution) if camera.resolution else None,
+        )
+        actor = user.get("email") or user.get("user_id") or "unknown"
+        repo.create_audit_log("create_camera", actor, {"camera_id": camera.camera_id})
+        from src.api.app import get_pipeline
+        pipeline = get_pipeline()
+        if pipeline:
+            await run_in_threadpool(pipeline.configure_camera, row)
+        return _serialize_camera(row, include_source=True)
+    finally:
+        session.close()
+
+
+@router.get("/{camera_id}/config")
+async def get_camera_config(camera_id: str, _user: dict = Depends(require_admin)):
+    camera_id = sanitize_camera_id(camera_id)
+    session = get_database().get_session()
+    try:
+        camera = Repository(session).get_camera(camera_id)
+        if camera is None:
+            raise HTTPException(status_code=404, detail="Camera not found")
+        return _serialize_camera(camera, include_source=True)
+    finally:
+        session.close()
+
+
+@router.patch("/{camera_id}")
+async def update_camera(camera_id: str, update: CameraUpdate, user: dict = Depends(require_admin)):
+    camera_id = sanitize_camera_id(camera_id)
+    session = get_database().get_session()
+    try:
+        repo = Repository(session)
+        changes = update.model_dump(exclude_unset=True)
+        if "resolution" in changes and changes["resolution"] is not None:
+            changes["resolution"] = list(changes["resolution"])
+        row = repo.update_camera(camera_id, changes)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Camera not found")
+        actor = user.get("email") or user.get("user_id") or "unknown"
+        repo.create_audit_log("update_camera", actor, {"camera_id": camera_id, "fields": sorted(changes)})
+        from src.api.app import get_pipeline
+        pipeline = get_pipeline()
+        if pipeline:
+            await run_in_threadpool(pipeline.configure_camera, row)
+        return _serialize_camera(row, include_source=True)
+    finally:
+        session.close()
+
+
+@router.delete("/{camera_id}")
+async def retire_camera(camera_id: str, user: dict = Depends(require_admin)):
+    camera_id = sanitize_camera_id(camera_id)
+    session = get_database().get_session()
+    try:
+        repo = Repository(session)
+        row = repo.retire_camera(camera_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Camera not found")
+        actor = user.get("email") or user.get("user_id") or "unknown"
+        repo.create_audit_log("retire_camera", actor, {"camera_id": camera_id})
+        from src.api.app import get_pipeline
+        pipeline = get_pipeline()
+        if pipeline:
+            await run_in_threadpool(pipeline.remove_camera, camera_id)
+        return {"message": "Camera retired", "camera_id": camera_id}
+    finally:
+        session.close()
+
+
+@router.post("/{camera_id}/restart")
+async def restart_camera(camera_id: str, user: dict = Depends(require_admin)):
+    camera_id = sanitize_camera_id(camera_id)
+    from src.api.app import get_pipeline
+    pipeline = get_pipeline()
+    if pipeline is None or not await run_in_threadpool(pipeline.restart_camera, camera_id):
+        raise HTTPException(status_code=409, detail="Camera pipeline is not active")
+    actor = user.get("email") or user.get("user_id") or "unknown"
+    with get_database().get_session() as session:
+        Repository(session).create_audit_log("restart_camera", actor, {"camera_id": camera_id})
+    return {"message": "Camera restarted", "camera_id": camera_id}
+
+
+@router.post("/{camera_id}/test")
+async def test_camera(camera_id: str, _user: dict = Depends(require_admin)):
+    camera_id = sanitize_camera_id(camera_id)
+    session = get_database().get_session()
+    try:
+        camera = Repository(session).get_camera(camera_id)
+        if camera is None:
+            raise HTTPException(status_code=404, detail="Camera not found")
+        source = camera.stream_url
+    finally:
+        session.close()
+
+    def probe():
+        import cv2
+        capture = cv2.VideoCapture(source)
+        try:
+            opened = capture.isOpened()
+            frame_ok = bool(capture.read()[0]) if opened else False
+            return {"reachable": opened and frame_ok, "opened": opened, "frame_received": frame_ok}
+        finally:
+            capture.release()
+
+    return await run_in_threadpool(probe)
 
 
 @router.get("/{camera_id}")

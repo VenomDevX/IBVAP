@@ -7,14 +7,15 @@ import numpy as np
 # --------------------------------------------------------------------------- #
 
 
-def test_ocr_mock_when_no_engine(monkeypatch):
+def test_ocr_reports_unavailable_when_no_engine(monkeypatch):
     import src.anpr.ocr as ocr
 
     monkeypatch.setattr(ocr, "_reader", None)
     monkeypatch.setattr(ocr, "_engine_name", "uninitialised")
     monkeypatch.setattr(ocr, "_ENGINES", [])  # nothing loadable
     txt, conf = ocr.read_plate(np.full((40, 120, 3), 255, np.uint8))
-    assert (txt, conf) == ("MOCK-PLT", 0.0)
+    # Never fabricate evidence when the optional OCR dependency is unavailable.
+    assert (txt, conf) == ("", 0.0)
 
 
 def test_ocr_normalises_and_length_gates(monkeypatch):
@@ -112,6 +113,7 @@ def test_face_recognizer_no_usable_face(monkeypatch):
 
 
 def test_identity_and_anpr_results_persist(repo):
+    repo.create_camera("cam1", "Camera 1", "test")
     idn = repo.create_identity_result(track_id=3, camera_id="cam1", identity_label="guard_1", similarity_score=0.8)
     plt = repo.create_anpr_result(track_id=4, camera_id="cam1", plate_text="MH12AB3456", ocr_confidence=0.77)
     assert idn.identity_id.startswith("IDN_")

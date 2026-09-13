@@ -8,10 +8,12 @@ export interface Camera {
   latitude?: number | null;
   longitude?: number | null;
   type?: string;
-  status: 'online' | 'offline' | 'connecting';
+  status: 'online' | 'offline' | 'connecting' | 'error' | 'stopped' | 'retired';
   enabled?: boolean;
   fps?: number;
   active_tracks?: number;
+  fps_limit?: number;
+  resolution?: number[] | null;
 }
 
 export interface Alert {
@@ -26,6 +28,12 @@ export interface Alert {
   snapshot_hash?: string;
   reviewed: boolean;
   reviewed_by?: string;
+  status?: 'open' | 'acknowledged' | 'investigating' | 'resolved' | 'false_positive' | 'reopened';
+  disposition?: 'true_alarm' | 'false_alarm' | 'test' | 'escalated' | null;
+  assignee?: string | null;
+  acknowledged_at?: string | null;
+  resolved_at?: string | null;
+  notes?: Array<{ author: string; note: string; created_at: string }>;
 }
 
 export interface SpatialContext {
@@ -63,6 +71,8 @@ export interface Zone {
   camera_id: string;
   type: string;
   enabled: boolean;
+  points: number[][];
+  color?: number[];
 }
 
 export interface User {

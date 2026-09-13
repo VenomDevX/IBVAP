@@ -1,16 +1,31 @@
 # =============================================================================
 # IBVAP — Docker Compose
 # Backend API + Frontend UI. Auth via Supabase CLI (npx supabase start).
-# Runtime datastore is SQLite (single source of truth) — see docs/IBVAP_TRD.md §17.
+# Runtime datastore is PostgreSQL (migrated from SQLite for performance).
 # For TLS, use:  docker compose -f docker-compose.yml -f docker-compose.tls.yml up
 # =============================================================================
 
 services:
+  db:
+    image: postgres:15-alpine
+    container_name: ibvap_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ibvap
+      POSTGRES_PASSWORD: ibvap_password
+      POSTGRES_DB: ibvap
+    volumes:
+      - ibvap_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ibvap"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   backend:
     build: ./backend
     container_name: ibvap_backend
     restart: unless-stopped
-    # not published to the host — nginx is the only entry point
     expose:
       - "8000"
     env_file:
@@ -18,14 +33,16 @@ services:
     environment:
       - IBVAP_ENV=production
       - IBVAP_CONFIG_DIR=/app/configs
-      - DATABASE_URL=sqlite:////app/data/ibvap.db
+      - DATABASE_URL=postgresql://ibvap:ibvap_password@db:5432/ibvap
     volumes:
       - ./outputs:/app/outputs
       - ./backend/configs:/app/configs
-      - ibvap_db:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c",
-             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health').status==200 else 1)"]
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/api/health/ready').status==200 else 1)"]
       interval: 30s
       timeout: 5s
       retries: 3

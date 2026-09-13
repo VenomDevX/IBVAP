@@ -11,11 +11,11 @@ export function apiUrl(path: string): string {
   return `${API_BASE}${path}`;
 }
 
-/** Append the access token as a query param for <img>/<video> src (can't send a header). */
-export function mediaSrc(path: string, token?: string | null): string {
+/** Append a short-lived, media-only ticket for native <img>/<video> requests. */
+export function mediaSrc(path: string, ticket?: string | null): string {
   const url = apiUrl(path);
-  if (!token) return url;
-  return url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token);
+  if (!ticket) return url;
+  return url + (url.includes('?') ? '&' : '?') + 'ticket=' + encodeURIComponent(ticket);
 }
 
 async function doFetch(url: string, options: RequestInit, token?: string): Promise<Response> {

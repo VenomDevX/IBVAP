@@ -41,6 +41,32 @@ class ZoneCreate(BaseModel):
         return color
 
 
+class ZoneUpdate(BaseModel):
+    camera_id: str | None = Field(default=None, min_length=1, max_length=50, pattern=r"^[A-Za-z0-9_-]+$")
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    type: Literal["restricted", "buffer", "safe", "entry_exit"] | None = None
+    points: list[tuple[int, int]] | None = Field(default=None, min_length=3, max_length=256)
+    color: tuple[int, int, int] | None = None
+    enabled: bool | None = None
+
+    @field_validator("points")
+    @classmethod
+    def valid_polygon(cls, points):
+        if points is None:
+            return points
+        polygon = Polygon(points)
+        if not polygon.is_valid or polygon.area == 0 or any(x < 0 or y < 0 for x, y in points):
+            raise ValueError("Zone must be a valid nonzero polygon with nonnegative coordinates")
+        return points
+
+    @field_validator("color")
+    @classmethod
+    def valid_color(cls, color):
+        if color is not None and any(c < 0 or c > 255 for c in color):
+            raise ValueError("Color channels must be between 0 and 255")
+        return color
+
+
 @router.get("")
 async def list_zones(camera_id: str | None = None, user: dict = Depends(require_auth)):
     """Get all zones, optionally filtered by camera."""
@@ -111,6 +137,38 @@ async def create_zone(zone: ZoneCreate, user: dict = Depends(require_admin)):
         pipeline.zone_manager.add_zone(new_zone)
 
     return {"message": "Zone created", "zone_id": zone.zone_id}
+
+
+@router.patch("/{zone_id}")
+async def update_zone(zone_id: str, update: ZoneUpdate, user: dict = Depends(require_admin)):
+    """Edit geometry, assignment, type or enabled state of a zone."""
+    session = get_database().get_session()
+    try:
+        repo = Repository(session)
+        changes = update.model_dump(exclude_unset=True)
+        if "points" in changes and changes["points"] is not None:
+            changes["points"] = [list(point) for point in changes["points"]]
+        if "color" in changes and changes["color"] is not None:
+            changes["color"] = list(changes["color"])
+        row = repo.update_zone(zone_id, changes)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Zone not found")
+        actor = user.get("email") or user.get("user_id") or "unknown"
+        repo.create_audit_log("update_zone", actor, {"zone_id": zone_id, "fields": sorted(changes)})
+
+        from src.api.app import get_pipeline
+        from src.spatial.zone_manager import Zone
+        pipeline = get_pipeline()
+        if pipeline:
+            pipeline.zone_manager.remove_zone(zone_id)
+            pipeline.zone_manager.add_zone(Zone(
+                zone_id=row.zone_id, name=row.name, zone_type=row.zone_type,
+                camera_id=row.camera_id, points=[tuple(point) for point in row.points],
+                enabled=row.enabled, color=tuple(row.color),
+            ))
+        return {"message": "Zone updated", "zone_id": zone_id}
+    finally:
+        session.close()
 
 
 @router.delete("/{zone_id}")

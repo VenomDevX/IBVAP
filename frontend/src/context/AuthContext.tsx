@@ -12,6 +12,9 @@ interface AuthState {
   user: User | null;
   session: Session | null;
   role: AppRole;
+  allowedAreas: string[] | null;
+  profileError: boolean;
+  mediaTicket: string | null;
   loading: boolean;
   logout: () => Promise<void>;
 }
@@ -22,6 +25,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [role, setRole] = useState<AppRole>(null);
+  const [allowedAreas, setAllowedAreas] = useState<string[] | null>(null);
+  const [profileError, setProfileError] = useState(false);
+  const [mediaTicket, setMediaTicket] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -45,12 +51,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Resolve the application role (lives in user_profiles, not the JWT) whenever we have a session.
   useEffect(() => {
     let cancelled = false;
-    if (!session) { setRole(null); return; }
-    apiFetch('/api/auth/me')
-      .then(r => r.json())
-      .then(me => { if (!cancelled) setRole((me?.role as AppRole) ?? 'operator'); })
-      .catch(() => { if (!cancelled) setRole('operator'); });
-    return () => { cancelled = true; };
+    if (!session) { setRole(null); setAllowedAreas(null); setMediaTicket(null); setProfileError(false); return; }
+    setProfileError(false);
+    const loadProfile = async () => {
+      try {
+        const response = await apiFetch('/api/auth/me');
+        if (!response.ok) throw new Error('Profile unavailable');
+        const me = await response.json();
+        if (!cancelled) { setRole((me?.role as AppRole) ?? null); setAllowedAreas(Array.isArray(me?.allowed_areas) ? me.allowed_areas : null); }
+      } catch {
+        if (!cancelled) { setRole(null); setAllowedAreas(null); setProfileError(true); }
+      }
+    };
+    const refreshTicket = async () => {
+      try {
+        const response = await apiFetch('/api/auth/media-ticket', { method: 'POST' });
+        if (!response.ok) throw new Error('Media ticket unavailable');
+        const data = await response.json();
+        if (!cancelled) setMediaTicket(data.ticket ?? null);
+      } catch { if (!cancelled) setMediaTicket(null); }
+    };
+    void loadProfile();
+    void refreshTicket();
+    const ticketTimer = window.setInterval(() => void refreshTicket(), 90_000);
+    return () => { cancelled = true; window.clearInterval(ticketTimer); };
   }, [session]);
 
   const logout = async () => {
@@ -67,7 +91,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isAuthenticated = !!user;
 
   return (
-    <AuthContext.Provider value={{ isAuthenticated, user, session, role, loading, logout }}>
+    <AuthContext.Provider value={{ isAuthenticated, user, session, role, allowedAreas, profileError, mediaTicket, loading, logout }}>
       {children}
     </AuthContext.Provider>
   );

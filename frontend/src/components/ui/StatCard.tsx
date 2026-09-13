@@ -11,20 +11,20 @@ interface StatCardProps {
 
 export default function StatCard({ icon, value, label, loading, emphasis }: StatCardProps) {
   return (
-    <div className="flex items-center gap-4 rounded-[3px] border border-default bg-card p-5">
+    <div className="flex items-center gap-5 rounded border border-default bg-surface shadow-sm p-6">
       <div
         className={cn(
-          'grid size-11 shrink-0 place-items-center rounded-sm text-sm',
-          emphasis ? 'bg-danger/15 text-danger' : 'bg-elevated text-fg-muted',
+          'grid size-12 shrink-0 place-items-center rounded-full text-lg shadow-sm',
+          emphasis ? 'bg-danger/15 text-danger' : 'bg-accent/10 text-accent',
         )}
       >
         <Icon name={icon} />
       </div>
       <div className="min-w-0">
-        <span className={cn('block text-2xl font-semibold leading-none text-fg', loading && 'skeleton')}>
+        <span className={cn('block text-3xl font-bold leading-none text-fg', loading && 'skeleton')}>
           {value}
         </span>
-        <span className="mt-1.5 block text-[0.68rem] font-medium uppercase tracking-wider text-fg-subtle">
+        <span className="mt-2 block text-xs font-semibold uppercase tracking-wider text-fg-muted">
           {label}
         </span>
       </div>

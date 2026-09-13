@@ -7,7 +7,7 @@ import L from 'leaflet';
 import { apiFetch, riskMeta } from '../../api/client';
 import { useInterval } from '../../hooks/useInterval';
 import Icon from '../ui/Icon';
-import { Loading } from '../ui/States';
+import { EmptyState, Loading } from '../ui/States';
 import type { Camera, ThreatsData } from '../../types';
 
 function pinIcon(color: string) {
@@ -52,6 +52,9 @@ export default function CameraMap() {
   if (loading) return <Loading label="Loading map…" />;
 
   const located = cameras.filter(c => c.latitude != null && c.longitude != null);
+  if (located.length === 0) {
+    return <EmptyState icon="map-location-dot" message="No cameras have verified coordinates. Add coordinates in Camera Management to use the map." />;
+  }
   const centerLat = located.length
     ? located.reduce((s, c) => s + Number(c.latitude), 0) / located.length
     : 28.6139;
@@ -60,11 +63,11 @@ export default function CameraMap() {
     : 77.209;
 
   return (
-    <div className="overflow-hidden rounded-[3px] border border-default" style={{ height: 'calc(100vh - 7rem)' }}>
+    <div className="overflow-hidden rounded border border-default" style={{ height: 'calc(100vh - 7rem)' }}>
       <MapContainer center={[centerLat, centerLng]} zoom={13} style={{ height: '100%', width: '100%' }}>
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          url={process.env.NEXT_PUBLIC_MAP_TILE_URL ?? 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'}
         />
         {located.map(cam => {
           const camThreats = threats?.top_threats?.filter(t => t.camera_id === cam.camera_id) ?? [];

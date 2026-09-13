@@ -26,17 +26,31 @@ function LoginForm() {
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    if (!identifier || !password) {
+      setError('Please enter both email and password.');
+      return;
+    }
+    
     setLoading(true);
     setError('');
+    
     try {
       const email = identifier.includes('@') ? identifier : `${identifier}@ibvap.local`;
-      const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
-      if (authError) throw authError;
+      const { data, error: authError } = await supabase.auth.signInWithPassword({ email, password });
+      
+      if (authError) {
+        throw new Error(authError.message === 'Invalid login credentials' ? 'Incorrect email or password.' : authError.message);
+      }
+      if (!data.user) {
+        throw new Error('Authentication failed. Server unreachable.');
+      }
+      
+      // Successfully authenticated. The AuthContext onAuthStateChange will pick it up.
+      // We don't unset loading here so the button stays spinning until the page redirects.
       router.replace('/');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Invalid email or password');
-    } finally {
       setLoading(false);
+      setError(err instanceof Error ? err.message : 'An unexpected error occurred during login.');
     }
   };
 
@@ -73,7 +87,12 @@ function LoginForm() {
           />
         </div>
         {error && (
-          <p className="rounded-sm border border-danger/40 px-3 py-2 text-[0.8rem] text-danger">{error}</p>
+          <div className="rounded-lg border border-danger/40 bg-danger/5 px-4 py-3 flex items-center gap-3 text-[0.85rem] text-danger shadow-sm">
+            <svg className="w-5 h-5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+              <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+            </svg>
+            <p className="font-medium">{error}</p>
+          </div>
         )}
         <Button type="submit" variant="primary" size="md" block icon={loading ? 'spinner' : 'right-to-bracket'} disabled={loading}>
           {loading ? 'Signing in…' : 'Sign in'}

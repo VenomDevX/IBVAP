@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { usePathname } from 'next/navigation';
 import { useTheme } from '../../context/ThemeContext';
 import Icon from '../ui/Icon';
+import { useSystemHealth } from '../../hooks/useSystemHealth';
 
 const PAGE_TITLES: Record<string, string> = {
   '/': 'Command Dashboard',
@@ -22,6 +23,7 @@ export default function Topbar({ onMenuToggle }: { onMenuToggle: () => void }) {
   const rawPath = usePathname();
   const pathname = rawPath !== '/' ? rawPath.replace(/\/$/, '') : '/';
   const { isLight, toggleTheme } = useTheme();
+  const { health, reachable } = useSystemHealth();
   const [now, setNow] = useState('');
 
   useEffect(() => {
@@ -36,9 +38,14 @@ export default function Topbar({ onMenuToggle }: { onMenuToggle: () => void }) {
   }, []);
 
   const title = PAGE_TITLES[pathname] ?? 'IBVAP';
+  const state = !reachable
+    ? { label: reachable == null ? 'Checking system' : 'Backend unreachable', dot: 'bg-danger' }
+    : health?.ready
+      ? { label: `Operational · ${health.cameras.online}/${health.cameras.total} cameras`, dot: 'bg-success' }
+      : { label: `Degraded · ${health?.pipeline ?? 'starting'}`, dot: 'bg-warning' };
 
   return (
-    <header className="sticky top-0 z-[50] flex h-16 items-center justify-between gap-4 border-b border-default bg-surface px-4 sm:px-6">
+    <header className="sticky top-0 z-[50] flex h-16 items-center justify-between gap-4 border-b border-default bg-base px-4 sm:px-6">
       <div className="flex items-center gap-3">
         <button className="text-fg lg:hidden" onClick={onMenuToggle} aria-label="Toggle menu">
           <Icon name="bars" className="text-lg" />
@@ -55,8 +62,8 @@ export default function Topbar({ onMenuToggle }: { onMenuToggle: () => void }) {
           <Icon name={isLight ? 'sun' : 'moon'} />
         </button>
         <span className="hidden items-center gap-2 text-[0.78rem] font-medium text-fg-muted sm:flex">
-          <span className="size-2 rounded-full bg-success" aria-hidden />
-          System Online
+          <span className={`size-2 rounded-full ${state.dot}`} aria-hidden />
+          {state.label}
         </span>
         <span className="hidden text-[0.8rem] tabular-nums text-fg-subtle md:block">{now}</span>
       </div>

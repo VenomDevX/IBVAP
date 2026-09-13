@@ -4,6 +4,7 @@ Generates, deduplicates, and manages security alerts.
 """
 
 import os
+import shutil
 import threading
 import time
 import uuid
@@ -35,11 +36,17 @@ class AlertEngine:
         max_alerts_per_minute: int = 10,
         min_risk_score: float = 20.0,
         snapshots_dir: str = "./outputs/snapshots",
+        max_snapshots_per_hour: int = 60,
+        max_snapshot_storage_mb: int = 2048,
+        min_free_storage_mb: int = 1024,
     ):
         self.cooldown_seconds = cooldown_seconds
         self.max_alerts_per_minute = max_alerts_per_minute
         self.min_risk_score = min_risk_score
         self.snapshots_dir = snapshots_dir
+        self.max_snapshots_per_hour = max(0, int(max_snapshots_per_hour))
+        self.max_snapshot_storage_bytes = max(0, int(max_snapshot_storage_mb)) * 1024 * 1024
+        self.min_free_storage_bytes = max(0, int(min_free_storage_mb)) * 1024 * 1024
         self.persistence_lock = threading.RLock()
 
         self._alert_counter: int = 0
@@ -47,6 +54,9 @@ class AlertEngine:
         self._recent_alerts: dict[str, float] = {}  # dedup key -> timestamp
         self._recent_levels: dict[str, int] = {}
         self._rate_counter: dict[str, list] = defaultdict(list)  # camera_id -> [timestamps]
+        self._snapshot_counter: dict[str, deque] = defaultdict(deque)
+        self._snapshot_bytes: int | None = None
+        self._last_storage_warning = 0.0
         self._notification_callbacks: list[Callable] = []
 
         from src.alerts.notifiers import NotificationManager
@@ -130,7 +140,9 @@ class AlertEngine:
 
     @staticmethod
     def _dedup_key(event) -> str:
-        return f"{event.camera_id}:{event.track_id}:{event.event_type}"
+        # Deliberately omit track_id. Trackers can churn IDs for one physical
+        # incident; a new ID must not create another alert and snapshot.
+        return f"{event.camera_id}:{event.object_type}:{event.event_type}"
 
     @staticmethod
     def _level(level: str) -> int:
@@ -165,15 +177,74 @@ class AlertEngine:
                 logger.error(f"Alert callback error: {e}")
 
     def _save_snapshot(self, frame: np.ndarray, camera_id: str, event_id: str):
-        """Save an evidence snapshot image and compute its SHA-256 hash."""
+        """Save one atomic evidence image if storage budgets allow it."""
+        now = time.time()
+        camera_times = self._snapshot_counter[camera_id]
+        while camera_times and now - camera_times[0] >= 3600:
+            camera_times.popleft()
+
+        if len(camera_times) >= self.max_snapshots_per_hour:
+            self._warn_storage(f"snapshot hourly budget reached for {camera_id}")
+            return None, None
+
+        if self._snapshot_bytes is None:
+            self._snapshot_bytes = sum(
+                entry.stat().st_size
+                for entry in os.scandir(self.snapshots_dir)
+                if entry.is_file() and entry.name.lower().endswith((".jpg", ".jpeg", ".png"))
+            )
+        if self._snapshot_bytes >= self.max_snapshot_storage_bytes:
+            self._warn_storage("snapshot storage budget reached")
+            return None, None
+        if shutil.disk_usage(self.snapshots_dir).free < self.min_free_storage_bytes:
+            self._warn_storage("minimum free disk reserve reached")
+            return None, None
+
         try:
             filename = f"{camera_id}_{event_id}_{int(time.time())}.jpg"
             filepath = os.path.join(self.snapshots_dir, filename)
-            cv2.imwrite(filepath, frame)
+            temporary = filepath + ".tmp.jpg"
+            if not cv2.imwrite(temporary, frame):
+                raise OSError("OpenCV could not encode the snapshot")
+            os.replace(temporary, filepath)
+            size = os.path.getsize(filepath)
+            self._snapshot_bytes += size
+            camera_times.append(now)
             return filepath, evidence.sha256_file(filepath)
         except Exception as e:
+            if "temporary" in locals() and os.path.exists(temporary):
+                try:
+                    os.remove(temporary)
+                except OSError:
+                    pass
             logger.error(f"Failed to save snapshot: {e}")
             return None, None
+
+    def _warn_storage(self, reason: str) -> None:
+        now = time.time()
+        if now - self._last_storage_warning >= 60:
+            logger.warning("Evidence capture paused: {}", reason)
+            self._last_storage_warning = now
+
+    def get_storage_status(self) -> dict:
+        if self._snapshot_bytes is None:
+            self._snapshot_bytes = sum(
+                entry.stat().st_size
+                for entry in os.scandir(self.snapshots_dir)
+                if entry.is_file() and entry.name.lower().endswith((".jpg", ".jpeg", ".png"))
+            )
+        used = round(self._snapshot_bytes / (1024 * 1024), 1)
+        free_bytes = shutil.disk_usage(self.snapshots_dir).free
+        free = round(free_bytes / (1024 * 1024), 1)
+        return {
+            "snapshot_storage_mb": used,
+            "snapshot_storage_limit_mb": round(self.max_snapshot_storage_bytes / (1024 * 1024)),
+            "free_storage_mb": free,
+            "capture_enabled": (
+                (self._snapshot_bytes is None or self._snapshot_bytes < self.max_snapshot_storage_bytes)
+                and free_bytes >= self.min_free_storage_bytes
+            ),
+        }
 
     def mark_reviewed(self, alert_id: str, reviewed_by: str = "operator") -> bool:
         """Mark an alert as reviewed."""

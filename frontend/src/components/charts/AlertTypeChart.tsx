@@ -16,15 +16,34 @@ export default function AlertTypeChart({ byType }: { byType: Record<string, numb
   }
 
   const options: ApexOptions = {
-    chart: { type: 'donut', height: 260, background: 'transparent', fontFamily: 'inherit' },
+    chart: { type: 'donut', height: 280, background: 'transparent', fontFamily: 'inherit' },
     labels,
     colors: c.series,
-    plotOptions: { pie: { donut: { size: '72%' } } },
+    plotOptions: { pie: { donut: { size: '68%' } } },
     dataLabels: { enabled: false },
     stroke: { colors: [c.card], width: 2 },
-    legend: { position: 'right', labels: { colors: c.fgMuted }, fontSize: '12px' },
+    legend: { show: false }, // Disable built-in legend entirely
     tooltip: { theme: c.isLight ? 'light' : 'dark' },
   };
 
-  return <ApexChart options={options} series={series} type="donut" height={260} />;
+  return (
+    <div className="flex w-full items-center justify-center gap-8 px-4 h-full">
+      <div className="shrink-0">
+        <ApexChart options={options} series={series} type="donut" width={260} height={280} />
+      </div>
+      <div className="max-h-[260px] overflow-y-auto">
+        <ul className="flex flex-col gap-2.5">
+          {labels.map((label, idx) => (
+            <li key={label} className="flex items-center gap-2 text-[0.8rem] text-fg-muted">
+              <span
+                className="size-3 shrink-0 rounded-full"
+                style={{ backgroundColor: c.series[idx % c.series.length] }}
+              />
+              <span className="truncate" title={label}>{label}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
 }

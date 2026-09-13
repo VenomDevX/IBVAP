@@ -78,7 +78,7 @@ export default function DataTable<T>({
     a === 'right' ? 'text-right' : a === 'center' ? 'text-center' : 'text-left';
 
   return (
-    <div className="overflow-hidden rounded-[3px] border border-default">
+    <div className="overflow-hidden rounded border border-default">
       <div className="overflow-x-auto">
         <table className="w-full border-collapse text-[0.82rem]">
           <thead>
@@ -86,19 +86,23 @@ export default function DataTable<T>({
               {columns.map(col => (
                 <th
                   key={col.key}
+                  aria-sort={col.sortable ? (sort?.key === col.key ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none') : undefined}
                   className={cn(
                     'border-b border-default px-4 py-2.5 text-[0.68rem] font-semibold uppercase tracking-wider text-fg-subtle',
                     alignCls(col.align),
-                    col.sortable && 'cursor-pointer select-none hover:text-fg',
                   )}
-                  onClick={col.sortable ? () => toggleSort(col.key) : undefined}
                 >
-                  <span className="inline-flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    disabled={!col.sortable}
+                    onClick={() => col.sortable && toggleSort(col.key)}
+                    className="inline-flex items-center gap-1.5 disabled:cursor-default"
+                  >
                     {col.header}
                     {col.sortable && sort?.key === col.key && (
                       <Icon name={sort.dir === 'asc' ? 'arrow-up-short-wide' : 'arrow-down-wide-short'} className="text-[0.6rem]" />
                     )}
-                  </span>
+                  </button>
                 </th>
               ))}
             </tr>

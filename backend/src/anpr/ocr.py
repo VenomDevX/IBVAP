@@ -4,7 +4,7 @@ IBVAP — Plate OCR engine
 One entry point, `read_plate(crop) -> (text, confidence)`, backed by whichever
 engine is available. Preference order (override with `IBVAP_OCR_ENGINE`):
 
-    easyocr  ->  paddleocr  ->  pytesseract  ->  mock
+    easyocr  ->  paddleocr  ->  pytesseract  ->  unavailable
 
 The engine is loaded lazily on first call (model download can be slow) and reused.
 """
@@ -98,7 +98,7 @@ _ENGINES = [
 
 def _init() -> None:
     global _reader, _engine_name
-    if _reader is not None or _engine_name == "mock":
+    if _reader is not None or _engine_name == "unavailable":
         return
     forced = os.getenv("IBVAP_OCR_ENGINE", "").strip().lower()
     order = [e for e in _ENGINES if not forced or e[0] == forced]
@@ -112,8 +112,8 @@ def _init() -> None:
             continue
         except Exception as e:  # noqa: BLE001
             logger.warning(f"ANPR OCR engine {name} failed to load: {e}")
-    _engine_name = "mock"
-    logger.warning("ANPR OCR: no engine available — plates report MOCK-PLT")
+    _engine_name = "unavailable"
+    logger.warning("ANPR OCR unavailable: install/configure a supported OCR engine")
 
 
 def read_plate(crop: np.ndarray) -> tuple[str, float]:
@@ -125,8 +125,8 @@ def read_plate(crop: np.ndarray) -> tuple[str, float]:
         _init()
         engine, reader = _engine_name, _reader
 
-    if engine == "mock":
-        return "MOCK-PLT", 0.0
+    if engine == "unavailable":
+        return "", 0.0
 
     reader_fn = next(r for n, _b, r in _ENGINES if n == engine)
     try:

@@ -9,7 +9,7 @@ export default function AuthShell({ subtitle, children, footer }: {
   return (
     <div className="flex min-h-screen items-center justify-center bg-base p-5">
       <div className="w-full max-w-sm">
-        <div className="rounded-[3px] border border-default bg-card p-9">
+        <div className="rounded border border-default bg-card p-9">
           <div className="mb-8 text-center">
             <div className="mx-auto mb-4 grid size-14 place-items-center rounded-sm border border-default bg-elevated text-xl text-accent">
               <Icon name="shield-halved" />
