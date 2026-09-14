@@ -392,13 +392,13 @@ class Repository:
         if allowed_cameras is not None:
             query = query.filter(AlertModel.camera_id.in_(allowed_cameras or ["__none__"]))
         if camera_id:
-            query = query.filter_by(camera_id=camera_id)
+            query = query.filter(AlertModel.camera_id == camera_id)
         if risk_level:
-            query = query.filter_by(risk_level=risk_level)
+            query = query.filter(AlertModel.risk_level == risk_level)
         if reviewed is not None:
-            query = query.filter_by(reviewed=reviewed)
+            query = query.filter(AlertModel.reviewed == reviewed)
         if status:
-            query = query.filter_by(status=status)
+            query = query.filter(AlertModel.status == status)
         if start_time:
             query = query.filter(AlertModel.timestamp >= start_time)
         if end_time:
@@ -458,13 +458,13 @@ class Repository:
         if allowed_cameras is not None:
             query = query.filter(AlertModel.camera_id.in_(allowed_cameras or ["__none__"]))
         if camera_id:
-            query = query.filter_by(camera_id=camera_id)
+            query = query.filter(AlertModel.camera_id == camera_id)
         if risk_level:
-            query = query.filter_by(risk_level=risk_level)
+            query = query.filter(AlertModel.risk_level == risk_level)
         if reviewed is not None:
-            query = query.filter_by(reviewed=reviewed)
+            query = query.filter(AlertModel.reviewed == reviewed)
         if status:
-            query = query.filter_by(status=status)
+            query = query.filter(AlertModel.status == status)
         if start_time:
             query = query.filter(AlertModel.timestamp >= start_time)
         if end_time:

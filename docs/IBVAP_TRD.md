@@ -391,6 +391,12 @@ The system should support near-real-time processing depending on:
 - Number of cameras
 - Tracking complexity
 
+Concrete measures implemented:
+
+- **TensorRT engine inference:** The coarse detection model is compiled from `.pt` → `.onnx` → `.engine` (FP16/TF32, TensorRT 11.x). The engine runs directly on CUDA cores, bypassing PyTorch overhead, yielding 2–3× lower per-frame latency. The `ObjectDetector` auto-discovers `.engine` files alongside `.pt` weights (`_resolve_engine_path`).
+- **Camera FPS throttling:** High-FPS cameras (30 FPS 1080p) are capped to 15 FPS via `fps_limit` in `cameras.yaml`, halving the CPU decode load without perceptible quality loss on slow-moving surveillance scenes. The total decode budget across 7 cameras drops from ~162 to ~91 frames/sec.
+- **Serialised GPU access:** A single `_inference_lock` in `ObjectDetector` prevents concurrent CUDA allocations from multiple camera threads, avoiding GPU memory fragmentation.
+
 ## NFR-02 Reliability
 
 The system shall:
@@ -572,6 +578,7 @@ Spatial Analysis   Temporal Analysis
 | Framework | PyTorch, `torchvision` |
 | Object detection (live pipeline) | Ultralytics **YOLOv8n**, COCO classes `[0,2,3,5,7]` (person, car, motorcycle, bus, truck) — `src/detection/detector.py` |
 | Object detection (custom) | YOLO trained on the **13-class coarse** border/military taxonomy (`backend/ml/taxonomy.py`) — see **§9A**. Trained via `scripts/train_yolo.py`; dataset built & verified, **training run pending / not yet loaded by the live pipeline** |
+| **TensorRT inference** | Production GPU path: `.pt` → `.onnx` (Ultralytics) → `.engine` (TensorRT 11.x Python builder, FP16/TF32 Tensor Core). Export script: `scripts/export_tensorrt.py`. `ObjectDetector._resolve_engine_path()` auto-discovers the `.engine` file next to `.pt` weights; class names are loaded from the original `.pt` since the engine carries no metadata. |
 | Stage-2 fine-grained classifier | Optional crop classifier (`scripts/train_classifier.py`, `scripts/inference_two_stage.py`) for airframe-level ID — **Phase 2**, the surveillance logic does not consume it. Experimental |
 | Multi-object tracking | **ByteTrack** via the `supervision` library (`sv.ByteTrack`) — `src/tracking/tracker.py` |
 | Face recognition | InsightFace (buffalo_l) detection + ArcFace embeddings, cosine-matched against a JSON gallery — `src/face/`, orchestrated by `FaceRecognizer`. **Wired into the pipeline** for `person` tracks (throttled ~2 s/track); off by default (`face.enabled` in thresholds.yaml — needs `insightface`). |
@@ -719,6 +726,15 @@ priority — and is mitigated by `copy_paste`/`mixup` augmentation rather than b
 - `configs/thresholds.yaml → detection.weights_path` points at the trained `best.pt`. When set and
   present, `ObjectDetector` loads it, reads the model's own `names` map, and emits **all** classes
   (`detect_all=True`); `target_classes` then applies only to the stock COCO fallback model.
+- **TensorRT auto-discovery:** `detection.engine_path` in `thresholds.yaml` can point at a compiled
+  `.engine` file (e.g. `models/ibvap_coarse.engine`). `ObjectDetector._resolve_engine_path()` checks:
+  (1) explicit `engine_path`, (2) a `.engine` sibling next to the `.pt`, (3) falls back to `.pt`.
+  When loading an engine with generic class names (`class0`, `class1`, …), the detector loads the
+  original `.pt` briefly to extract real class names, then discards it.
+- **Engine compilation:** `scripts/export_tensorrt.py` performs a two-stage export: `.pt` → `.onnx`
+  (via Ultralytics) → `.engine` (via TensorRT 11.x Python builder with TF32 enabled). The resulting
+  engine is hardware-specific (tied to GPU architecture + TensorRT version); re-export after driver
+  or GPU changes.
 - `ObjectDetector` normalises every emitted name through `taxonomy.normalize()`.
 - `MultiObjectTracker` no longer re-derives names from `COCO_TARGET_CLASSES`; it carries the name the
   detector attached to each `DetectionResult` (COCO map kept only as a fallback).

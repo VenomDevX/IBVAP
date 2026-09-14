@@ -716,6 +716,9 @@ class IBVAPPipeline:
                 logger.warning(f"detection.fallback_weights_path not found ({fallback_path}) - fallback disabled")
                 fallback_path = None
         self.model_registry.loading("object_detector", os.path.basename(detector_identifier))
+        engine_path = det_cfg.get("engine_path") or ""
+        if engine_path:
+            engine_path = str(backend_path(engine_path))
         self.detector = ObjectDetector(
             model_path=detector_identifier,
             confidence_threshold=det_cfg.get("confidence_threshold", 0.40),
@@ -727,6 +730,7 @@ class IBVAPPipeline:
             class_thresholds=det_cfg.get("class_thresholds", {}),
             half_precision=det_cfg.get("half_precision", True),
             fallback_model_path=fallback_path,
+            engine_path=engine_path or None,
         )
         if self.detector._model is None:
             self.model_registry.failed(

@@ -2,7 +2,7 @@ cameras:
   - id: "CAM_STREET"
     name: "Street Traffic Camera"
     source: "./data/demo/street_traffic.mp4"
-    fps: 30
+    fps: 15  # capped from 30 — reduces decode pressure; GPU can't consume 30fps×7 cams
     resolution: [1920, 1080]
     capabilities:
       - "detection"
@@ -23,7 +23,7 @@ cameras:
   - id: "CAM_HIGHWAY"
     name: "Highway Border Crossing"
     source: "./data/demo/highway_border.mp4"
-    fps: 30
+    fps: 15  # capped from 30 — 1080p decode at 30fps starves inference queue
     resolution: [1920, 1080]
     capabilities:
       - "detection"
@@ -33,7 +33,7 @@ cameras:
   - id: "CAM_CHECKPOINT"
     name: "Indoor Checkpoint"
     source: "./data/demo/indoor_checkpoint.mp4"
-    fps: 30
+    fps: 15  # capped from 30 — static indoor scene doesn't need 30fps analysis
     resolution: [1920, 1080]
     capabilities:
       - "detection"
@@ -43,7 +43,7 @@ cameras:
   - id: "CAM_VIRAT_PARKING"
     name: "VIRAT Parking Lot"
     source: "./data/demo/virat_parking_lot.mp4"
-    fps: 24
+    fps: 15  # capped from 24 — parking lot has slow-moving subjects
     resolution: [1280, 720]
     capabilities:
       - "detection"

@@ -55,6 +55,10 @@ class ObjectDetector:
     With a stock model it filters to COCO person/vehicle ids. With a custom
     coarse model (weights_path set + detect_all=True) it reads the model's own
     `names` map and emits every class, normalised to the pipeline vocabulary.
+
+    Supports TensorRT `.engine` files for drastically faster GPU inference.
+    Engine discovery priority: explicit engine_path → auto-discover .engine
+    next to .pt → fall back to .pt.
     """
 
     def __init__(
@@ -69,6 +73,7 @@ class ObjectDetector:
         class_thresholds: dict[str, float] | None = None,
         half_precision: bool = True,
         fallback_model_path: str | None = None,
+        engine_path: str | None = None,
     ):
         self.confidence_threshold = confidence_threshold
         self.nms_threshold = nms_threshold
@@ -89,6 +94,7 @@ class ObjectDetector:
         self._model = None
         self._device = device
         self._model_path = model_path
+        self._engine_path = engine_path
         # A single detector is shared by all camera threads. Serial inference
         # avoids overlapping CUDA/CPU allocations and predictor races.
         self._inference_lock = threading.Lock()
@@ -103,15 +109,53 @@ class ObjectDetector:
 
         self._load_model()
 
+    @staticmethod
+    def _resolve_engine_path(model_path: str, engine_path: str | None) -> str:
+        """Resolve the best available model file.
+
+        Priority:
+        1. Explicit *engine_path* if the file exists.
+        2. An ``.engine`` file next to *model_path* (auto-discovery).
+        3. *model_path* itself (.pt fallback).
+        """
+        from pathlib import Path
+
+        # 1. Explicit engine_path
+        if engine_path:
+            ep = Path(engine_path)
+            if ep.exists():
+                logger.info(f"Using explicit TensorRT engine: {ep}")
+                return str(ep)
+            logger.warning(f"engine_path configured but not found: {ep} — trying auto-discovery")
+
+        # 2. Auto-discover .engine next to .pt
+        mp = Path(model_path)
+        if mp.suffix in (".pt", ".pth"):
+            sibling_engine = mp.with_suffix(".engine")
+            if sibling_engine.exists():
+                logger.info(f"Auto-discovered TensorRT engine: {sibling_engine}")
+                return str(sibling_engine)
+
+        # 3. Fallback to original .pt
+        return model_path
+
     def _load_model(self):
-        """Load the YOLO model."""
+        """Load the YOLO model (TensorRT engine preferred, .pt fallback)."""
         if YOLO is None:
             logger.warning("YOLO not available — running in mock mode")
             return
 
         try:
-            logger.info(f"Loading detection model: {self._model_path}")
-            self._model = YOLO(self._model_path)
+            # Resolve best available model format
+            resolved_path = self._resolve_engine_path(self._model_path, self._engine_path)
+            is_engine = resolved_path.endswith(".engine")
+
+            if is_engine:
+                logger.info(f"Loading TensorRT engine: {resolved_path}")
+            else:
+                logger.info(f"Loading PyTorch model: {resolved_path}")
+
+            self._model = YOLO(resolved_path)
 
             import torch
             # Auto-detect device, or enforce an explicitly requested GPU.
@@ -125,7 +169,27 @@ class ObjectDetector:
 
             # Prefer the model's own class names (custom coarse model)
             model_names = getattr(self._model, "names", None)
-            if model_names:
+
+            # TensorRT engines built outside Ultralytics don't carry class
+            # name metadata — names will be generic like {0: "class0", 1: "class1"}.
+            # Detect this and load names from the original .pt weights.
+            names_are_generic = model_names and all(
+                str(v).strip() in (str(k), f"class{k}")
+                for k, v in dict(model_names).items()
+            )
+
+            if is_engine and names_are_generic:
+                logger.info("Engine has generic class names — loading from original .pt weights")
+                try:
+                    pt_model = YOLO(self._model_path)
+                    pt_names = getattr(pt_model, "names", None)
+                    if pt_names:
+                        self._id2name = {int(k): _normalize_class(v) for k, v in dict(pt_names).items()}
+                        logger.info(f"Loaded {len(self._id2name)} class names from {self._model_path}")
+                    del pt_model
+                except Exception as name_err:
+                    logger.warning(f"Could not load class names from .pt: {name_err}")
+            elif model_names and not names_are_generic:
                 self._id2name = {int(k): _normalize_class(v) for k, v in dict(model_names).items()}
 
             if self._fallback_model_path and self._fallback_model_path != self._model_path:
@@ -140,8 +204,9 @@ class ObjectDetector:
                     self._fallback_model = None
                     logger.warning(f"Fallback detector unavailable: {fallback_error}")
 
+            model_desc = "TensorRT engine" if is_engine else "PyTorch model"
             logger.success(
-                f"Detection model loaded on {self._device} ({len(self._id2name)} classes, detect_all={self.detect_all})"
+                f"Detection {model_desc} loaded on {self._device} ({len(self._id2name)} classes, detect_all={self.detect_all})"
             )
 
         except Exception as e:

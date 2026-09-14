@@ -851,6 +851,8 @@ Detection + Tracking + Rule
 
 Running a trained AI model on new video/image input to produce predictions.
 
+For production deployment, models are compiled to **NVIDIA TensorRT** engines (`.engine` files) which bypass PyTorch overhead and run directly on GPU CUDA cores at mixed precision (FP16/TF32). This is hardware-specific — each engine is compiled for the exact GPU it runs on — but yields 2–3× faster inference per frame versus the PyTorch `.pt` format. The pipeline auto-discovers `.engine` files alongside `.pt` weights and uses them transparently.
+
 ---
 
 # 13. Main User Workflows

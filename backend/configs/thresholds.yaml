@@ -28,6 +28,11 @@ detection:
   # (detect_all=True) and target_classes below is ignored. Leave "" for the stock model.
   # This file is the 50-epoch best checkpoint (validation mAP50 0.738).
   weights_path: "models/ibvap_coarse.pt"
+  # Pre-compiled TensorRT engine (FP16). Export with scripts/export_tensorrt.py.
+  # If set and the file exists, the detector loads this instead of the .pt for
+  # drastically faster inference. If absent, the detector auto-discovers an
+  # .engine file next to weights_path before falling back to .pt.
+  engine_path: "models/ibvap_coarse.engine"
   # Local COCO model runs only when the custom detector returns no objects.
   # It improves domain-shifted road/crowd recall at bounded cost.
   fallback_weights_path: "models/detection/yolov8n.pt"
