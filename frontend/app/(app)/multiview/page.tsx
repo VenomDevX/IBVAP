@@ -72,7 +72,7 @@ export default function MultiViewPage() {
               key={idx}
               data-tile
               className={cn(
-                'relative flex items-center justify-center overflow-hidden rounded-sm bg-black',
+                'relative flex items-center justify-center rounded-sm bg-black',
                 threatCount > 0 ? 'border-2 border-danger' : 'border border-default',
               )}
             >
@@ -82,7 +82,7 @@ export default function MultiViewPage() {
                   <img
                     src={mediaSrc(`/api/stream/${cam.camera_id}`, mediaTicket)}
                     alt={cam.name}
-                    className="size-full object-contain relative z-10"
+                    className="size-full object-contain"
                     onError={e => {
                       (e.target as HTMLImageElement).style.opacity = '0.1';
                       const parent = (e.target as HTMLImageElement).parentElement;
@@ -120,7 +120,7 @@ export default function MultiViewPage() {
                     onChange={event => setSelections(previous => {
                       const next = [...previous]; next[idx] = event.target.value; return next;
                     })}
-                    className="absolute bottom-2 left-2 max-w-[70%] rounded border border-white/20 bg-black/70 px-2 py-1 text-xs text-white"
+                    className="absolute bottom-2 left-2 z-30 max-w-[70%] rounded border border-white/20 bg-black/80 backdrop-blur-sm px-2.5 py-1.5 text-xs text-white cursor-pointer outline-none focus:ring-2 focus:ring-accent"
                   >
                     {cameras.map(camera => <option key={camera.camera_id} value={camera.camera_id}>{camera.name}</option>)}
                   </select>

@@ -19,9 +19,9 @@ router = APIRouter()
 
 # ~1 hour hard cap so a forgotten tab cannot pin a connection forever
 _MAX_FRAMES = 60 * 60 * 30
-_STREAM_FPS = 10.0
-_STREAM_MAX_WIDTH = 960
-_STREAM_JPEG_QUALITY = 65
+_STREAM_FPS = 15.0                # Smoother motion (was 10)
+_STREAM_MAX_WIDTH = 1280           # Higher resolution (was 960)
+_STREAM_JPEG_QUALITY = 80          # Sharper image (was 65)
 _stream_cache: dict[str, dict] = {}
 _stream_cache_guard = threading.Lock()
 

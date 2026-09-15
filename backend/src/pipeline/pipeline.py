@@ -129,7 +129,7 @@ class CameraPipeline:
         ) if evidence_cfg.get("clips_enabled", True) else None
         self.fine_classifier = fine_classifier or FineClassifier(enabled=False)
         self._fine_check_times: dict[int, float] = {}
-        self._FACE_RECHECK_S = 2.0
+        self._FACE_RECHECK_S = 0.8  # Check faces more frequently (was 2.0)
         self._FINE_RECHECK_S = 2.0
         self._persist_events = os.getenv("IBVAP_PERSIST_EVENTS", "true").strip().lower() not in {
             "0", "false", "no", "off"
@@ -303,7 +303,7 @@ class CameraPipeline:
                                 and track.identity_status == "unknown"
                                 and self.face_recognizer.active
                                 and improved
-                                and track.best_frame_score >= 0.4
+                                and track.best_frame_score >= 0.25  # Lowered for CCTV angles
                             ):
                                 last = self._face_check_times.get(track.track_uuid, 0.0)
                                 if time.time() - last >= self._FACE_RECHECK_S:

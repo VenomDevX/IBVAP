@@ -6,7 +6,7 @@ detection:
   # The model runs at the lowest class floor, then applies per-class gates.
   # This preserves small-object recall without lowering every class equally.
   confidence_threshold: 0.30
-  nms_threshold: 0.45            # NOTE: currently read by ObjectDetector default only
+  nms_threshold: 0.50            # Relaxed from 0.45 to reduce duplicate suppression
   half_precision: true           # CUDA FP16: substantially faster with negligible detector drift
   device: "auto"
   class_thresholds:
@@ -41,8 +41,7 @@ detection:
   target_classes: [0, 2, 3, 5, 7]
   # Stock model variant if weights_path is empty: yolov8n / yolov8s / yolo11s
   model_variant: "yolo11s"
-  # Input size (train and infer at the same size; coarse model trained at 640)
-  imgsz: 640
+  # Input size — must match TensorRT engine (compiled at 640).\n  # To use larger, re-export the engine with scripts/export_tensorrt.py.\n  imgsz: 640
 
 tracking:
   tracker: "bytetrack"
@@ -94,9 +93,9 @@ face:
   # continues using the CUDA object detector.
   device: "auto"
   gallery_path: "./models/face/gallery.json"
-  similarity_threshold: 0.45   # >= this => "known"
-  uncertain_threshold: 0.35    # >= this => "uncertain"
-  min_face_confidence: 0.6     # detector score floor
+  similarity_threshold: 0.40   # >= this => "known" (lowered for CCTV angles)
+  uncertain_threshold: 0.28    # >= this => "uncertain" (more forgiving)
+  min_face_confidence: 0.4     # detector score floor (lowered for distant/angled faces)
 
 anpr:
   # OCR engine cascade: easyocr -> paddleocr -> pytesseract -> mock.
