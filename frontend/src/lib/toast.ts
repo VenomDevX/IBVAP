@@ -3,8 +3,11 @@ import type { RiskLevel } from '../types';
 export interface ToastPayload {
   title: string;
   message?: string;
-  level?: RiskLevel | 'unknown';
+  /** risk colour for alert toasts; 'error' for failed actions */
+  level?: RiskLevel | 'unknown' | 'error' | 'success';
+  /** dedupe key: a second toast with the same key updates the first */
   eventKey?: string;
+  href?: string;
 }
 
 type Listener = (t: ToastPayload) => void;

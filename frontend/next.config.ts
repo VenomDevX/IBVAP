@@ -1,16 +1,18 @@
 import type { NextConfig } from 'next';
 
 /**
- * The app is a pure client-rendered SPA served as static files by nginx
- * (see Dockerfile / nginx.conf), which proxies /api, /ws, /snapshots and
- * /static to the FastAPI backend. In dev the browser talks to the backend
- * cross-origin via NEXT_PUBLIC_API_BASE (backend CORS already allows :3001).
+ * Same deployment model as frontend/: a client-rendered SPA exported as static
+ * files. In dev the browser calls the backend cross-origin via
+ * NEXT_PUBLIC_API_BASE (backend CORS allows :3001).
  */
 const nextConfig: NextConfig = {
   output: 'export',
   trailingSlash: true,
   images: { unoptimized: true },
   devIndicators: false,
+  // Page-data workers default to one per core; on a machine that also runs the
+  // GPU pipeline that exhausts memory and crashes the build.
+  experimental: { cpus: 4 },
 };
 
 export default nextConfig;

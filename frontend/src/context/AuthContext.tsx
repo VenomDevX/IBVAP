@@ -1,11 +1,11 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
+import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../api/supabase';
 import { apiFetch } from '../api/client';
-import type { User, Session } from '@supabase/supabase-js';
 
-type AppRole = 'admin' | 'commander' | 'operator' | 'viewer' | 'supervisor' | 'auditor' | null;
+export type AppRole = 'admin' | 'commander' | 'operator' | 'viewer' | 'supervisor' | 'auditor' | null;
 
 interface AuthState {
   isAuthenticated: boolean;
@@ -21,6 +21,11 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | null>(null);
 
+/** Roles the backend accepts for PATCH /api/alerts/{id}. */
+export function canManageAlerts(role: AppRole) {
+  return role === 'admin' || role === 'commander' || role === 'supervisor' || role === 'operator';
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
@@ -32,33 +37,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     supabase.auth.getSession()
-      .then(({ data: { session } }) => {
-        setSession(session);
-        setUser(session?.user ?? null);
+      .then(({ data }) => {
+        setSession(data.session);
+        setUser(data.session?.user ?? null);
       })
-      .catch((e) => console.error('getSession failed:', e))
+      .catch(e => console.error('getSession failed:', e))
       .finally(() => setLoading(false));
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      setUser(session?.user ?? null);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, next) => {
+      setSession(next);
+      setUser(next?.user ?? null);
       setLoading(false);
     });
 
     return () => subscription.unsubscribe();
   }, []);
 
-  // Resolve the application role (lives in user_profiles, not the JWT) whenever we have a session.
+  // The application role lives in user_profiles, not in the JWT.
+  const accessToken = session?.access_token ?? null;
+  const hasSession = !!session;
   useEffect(() => {
     let cancelled = false;
-    if (!session) { setRole(null); setAllowedAreas(null); setMediaTicket(null); setProfileError(false); return; }
+    if (!hasSession) {
+      setRole(null); setAllowedAreas(null); setMediaTicket(null); setProfileError(false);
+      return;
+    }
     setProfileError(false);
     const loadProfile = async () => {
       try {
         const response = await apiFetch('/api/auth/me');
         if (!response.ok) throw new Error('Profile unavailable');
         const me = await response.json();
-        if (!cancelled) { setRole((me?.role as AppRole) ?? null); setAllowedAreas(Array.isArray(me?.allowed_areas) ? me.allowed_areas : null); }
+        if (!cancelled) {
+          setRole((me?.role as AppRole) ?? null);
+          setAllowedAreas(Array.isArray(me?.allowed_areas) ? me.allowed_areas : null);
+        }
       } catch {
         if (!cancelled) { setRole(null); setAllowedAreas(null); setProfileError(true); }
       }
@@ -69,29 +82,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!response.ok) throw new Error('Media ticket unavailable');
         const data = await response.json();
         if (!cancelled) setMediaTicket(data.ticket ?? null);
-      } catch { if (!cancelled) setMediaTicket(null); }
+      } catch {
+        if (!cancelled) setMediaTicket(null);
+      }
     };
     void loadProfile();
     void refreshTicket();
     const ticketTimer = window.setInterval(() => void refreshTicket(), 90_000);
     return () => { cancelled = true; window.clearInterval(ticketTimer); };
-  }, [session]);
+    // Re-run when the user changes, not on every silent token refresh.
+  }, [hasSession, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const logout = async () => {
-    // Revoke the access token server-side first (a plain signOut only clears the
-    // browser; the JWT stays valid for the rest of its ~1h life otherwise).
+  void accessToken;
+
+  const logout = useCallback(async () => {
+    // Revoke the access token server-side first; a plain signOut only clears the browser.
     try {
       await apiFetch('/api/auth/logout', { method: 'POST' });
     } catch {
-      /* best effort — sign out locally regardless */
+      /* best effort, sign out locally regardless */
     }
     await supabase.auth.signOut();
-  };
-
-  const isAuthenticated = !!user;
+  }, []);
 
   return (
-    <AuthContext.Provider value={{ isAuthenticated, user, session, role, allowedAreas, profileError, mediaTicket, loading, logout }}>
+    <AuthContext.Provider value={{ isAuthenticated: !!user, user, session, role, allowedAreas, profileError, mediaTicket, loading, logout }}>
       {children}
     </AuthContext.Provider>
   );

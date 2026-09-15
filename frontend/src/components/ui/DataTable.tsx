@@ -1,151 +1,163 @@
 'use client';
 
 import { useMemo, useState, type ReactNode } from 'react';
+import { ArrowDown, ArrowUp } from '@phosphor-icons/react';
 import { cn } from '../../lib/cn';
-import Icon from './Icon';
-import { Button } from './Button';
-import { EmptyState } from './States';
+import { EmptyState, Loading } from './States';
+import Pagination from './Pagination';
 
 export interface Column<T> {
   key: string;
   header: string;
-  /** value used for sorting + built-in search; defaults to row[key] */
+  /** value for sorting and search; defaults to row[key] */
   accessor?: (row: T) => string | number;
   render?: (row: T) => ReactNode;
   sortable?: boolean;
+  align?: 'left' | 'right';
   className?: string;
-  align?: 'left' | 'right' | 'center';
+  /** hide on narrow screens to keep the essentials readable */
+  hideBelow?: 'sm' | 'md' | 'lg' | 'xl' | '2xl';
 }
+
+export type SortState = { key: string; dir: 'asc' | 'desc' } | null;
 
 interface Props<T> {
+  /** accessible table caption */
+  label: string;
   columns: Column<T>[];
   rows: T[];
-  /** stable row id */
   rowKey: (row: T) => string;
-  /** free-text filter across these accessors; omit to disable search */
+  /**
+   * Server mode: pass onSortChange (and paginate outside). Rows are shown as
+   * given. Client mode: the table sorts, searches and paginates itself.
+   */
+  sort?: SortState;
+  onSortChange?: (sort: SortState) => void;
   search?: string;
   pageSize?: number;
-  emptyMessage?: string;
+  loading?: boolean;
+  emptyTitle?: string;
+  emptyDescription?: ReactNode;
+  /** CSS colour for a thin left rule, e.g. critical rows */
+  rowAccent?: (row: T) => string | undefined;
+  selectedKey?: string | null;
 }
 
-function defaultAccessor<T>(col: Column<T>, row: T): string | number {
-  if (col.accessor) return col.accessor(row);
-  const v = (row as Record<string, unknown>)[col.key];
-  return v == null ? '' : (v as string | number);
+const HIDE: Record<NonNullable<Column<unknown>['hideBelow']>, string> = {
+  sm: 'max-sm:hidden', md: 'max-md:hidden', lg: 'max-lg:hidden', xl: 'max-xl:hidden', '2xl': 'max-2xl:hidden',
+};
+
+function valueOf<T>(column: Column<T>, row: T): string | number {
+  if (column.accessor) return column.accessor(row);
+  const value = (row as Record<string, unknown>)[column.key];
+  return value == null ? '' : (value as string | number);
 }
 
 export default function DataTable<T>({
-  columns, rows, rowKey, search = '', pageSize = 15, emptyMessage = 'Nothing to show',
+  label, columns, rows, rowKey, sort, onSortChange, search = '', pageSize = 25, loading,
+  emptyTitle = 'Nothing to show', emptyDescription, rowAccent, selectedKey,
 }: Props<T>) {
-  const [sort, setSort] = useState<{ key: string; dir: 'asc' | 'desc' } | null>(null);
-  const [page, setPage] = useState(0);
+  const server = !!onSortChange;
+  const [localSort, setLocalSort] = useState<SortState>(null);
+  const [page, setPage] = useState(1);
+  const activeSort = server ? sort ?? null : localSort;
 
-  const filtered = useMemo(() => {
+  const visible = useMemo(() => {
+    if (server) return rows;
     const q = search.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter(row =>
-      columns.some(col => String(defaultAccessor(col, row)).toLowerCase().includes(q)),
-    );
-  }, [rows, columns, search]);
+    let out = q ? rows.filter(row => columns.some(c => String(valueOf(c, row)).toLowerCase().includes(q))) : rows;
+    const column = localSort && columns.find(c => c.key === localSort.key);
+    if (localSort && column) {
+      const dir = localSort.dir === 'asc' ? 1 : -1;
+      out = [...out].sort((a, b) => {
+        const av = valueOf(column, a);
+        const bv = valueOf(column, b);
+        if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir;
+        return String(av).localeCompare(String(bv), undefined, { numeric: true }) * dir;
+      });
+    }
+    return out;
+  }, [server, rows, columns, search, localSort]);
 
-  const sorted = useMemo(() => {
-    if (!sort) return filtered;
-    const col = columns.find(c => c.key === sort.key);
-    if (!col) return filtered;
-    const dir = sort.dir === 'asc' ? 1 : -1;
-    return [...filtered].sort((a, b) => {
-      const av = defaultAccessor(col, a);
-      const bv = defaultAccessor(col, b);
-      if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir;
-      return String(av).localeCompare(String(bv), undefined, { numeric: true }) * dir;
-    });
-  }, [filtered, sort, columns]);
+  const pageCount = Math.max(1, Math.ceil(visible.length / pageSize));
+  const current = Math.min(page, pageCount);
+  const shown = server ? visible : visible.slice((current - 1) * pageSize, current * pageSize);
 
-  const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize));
-  const current = Math.min(page, pageCount - 1);
-  const slice = sorted.slice(current * pageSize, current * pageSize + pageSize);
-
-  const toggleSort = (key: string) => {
-    setPage(0);
-    setSort(prev =>
-      prev?.key === key
-        ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
-        : { key, dir: 'asc' },
-    );
+  const toggle = (key: string) => {
+    const next: SortState = activeSort?.key === key
+      ? { key, dir: activeSort.dir === 'asc' ? 'desc' : 'asc' }
+      : { key, dir: 'asc' };
+    if (server) onSortChange?.(next);
+    else { setLocalSort(next); setPage(1); }
   };
 
-  const alignCls = (a?: string) =>
-    a === 'right' ? 'text-right' : a === 'center' ? 'text-center' : 'text-left';
-
   return (
-    <div className="overflow-hidden rounded border border-default">
-      <div className="overflow-x-auto">
-        <table className="w-full border-collapse text-[0.82rem]">
+    <div aria-busy={loading || undefined}>
+      <div className="-mx-3 overflow-x-auto">
+        <table className="w-full border-collapse text-sm">
+          <caption className="sr-only">{label}</caption>
           <thead>
-            <tr className="bg-surface">
-              {columns.map(col => (
-                <th
-                  key={col.key}
-                  aria-sort={col.sortable ? (sort?.key === col.key ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none') : undefined}
-                  className={cn(
-                    'border-b border-default px-4 py-2.5 text-[0.68rem] font-semibold uppercase tracking-wider text-fg-subtle',
-                    alignCls(col.align),
-                  )}
-                >
-                  <button
-                    type="button"
-                    disabled={!col.sortable}
-                    onClick={() => col.sortable && toggleSort(col.key)}
-                    className="inline-flex items-center gap-1.5 disabled:cursor-default"
-                  >
-                    {col.header}
-                    {col.sortable && sort?.key === col.key && (
-                      <Icon name={sort.dir === 'asc' ? 'arrow-up-short-wide' : 'arrow-down-wide-short'} className="text-[0.6rem]" />
+            <tr className="border-b border-line">
+              {columns.map(column => {
+                const dir = activeSort?.key === column.key ? activeSort.dir : null;
+                return (
+                  <th
+                    key={column.key}
+                    scope="col"
+                    aria-sort={column.sortable ? (dir === 'asc' ? 'ascending' : dir === 'desc' ? 'descending' : 'none') : undefined}
+                    className={cn(
+                      'whitespace-nowrap px-3 py-2 text-xs font-medium text-muted',
+                      column.align === 'right' ? 'text-right' : 'text-left',
+                      column.hideBelow && HIDE[column.hideBelow],
                     )}
-                  </button>
-                </th>
-              ))}
+                  >
+                    {column.sortable ? (
+                      <button type="button" onClick={() => toggle(column.key)}
+                        className={cn('inline-flex items-center gap-1 rounded-sm transition-colors duration-150 hover:text-fg', dir && 'text-fg')}>
+                        {column.header}
+                        {dir === 'asc' ? <ArrowUp size={11} aria-hidden /> : dir === 'desc' ? <ArrowDown size={11} aria-hidden /> : null}
+                      </button>
+                    ) : column.header}
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody>
-            {slice.length === 0 ? (
-              <tr>
-                <td colSpan={columns.length}>
-                  <EmptyState message={emptyMessage} />
-                </td>
-              </tr>
-            ) : (
-              slice.map(row => (
-                <tr key={rowKey(row)} className="transition-colors hover:bg-elevated">
-                  {columns.map(col => (
+            {loading && rows.length === 0 ? (
+              <tr><td colSpan={columns.length}><Loading /></td></tr>
+            ) : shown.length === 0 ? (
+              <tr><td colSpan={columns.length}><EmptyState compact title={emptyTitle} description={emptyDescription} /></td></tr>
+            ) : shown.map(row => {
+              const key = rowKey(row);
+              const accent = rowAccent?.(row);
+              return (
+                <tr key={key} className={cn(
+                  'border-b border-line/70 transition-colors duration-150 last:border-0 hover:bg-subtle/60',
+                  selectedKey === key && 'bg-subtle hover:bg-subtle',
+                )}>
+                  {columns.map((column, index) => (
                     <td
-                      key={col.key}
-                      className={cn('border-b border-default px-4 py-2.5 text-fg', alignCls(col.align), col.className)}
+                      key={column.key}
+                      className={cn(
+                        'px-3 py-2.5 align-middle text-fg',
+                        column.align === 'right' ? 'text-right' : 'text-left',
+                        column.hideBelow && HIDE[column.hideBelow],
+                        column.className,
+                      )}
+                      style={index === 0 && accent ? { boxShadow: `inset 2px 0 0 ${accent}` } : undefined}
                     >
-                      {col.render ? col.render(row) : String(defaultAccessor(col, row))}
+                      {column.render ? column.render(row) : String(valueOf(column, row))}
                     </td>
                   ))}
                 </tr>
-              ))
-            )}
+              );
+            })}
           </tbody>
         </table>
       </div>
-
-      {sorted.length > pageSize && (
-        <div className="flex items-center justify-between gap-3 border-t border-default bg-card px-4 py-2.5 text-[0.75rem] text-fg-subtle">
-          <span>
-            {current * pageSize + 1}–{Math.min((current + 1) * pageSize, sorted.length)} of {sorted.length}
-          </span>
-          <div className="flex gap-1.5">
-            <Button size="xs" variant="outline" icon="chevron-left" disabled={current === 0} onClick={() => setPage(current - 1)}>
-              Prev
-            </Button>
-            <Button size="xs" variant="outline" disabled={current >= pageCount - 1} onClick={() => setPage(current + 1)}>
-              Next <Icon name="chevron-right" />
-            </Button>
-          </div>
-        </div>
+      {!server && visible.length > pageSize && (
+        <Pagination page={current} pageSize={pageSize} total={visible.length} onPageChange={setPage} />
       )}
     </div>
   );

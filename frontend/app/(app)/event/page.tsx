@@ -1,192 +1,199 @@
 'use client';
 
-import { Suspense, useEffect, useState, type ReactNode } from 'react';
+import Link from 'next/link';
+import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { ArrowLeft, DownloadSimple, ShieldCheck } from '@phosphor-icons/react';
+import {
+  ApiError, apiJson, errorMessage, formatDuration, formatEventType, formatStatus, formatTime, mediaSrc,
+} from '@/src/api/client';
+import { downloadAuthenticated } from '@/src/api/reports';
 import { useAuth } from '@/src/context/AuthContext';
-import { apiFetch, formatEventType, formatTime, mediaSrc, riskMeta } from '@/src/api/client';
-import Icon from '@/src/components/ui/Icon';
+import { pushToast } from '@/src/lib/toast';
 import { Button, ButtonLink } from '@/src/components/ui/Button';
+import Section, { DetailRow } from '@/src/components/ui/Section';
 import { EmptyState, Loading } from '@/src/components/ui/States';
-import { cn } from '@/src/lib/cn';
+import { RiskLabel, Tag } from '@/src/components/ui/Indicators';
 import type { Event } from '@/src/types';
 
-function yesNo(v: boolean | undefined) {
-  return v ? 'Yes' : 'No';
-}
+const yesNo = (value: boolean | undefined) => (value ? 'Yes' : 'No');
 
-function ContextRow({ label, value, description }: { label: string; value: string; description?: string }) {
+function ScoreBreakdown({ breakdown }: { breakdown: NonNullable<Event['score_breakdown']> }) {
+  const entries = Object.entries(breakdown).sort((a, b) => b[1].contribution - a[1].contribution);
+  const max = Math.max(1, ...entries.map(([, item]) => item.contribution));
   return (
-    <div className="flex items-center justify-between gap-4 border-b border-default py-4 text-[0.85rem] last:border-0">
-      <div>
-        <div className="text-fg font-medium">{label}</div>
-        {description && <div className="text-fg-subtle text-xs mt-0.5">{description}</div>}
-      </div>
-      <div className="flex items-center gap-2 text-right text-fg-muted font-medium">{value}</div>
-    </div>
-  );
-}
-
-function PremiumCard({ title, icon, colorClass, children, className }: { title: string; icon: string; colorClass?: string; children: ReactNode; className?: string }) {
-  return (
-    <div className={cn("border border-default rounded bg-surface p-6 shadow-sm", className)}>
-      <div className="flex items-center gap-3 mb-2">
-        <div className={cn("w-10 h-10 rounded-full flex items-center justify-center", colorClass || "bg-accent/10 text-accent")}>
-          <Icon name={icon} className="text-lg" />
-        </div>
-        <h2 className="text-lg font-medium text-fg">{title}</h2>
-      </div>
-      <div className="mt-4">
-        {children}
-      </div>
-    </div>
+    <ul className="space-y-4">
+      {entries.map(([category, item]) => (
+        <li key={category}>
+          <div className="flex items-baseline justify-between gap-4 text-sm">
+            <span className="text-fg">{formatStatus(category)}</span>
+            <span className="num text-fg">
+              +{item.contribution.toFixed(1)}
+              <span className="ml-2 text-muted">{item.raw_score.toFixed(0)} × {item.weight}</span>
+            </span>
+          </div>
+          <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-subtle">
+            <div className="h-full rounded-full bg-accent" style={{ width: `${(item.contribution / max) * 100}%` }} />
+          </div>
+          {item.reasons?.length > 0 && <p className="mt-1.5 text-xs text-muted">{item.reasons.join(', ')}</p>}
+        </li>
+      ))}
+    </ul>
   );
 }
 
 function EventDetail() {
-  const params = useSearchParams();
-  const eventId = params.get('id');
+  const eventId = useSearchParams().get('id');
   const { mediaTicket } = useAuth();
   const [event, setEvent] = useState<Event | null>(null);
-  const [error, setError] = useState(false);
-  const [imgFailed, setImgFailed] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [imageFailed, setImageFailed] = useState(false);
+  const [downloading, setDownloading] = useState<number | null>(null);
 
   useEffect(() => {
-    if (!eventId) { setError(true); return; }
-    apiFetch(`/api/events/${eventId}`)
-      .then(r => r.json())
-      .then(setEvent)
-      .catch(() => setError(true));
+    if (!eventId) { setError('No event was specified in the link.'); return; }
+    let cancelled = false;
+    setEvent(null);
+    setError(null);
+    apiJson<Event>(`/api/events/${encodeURIComponent(eventId)}`)
+      .then(result => { if (!cancelled) setEvent(result); })
+      .catch(err => {
+        if (cancelled) return;
+        setError(err instanceof ApiError && err.status === 404 ? 'This event does not exist or you do not have access to its camera.' : errorMessage(err));
+      });
+    return () => { cancelled = true; };
   }, [eventId]);
 
-  if (error) return <EmptyState icon="circle-exclamation" message="Event not found" />;
+  if (error) {
+    return <EmptyState title="Event unavailable" description={error} action={<ButtonLink href="/events">Back to events</ButtonLink>} />;
+  }
   if (!event) return <Loading label="Loading event…" />;
 
-  const meta = riskMeta(event.risk_level);
   const evidenceFile = event.evidence_path?.replace(/\\/g, '/').split('/').pop();
-  const downloadEvidence = async (url: string, evidenceId: number) => {
-    const response = await apiFetch(url);
-    if (!response.ok) return;
-    const href = URL.createObjectURL(await response.blob());
-    const anchor = document.createElement('a');
-    anchor.href = href;
-    anchor.download = `${event.event_id}-evidence-${evidenceId}`;
-    anchor.click();
-    URL.revokeObjectURL(href);
+  const factors = event.contributing_factors ?? [];
+  const breakdown = event.score_breakdown && Object.keys(event.score_breakdown).length > 0 ? event.score_breakdown : null;
+
+  const download = async (url: string, evidenceId: number) => {
+    setDownloading(evidenceId);
+    try {
+      await downloadAuthenticated(url, `${event.event_id}-evidence-${evidenceId}`);
+    } catch (err) {
+      pushToast({ title: 'Download failed', message: errorMessage(err), level: 'error' });
+    } finally {
+      setDownloading(null);
+    }
   };
 
   return (
-    <div className="max-w-6xl mx-auto pb-10">
-      <header className="mb-10 mt-2">
-        <span
-          className="mb-4 inline-flex items-center gap-3 rounded-full border px-4 py-1.5 text-[0.85rem] font-semibold bg-surface shadow-sm"
-          style={{ borderColor: meta.color, color: meta.color }}
-        >
-          <span className="size-2.5 rounded-full shadow-[0_0_8px_currentColor]" style={{ background: meta.color }} aria-hidden />
-          {meta.label}
-          <span className="tabular-nums opacity-80 border-l pl-3 ml-1" style={{ borderColor: meta.color }}>
-            {event.risk_score?.toFixed(0) || 0} / 100 Risk Score
-          </span>
-        </span>
-        <h2 className="text-3xl font-bold text-fg mb-3">{formatEventType(event.event_type)}</h2>
-        <p className="flex flex-wrap gap-x-6 gap-y-2 text-[0.9rem] text-fg-subtle">
-          <span className="flex items-center gap-2"><Icon name="video" className="text-fg-muted" /> Camera {event.camera_id}</span>
-          <span className="flex items-center gap-2"><Icon name="clock" className="text-fg-muted" /> {formatTime(event.timestamp)}</span>
-          <span className="flex items-center gap-2"><Icon name="person" className="text-fg-muted" /> {event.object_type} (Track #{event.track_id})</span>
-          {event.track_uuid && <span className="flex items-center gap-2 font-mono text-xs"><Icon name="fingerprint" className="text-fg-muted" /> {event.track_uuid}</span>}
+    <div className="mx-auto max-w-6xl">
+      <Link href="/events" className="inline-flex items-center gap-1.5 text-sm text-muted transition-colors duration-150 hover:text-fg">
+        <ArrowLeft size={14} aria-hidden /> Events
+      </Link>
+
+      <header className="mt-4 border-b border-line pb-6">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+          <RiskLabel level={event.risk_level} />
+          <span className="num text-muted">Score {Math.round(event.risk_score ?? 0)} of 100</span>
+          {event.state && <Tag>{formatStatus(event.state.toLowerCase())}</Tag>}
+        </div>
+        <h2 className="mt-2 text-2xl font-semibold tracking-tight">{formatEventType(event.event_type)}</h2>
+        <p className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-sm text-muted">
+          <span>Camera {event.camera_id}</span>
+          <span className="num">{formatTime(event.timestamp)}</span>
+          <span><span className="capitalize">{event.object_type}</span>, Track #{event.track_id}</span>
+          {event.track_uuid && <span className="font-mono text-xs leading-5" translate="no">{event.track_uuid}</span>}
         </p>
       </header>
 
-      {event.temporal_context?.semantic_description && (
-        <PremiumCard title="Scene Description" icon="align-left" colorClass="bg-info/10 text-info" className="mb-6">
-          <p className="text-[0.95rem] leading-relaxed text-fg p-2">{event.temporal_context.semantic_description}</p>
-        </PremiumCard>
-      )}
-
-      <div className="mb-8 grid items-start gap-6 md:grid-cols-2 xl:grid-cols-3">
-        <PremiumCard title="Contributing Factors" icon="list" colorClass="bg-warning/10 text-warning">
-          {(event.contributing_factors ?? []).length === 0 ? (
-            <p className="text-[0.85rem] text-fg-subtle p-2">None recorded in system</p>
-          ) : (
-            <ul className="space-y-3 p-1">
-              {event.contributing_factors.map((f, i) => (
-                <li key={i} className="flex items-start gap-3 text-[0.9rem] text-fg">
-                  <Icon name="circle-check" className="text-success mt-1 shadow-sm rounded-full bg-success/10" /> 
-                  <span className="leading-snug">{f}</span>
-                </li>
-              ))}
-            </ul>
+      <div className="grid gap-10 pt-8 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+        <div className="min-w-0 space-y-10">
+          {event.temporal_context?.semantic_description && (
+            <Section title="Scene description">
+              <p className="max-w-[65ch] text-base leading-relaxed text-fg">{event.temporal_context.semantic_description}</p>
+            </Section>
           )}
-        </PremiumCard>
 
-        <PremiumCard title="Spatial Context" icon="location-dot" colorClass="bg-accent/10 text-accent">
-          <ContextRow label="In restricted zone" description="Breached geofenced area" value={yesNo(event.spatial_context?.in_restricted)} />
-          <ContextRow label="Fence crossed" description="Perimeter violation detected" value={yesNo(event.spatial_context?.fence_crossed)} />
-          <ContextRow label="Zones" description="Triggered regions" value={(event.spatial_context?.zones ?? []).join(', ') || 'None'} />
-        </PremiumCard>
-
-        <PremiumCard title="Temporal Context" icon="clock" colorClass="bg-purple-500/10 text-purple-400">
-          <ContextRow label="Night time" description="Incident occurred after dark" value={yesNo(event.temporal_context?.is_night)} />
-          <ContextRow label="Loitering" description="Prolonged static presence" value={yesNo(event.temporal_context?.is_loitering)} />
-          <ContextRow label="Duration" description="Length of recorded event" value={`${event.duration?.toFixed(1) || 0}s`} />
-        </PremiumCard>
-
-        {event.score_breakdown && Object.keys(event.score_breakdown).length > 0 && (
-          <PremiumCard title="Threat Score Breakdown" icon="chart-simple" colorClass="bg-info/10 text-info" className="md:col-span-2 xl:col-span-3">
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-              {Object.entries(event.score_breakdown).map(([category, item]) => (
-                <div key={category} className="rounded border border-default bg-bg p-3">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-fg-muted">{category}</p>
-                  <p className="mt-1 text-lg font-semibold text-fg">+{item.contribution.toFixed(1)}</p>
-                  <p className="text-xs text-fg-subtle">{item.raw_score.toFixed(0)} × {item.weight}</p>
-                </div>
-              ))}
-            </div>
-          </PremiumCard>
-        )}
-
-        {evidenceFile && (
-          <PremiumCard title="Evidence Snapshot" icon="image" colorClass="bg-success/10 text-success" className="md:col-span-2 xl:col-span-3">
-            {imgFailed ? (
-              <EmptyState icon="image" message="Evidence image unavailable or expired" />
+          <Section title="Evidence">
+            {!evidenceFile ? (
+              <p className="text-sm text-muted">No snapshot was captured for this event.</p>
+            ) : imageFailed || !mediaTicket ? (
+              imageFailed
+                ? <EmptyState compact title="Snapshot unavailable" description="The image has expired under the storage limit or was never written." />
+                : <Loading label="Loading snapshot…" />
             ) : (
-              <div className="relative rounded-lg overflow-hidden border-2 border-default shadow-md group">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={mediaSrc(`/snapshots/${evidenceFile}`, mediaTicket)}
-                  alt="Evidence snapshot"
-                  className="w-full h-auto object-cover max-h-[600px] transition-transform duration-500 group-hover:scale-[1.01]"
-                  onError={() => setImgFailed(true)}
-                />
-                <div className="absolute inset-0 ring-1 ring-inset ring-black/10 rounded-lg pointer-events-none"></div>
-              </div>
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={mediaSrc(`/snapshots/${evidenceFile}`, mediaTicket)}
+                alt={`Evidence snapshot for ${formatEventType(event.event_type)} on camera ${event.camera_id}`}
+                width={1280}
+                height={720}
+                className="h-auto w-full rounded-lg bg-video"
+                onError={() => setImageFailed(true)}
+              />
             )}
             {event.evidence_hash && (
-              <div className="mt-4 flex items-center justify-between bg-bg rounded p-3 border border-default">
-                <div className="flex flex-col">
-                  <span className="text-[0.65rem] font-bold uppercase tracking-wider text-fg-muted mb-1">SHA-256 Checksum</span>
-                  <span className="font-mono text-xs text-fg-subtle break-all">{event.evidence_hash}</span>
+              <div className="mt-3 flex items-start gap-2 text-sm">
+                <ShieldCheck size={16} className="mt-0.5 shrink-0 text-ok" aria-hidden />
+                <div className="min-w-0">
+                  <p className="text-muted">SHA-256 checksum</p>
+                  <p className="break-all font-mono text-xs text-fg" translate="no">{event.evidence_hash}</p>
                 </div>
-                <Icon name="shield-check" className="text-success text-xl ml-4" />
               </div>
             )}
-          </PremiumCard>
-        )}
-        {!!event.evidence?.length && (
-          <PremiumCard title="Evidence Files" icon="file-shield" colorClass="bg-success/10 text-success" className="md:col-span-2 xl:col-span-3">
-            <div className="flex flex-wrap gap-2">
-              {event.evidence.map(item => (
-                <Button key={item.evidence_id} size="xs" variant="outline" onClick={() => void downloadEvidence(item.download_url, item.evidence_id)}>
-                  Download {item.type.replaceAll('_', ' ')}
-                </Button>
-              ))}
-            </div>
-          </PremiumCard>
-        )}
-      </div>
+            {!!event.evidence?.length && (
+              <div className="mt-4 flex flex-wrap gap-2">
+                {event.evidence.map(item => (
+                  <Button key={item.evidence_id} size="sm" icon={<DownloadSimple size={14} />}
+                    loading={downloading === item.evidence_id} onClick={() => void download(item.download_url, item.evidence_id)}>
+                    Download {item.type.replaceAll('_', ' ')}
+                  </Button>
+                ))}
+              </div>
+            )}
+          </Section>
 
-      <ButtonLink href="/events" icon="arrow-left" variant="outline" className="px-6 py-2.5 shadow-sm rounded-lg">
-        Back to Event History
-      </ButtonLink>
+          {breakdown && (
+            <Section title="Score breakdown">
+              <ScoreBreakdown breakdown={breakdown} />
+            </Section>
+          )}
+        </div>
+
+        <div className="min-w-0 space-y-10">
+          <Section title="Why it was flagged">
+            {factors.length === 0 ? (
+              <p className="text-sm text-muted">No contributing factors were recorded.</p>
+            ) : (
+              <ul className="space-y-2">
+                {factors.map((factor, index) => (
+                  <li key={index} className="flex gap-2.5 text-sm text-fg">
+                    <span aria-hidden className="mt-2 size-1 shrink-0 rounded-full bg-muted" />
+                    {factor}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Section>
+
+          <Section title="Where">
+            <dl className="divide-y divide-line/70">
+              <DetailRow label="Inside a restricted zone">{yesNo(event.spatial_context?.in_restricted)}</DetailRow>
+              <DetailRow label="Fence crossed">{yesNo(event.spatial_context?.fence_crossed)}</DetailRow>
+              <DetailRow label="Zones">{(event.spatial_context?.zones ?? []).join(', ') || 'None'}</DetailRow>
+            </dl>
+          </Section>
+
+          <Section title="When">
+            <dl className="divide-y divide-line/70">
+              <DetailRow label="At night">{yesNo(event.temporal_context?.is_night)}</DetailRow>
+              <DetailRow label="Loitering">{yesNo(event.temporal_context?.is_loitering)}</DetailRow>
+              <DetailRow label="Duration"><span className="num">{formatDuration(event.duration)}</span></DetailRow>
+              {event.opened_at && <DetailRow label="Opened"><span className="num">{formatTime(event.opened_at)}</span></DetailRow>}
+              {event.closed_at && <DetailRow label="Closed"><span className="num">{formatTime(event.closed_at)}</span></DetailRow>}
+            </dl>
+          </Section>
+        </div>
+      </div>
     </div>
   );
 }

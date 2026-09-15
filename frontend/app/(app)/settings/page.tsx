@@ -1,338 +1,236 @@
 'use client';
 
-import { useEffect, useState, type ReactNode } from 'react';
-import { apiFetch } from '@/src/api/client';
+import { Suspense, useEffect, useState, type ReactNode } from 'react';
+import { SignOut } from '@phosphor-icons/react';
+import { useRouter } from 'next/navigation';
+import { apiJson, formatNumber, formatStatus } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
-import { useTheme } from '@/src/context/ThemeContext';
-import { cn } from '@/src/lib/cn';
-import Badge from '@/src/components/ui/Badge';
-import StatusDot from '@/src/components/ui/StatusDot';
-import { Button } from '@/src/components/ui/Button';
-import Icon from '@/src/components/ui/Icon';
-import type { DashboardSummary } from '@/src/types';
+import { useTheme, type ThemePreference } from '@/src/context/ThemeContext';
 import { useSystemHealth } from '@/src/hooks/useSystemHealth';
+import { useUrlState } from '@/src/hooks/useUrlState';
+import { cn } from '@/src/lib/cn';
+import { Button } from '@/src/components/ui/Button';
+import Section from '@/src/components/ui/Section';
+import { Dot } from '@/src/components/ui/Indicators';
+import { Loading } from '@/src/components/ui/States';
+import type { DashboardSummary } from '@/src/types';
 
-function Row({ label, children, description }: { label: string; children: ReactNode; description?: string }) {
+const TABS = [
+  { id: 'profile', label: 'Profile' },
+  { id: 'appearance', label: 'Appearance' },
+  { id: 'health', label: 'System health' },
+] as const;
+
+function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-4 border-b border-default py-4 text-[0.85rem] last:border-0">
-      <div>
-        <div className="text-fg font-medium">{label}</div>
-        {description && <div className="text-fg-subtle text-xs mt-0.5">{description}</div>}
-      </div>
-      <div className="flex items-center gap-2 text-right text-fg-muted font-medium">{children}</div>
+    <div className="grid gap-1 border-b border-line/70 py-3 text-sm last:border-0 sm:grid-cols-[13rem_minmax(0,1fr)] sm:gap-6">
+      <dt className="text-muted">{label}</dt>
+      <dd className="min-w-0 break-words text-fg">{children}</dd>
     </div>
   );
 }
 
-const ROLE_TONE = { admin: 'accent', commander: 'danger', supervisor: 'danger', operator: 'info', viewer: 'neutral', auditor: 'warning' } as const;
+function Health({ ok, children, tone }: { ok: boolean; children: ReactNode; tone?: 'warn' }) {
+  return (
+    <span className="inline-flex items-center gap-2">
+      <Dot color={ok ? 'var(--ok)' : tone === 'warn' ? 'var(--warn)' : 'var(--bad)'} />
+      {children}
+    </span>
+  );
+}
 
-export default function SettingsPage() {
+function ProfileTab() {
+  const router = useRouter();
   const { user, role, allowedAreas, profileError, logout } = useAuth();
-  const { isLight, setTheme } = useTheme();
-  const [summary, setSummary] = useState<DashboardSummary | null>(null);
-  const { health, reachable } = useSystemHealth();
-  
-  const [activeTab, setActiveTab] = useState('profile');
+  const [signingOut, setSigningOut] = useState(false);
 
-  const username = user?.email?.split('@')[0] || 'User';
-
-  useEffect(() => {
-    apiFetch('/api/statistics/summary').then(r => r.json()).then(setSummary).catch(() => setSummary(null));
-  }, []);
-
-  const online = summary?.online_cameras ?? 0;
-  const total = summary?.total_cameras ?? 0;
-  const camPct = total ? Math.round((online / total) * 100) : 0;
+  const access = profileError
+    ? 'Your permissions could not be loaded. Try signing in again.'
+    : role === 'admin'
+      ? 'All cameras'
+      : allowedAreas?.length
+        ? allowedAreas.join(', ')
+        : 'No cameras assigned. Ask an administrator for access.';
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] w-full text-fg bg-bg">
-      {/* Settings Sub-Sidebar */}
-      <div className="w-64 border-r border-default flex flex-col h-full bg-base">
-        <div className="p-4">
-          <div className="relative">
-            <input 
-              type="text" 
-              placeholder="Search settings..." 
-              className="w-full bg-surface border border-default rounded py-2 pl-9 pr-4 text-sm focus:outline-none focus:border-accent"
-            />
-            <Icon name="magnifying-glass" className="absolute left-3 top-2.5 text-fg-muted" />
-          </div>
-        </div>
+    <div className="space-y-10">
+      <Section title="Account">
+        <dl>
+          <Row label="Username">{user?.email?.split('@')[0] ?? 'Unknown'}</Row>
+          <Row label="Email">{user?.email ?? 'Unknown'}</Row>
+          <Row label="Role">{role ? formatStatus(role) : profileError ? 'Unavailable' : 'Loading…'}</Row>
+          <Row label="Camera access">{access}</Row>
+        </dl>
+      </Section>
+      <Section title="Session" description="You are signed out automatically after 30 minutes without activity.">
+        <Button variant="danger" icon={<SignOut size={14} />} loading={signingOut}
+          onClick={async () => { setSigningOut(true); await logout(); router.replace('/login'); }}>
+          Sign out
+        </Button>
+      </Section>
+    </div>
+  );
+}
 
-        <div className="flex-1 overflow-y-auto py-2">
-          <div className="px-3 mb-6">
-            <h3 className="text-xs font-semibold text-fg-muted mb-2 px-3 uppercase tracking-wider">General</h3>
-            <button 
-              onClick={() => setActiveTab('profile')}
-              className={cn(
-                "w-full text-left px-3 py-2 text-sm rounded flex items-center gap-3",
-                activeTab === 'profile' ? "bg-surface text-fg font-medium" : "text-fg-subtle hover:text-fg"
-              )}
-            >
-              <Icon name="user" className="w-4" /> Profile
-            </button>
-            <button 
-              onClick={() => setActiveTab('appearance')}
-              className={cn(
-                "w-full text-left px-3 py-2 text-sm rounded flex items-center gap-3",
-                activeTab === 'appearance' ? "bg-surface text-fg font-medium" : "text-fg-subtle hover:text-fg"
-              )}
-            >
-              <Icon name="palette" className="w-4" /> Appearance
-            </button>
-          </div>
+const THEME_OPTIONS: { value: ThemePreference; label: string; hint: string }[] = [
+  { value: 'system', label: 'System', hint: 'Follows your device setting' },
+  { value: 'light', label: 'Light', hint: 'For bright rooms' },
+  { value: 'dark', label: 'Dark', hint: 'For control rooms and night shifts' },
+];
 
-          <div className="px-3 mb-6">
-            <h3 className="text-xs font-semibold text-fg-muted mb-2 px-3 uppercase tracking-wider">System</h3>
-            <button 
-              onClick={() => setActiveTab('health')}
+function ThemePreview({ kind }: { kind: ThemePreference }) {
+  const pane = (bg: string, line: string, accent: string) => (
+    <div className="flex h-full flex-col justify-end gap-1.5 p-2.5" style={{ background: bg }}>
+      <span className="block h-1.5 w-3/4 rounded-full" style={{ background: line }} />
+      <span className="block h-1.5 w-1/2 rounded-full" style={{ background: line }} />
+      <span className="block h-1.5 w-1/4 rounded-full" style={{ background: accent }} />
+    </div>
+  );
+  const light = pane('#fafaf9', '#e7e5e2', '#0f766e');
+  const dark = pane('#161514', '#2e2c2a', '#5eb8ae');
+  return (
+    <div aria-hidden className="grid h-16 overflow-hidden rounded-md" style={{ gridTemplateColumns: kind === 'system' ? '1fr 1fr' : '1fr' }}>
+      {kind === 'dark' ? dark : light}
+      {kind === 'system' && dark}
+    </div>
+  );
+}
+
+function AppearanceTab() {
+  const { preference, setPreference } = useTheme();
+  return (
+    <fieldset>
+      <legend className="text-base font-medium">Theme</legend>
+      <p className="text-sm text-muted">Saved in this browser only.</p>
+      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+        {THEME_OPTIONS.map(option => {
+          const checked = preference === option.value;
+          return (
+            <label
+              key={option.value}
               className={cn(
-                "w-full text-left px-3 py-2 text-sm rounded flex items-center gap-3",
-                activeTab === 'health' ? "bg-surface text-fg font-medium" : "text-fg-subtle hover:text-fg"
+                'cursor-pointer rounded-lg p-2.5 transition-shadow duration-150',
+                'has-focus-visible:outline-2 has-focus-visible:outline-offset-2 has-focus-visible:outline-accent',
+                checked ? 'shadow-[0_0_0_2px_var(--accent)]' : 'shadow-[0_0_0_1px_var(--line)] hover:shadow-[0_0_0_1px_var(--line-strong)]',
               )}
             >
-              <Icon name="heart-pulse" className="w-4" /> System Health
-            </button>
-          </div>
-        </div>
+              <input type="radio" name="theme" value={option.value} checked={checked}
+                onChange={() => setPreference(option.value)} className="sr-only" />
+              <ThemePreview kind={option.value} />
+              <span className="mt-2.5 block text-sm font-medium text-fg">{option.label}</span>
+              <span className="block text-xs text-muted">{option.hint}</span>
+            </label>
+          );
+        })}
       </div>
+    </fieldset>
+  );
+}
 
-      {/* Main Settings Content */}
-      <div className="flex-1 overflow-y-auto p-10 bg-bg">
-        <div className="max-w-4xl">
-          
-          {activeTab === 'profile' && (
-            <>
-              <h1 className="text-2xl font-semibold mb-1">Profile & Session</h1>
-              <p className="text-fg-muted text-sm mb-8">Manage your account details and current session.</p>
+function HealthTab() {
+  const { health, reachable } = useSystemHealth();
+  const [summary, setSummary] = useState<DashboardSummary | null>(null);
 
-              <div className="grid gap-6">
-                {/* Premium Card 1 */}
-                <div className="border border-default rounded bg-surface p-6 shadow-sm">
-                  <div className="flex items-center gap-3 mb-2">
-                    <div className="w-10 h-10 rounded-full bg-accent/10 flex items-center justify-center text-accent">
-                      <Icon name="id-badge" className="text-lg" />
-                    </div>
-                    <h2 className="text-lg font-medium">User Information</h2>
-                  </div>
-                  <div className="mt-4">
-                    <Row label="Name" description="Your display name">{username}</Row>
-                    <Row label="Email" description="Primary contact email">{user?.email || '—'}</Row>
-                    <Row label="Role" description="Your system access level">
-                      <Badge tone={ROLE_TONE[(role ?? 'operator') as keyof typeof ROLE_TONE] ?? 'neutral'}>{role ?? 'unknown'}</Badge>
-                    </Row>
-                    <Row label="Assigned areas" description="Zones you can monitor">
-                      {profileError ? 'Authorization unavailable' : allowedAreas?.length ? allowedAreas.join(', ') : 'All areas'}
-                    </Row>
-                  </div>
-                </div>
+  useEffect(() => {
+    apiJson<DashboardSummary>('/api/statistics/summary').then(setSummary).catch(() => setSummary(null));
+  }, []);
 
-                {/* Premium Card 2 */}
-                <div className="border border-default rounded bg-surface p-6 shadow-sm">
-                  <div className="flex items-center gap-3 mb-2">
-                    <div className="w-10 h-10 rounded-full bg-danger/10 flex items-center justify-center text-danger">
-                      <Icon name="right-from-bracket" className="text-lg" />
-                    </div>
-                    <h2 className="text-lg font-medium">Session Management</h2>
-                  </div>
-                  <div className="mt-4">
-                    <Row label="Signed in as">{user?.email || username}</Row>
-                    <div className="flex items-center justify-between py-4">
-                      <p className="text-[0.8rem] leading-relaxed text-fg-subtle max-w-sm">
-                        Sessions expire automatically after inactivity. Make sure to sign out on shared machines to protect your account.
-                      </p>
-                      <Button variant="danger" onClick={logout}>
-                        <Icon name="power-off" className="mr-2" /> Sign out
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </>
-          )}
+  if (reachable === null) return <Loading label="Checking services…" />;
 
-          {activeTab === 'health' && (
-            <>
-              <h1 className="text-2xl font-semibold mb-1">System Health</h1>
-              <p className="text-fg-muted text-sm mb-8">Real-time diagnostics and performance metrics.</p>
+  const storage = health?.storage;
+  const overLimit = storage?.snapshot_storage_mb != null && storage.snapshot_storage_mb > storage.snapshot_storage_limit_mb;
 
-              <div className="border border-default rounded bg-surface p-6 shadow-sm">
-                <div className="flex items-center gap-3 mb-2">
-                  <div className="w-10 h-10 rounded-full bg-success/10 flex items-center justify-center text-success">
-                    <Icon name="heart-pulse" className="text-lg" />
-                  </div>
-                  <h2 className="text-lg font-medium">Diagnostics</h2>
-                </div>
-                
-                <div className="mt-4">
-                  <Row label="Backend API" description="Main server connectivity">
-                    <StatusDot status={health?.ready ? 'online' : 'offline'} />
-                    <span className={cn(health?.ready ? 'text-success' : reachable === false ? 'text-danger' : 'text-warning')}>
-                      {reachable == null ? 'Checking…' : reachable === false ? 'Unreachable' : health?.ready ? 'Operational' : 'Degraded'}
-                    </span>
-                  </Row>
-                  <Row label="AI Pipeline" description="Inference engine status">{health?.pipeline ?? 'Unknown'}</Row>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 py-4 border-b border-default">
-                    <div className="border border-default rounded-lg p-3 bg-bg">
-                      <div className="text-xs text-fg-muted mb-1">Object Detector</div>
-                      <div className="font-medium text-sm flex items-center gap-2">
-                        <StatusDot status={health?.models?.detector ? 'online' : 'offline'} />
-                        {health?.models?.detector ? 'Loaded' : 'Unavailable'}
-                      </div>
-                    </div>
-                    <div className="border border-default rounded-lg p-3 bg-bg">
-                      <div className="text-xs text-fg-muted mb-1">Fine Classifier</div>
-                      <div className="font-medium text-sm flex items-center gap-2">
-                        <StatusDot status={health?.models?.fine_classifier ? 'online' : 'offline'} />
-                        {health?.models?.fine_classifier ? 'Loaded' : 'Unavailable'}
-                      </div>
-                    </div>
-                    <div className="border border-default rounded-lg p-3 bg-bg">
-                      <div className="text-xs text-fg-muted mb-1">Face Recognition</div>
-                      <div className="font-medium text-sm flex items-center gap-2">
-                        <StatusDot status={health?.models?.face_recognition ? 'online' : 'offline'} />
-                        {health?.models?.face_recognition ? 'Loaded' : 'Disabled'}
-                      </div>
-                    </div>
-                  </div>
+  return (
+    <div className="space-y-10">
+      <Section title="Services">
+        <dl>
+          <Row label="API">
+            {reachable === false
+              ? <Health ok={false}>Unreachable</Health>
+              : <Health ok={!!health?.ready} tone="warn">{health?.ready ? 'Operational' : 'Degraded'}</Health>}
+          </Row>
+          <Row label="Video pipeline">
+            <Health ok={health?.pipeline === 'ready'} tone={health?.pipeline === 'starting' ? 'warn' : undefined}>
+              {formatStatus(health?.pipeline ?? 'unknown')}
+            </Health>
+          </Row>
+          <Row label="Object detector"><Health ok={!!health?.models?.detector}>{health?.models?.detector ? 'Loaded' : 'Not loaded'}</Health></Row>
+          <Row label="Fine classifier"><Health ok={!!health?.models?.fine_classifier} tone="warn">{health?.models?.fine_classifier ? 'Loaded' : 'Not loaded'}</Health></Row>
+          <Row label="Face recognition"><Health ok={!!health?.models?.face_recognition} tone="warn">{health?.models?.face_recognition ? 'Loaded' : 'Disabled'}</Health></Row>
+        </dl>
+      </Section>
 
-                  <div className="flex items-center justify-between gap-4 border-b border-default py-5 text-[0.85rem]">
-                    <div>
-                      <div className="text-fg font-medium">Cameras Online</div>
-                      <div className="text-fg-subtle text-xs mt-0.5">Active feeds in the network</div>
-                    </div>
-                    <span className="flex items-center gap-3">
-                      <span className="inline-block h-2 w-32 overflow-hidden rounded-full bg-default">
-                        <span className="block h-full bg-success rounded-full" style={{ width: `${camPct}%` }} />
-                      </span>
-                      <span className="tabular-nums text-fg font-medium">{online} / {total}</span>
-                    </span>
-                  </div>
-                  
-                  <Row label="Open Incidents" description="Open or acknowledged incidents">{summary?.open_incidents ?? summary?.unreviewed_alerts ?? 0}</Row>
-                  <Row label="Active Tracks" description="Entities currently tracked">{summary?.active_tracks ?? 0}</Row>
-                  <Row label="Evidence Capture" description="Automated snapshot recording">
-                    <span className={cn(
-                      "px-2 py-1 rounded text-xs font-medium",
-                      health?.storage?.capture_enabled ? "bg-success/10 text-success" : "bg-warning/10 text-warning"
-                    )}>
-                      {health?.storage?.capture_enabled ? 'Enabled' : 'Paused'}
-                    </span>
-                  </Row>
-                  <Row label="Evidence Storage" description="Storage consumption">
-                    {health?.storage?.snapshot_storage_mb == null ? 'Not measured' : `${health.storage.snapshot_storage_mb} / ${health.storage.snapshot_storage_limit_mb} MB`}
-                  </Row>
-                </div>
-              </div>
-            </>
-          )}
+      <Section title="Operations">
+        <dl>
+          <Row label="Cameras online">
+            <span className="num">{health ? `${health.cameras.online} of ${health.cameras.total}` : 'Unknown'}</span>
+          </Row>
+          <Row label="Open incidents"><span className="num">{formatNumber(summary?.open_incidents ?? summary?.unreviewed_alerts ?? 0)}</span></Row>
+          <Row label="Active tracks"><span className="num">{formatNumber(summary?.active_tracks ?? 0)}</span></Row>
+          <Row label="Event persistence">{health?.persistence_enabled ? 'Enabled' : 'Disabled'}</Row>
+        </dl>
+      </Section>
 
-          {activeTab === 'appearance' && (
-            <>
-              <h1 className="text-2xl font-semibold mb-1">Appearance</h1>
-              <p className="text-fg-muted text-sm mb-8">Choose how the application looks on this device.</p>
+      <Section title="Evidence storage">
+        <dl>
+          <Row label="Snapshot capture">
+            <Health ok={!!storage?.capture_enabled} tone="warn">{storage?.capture_enabled ? 'Recording' : 'Paused'}</Health>
+          </Row>
+          <Row label="Used">
+            {storage?.snapshot_storage_mb == null
+              ? 'Not measured'
+              : <span className="num">{formatNumber(Math.round(storage.snapshot_storage_mb))} MB of {formatNumber(storage.snapshot_storage_limit_mb)} MB</span>}
+          </Row>
+          {storage && <Row label="Free disk space"><span className="num">{formatNumber(Math.round(storage.free_storage_mb))} MB</span></Row>}
+        </dl>
+        {overLimit && (
+          <p className="mt-3 max-w-[65ch] text-sm text-warn">
+            Snapshots use more than the configured limit, so new evidence is not being captured. Free space or raise the limit in the backend configuration.
+          </p>
+        )}
+      </Section>
+    </div>
+  );
+}
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-10">
-                {/* Theme Cards */}
-                <div 
-                  onClick={() => setTheme(false)}
-                  className={cn(
-                    "border-2 rounded p-4 cursor-pointer transition-all",
-                    !isLight ? "border-accent bg-surface" : "border-default bg-base opacity-70 hover:opacity-100"
-                  )}
-                >
-                  <div className="h-20 bg-[#111] rounded mb-4 flex items-center justify-center border border-[#333]">
-                    <div className="w-8 h-1 bg-gray-500 rounded-full"></div>
-                  </div>
-                  <h3 className="font-medium text-sm text-fg">Dark Theme</h3>
-                  <p className="text-xs text-fg-muted">Default</p>
-                </div>
+function SettingsInner() {
+  const [{ tab }, setUrl] = useUrlState({ tab: 'profile' });
+  const active = TABS.some(t => t.id === tab) ? tab : 'profile';
 
-                <div 
-                  onClick={() => setTheme(true)}
-                  className={cn(
-                    "border-2 rounded p-4 cursor-pointer transition-all",
-                    isLight ? "border-accent bg-surface" : "border-default bg-white text-black opacity-70 hover:opacity-100"
-                  )}
-                >
-                  <div className="h-20 bg-gray-100 rounded mb-4 flex items-center justify-center border border-gray-200">
-                    <div className="w-8 h-1 bg-gray-300 rounded-full"></div>
-                  </div>
-                  <h3 className={cn("font-medium text-sm", isLight ? "text-fg" : "text-black")}>Light Theme</h3>
-                  <p className={cn("text-xs", isLight ? "text-fg-muted" : "text-gray-500")}>Clean and bright</p>
-                </div>
-
-                <div className="border border-default rounded p-4 bg-emerald-950/30 cursor-pointer opacity-70 hover:opacity-100 transition-all">
-                  <div className="h-20 bg-emerald-950 rounded mb-4 flex items-center justify-center border border-emerald-900">
-                    <div className="w-8 h-1 bg-emerald-500 rounded-full"></div>
-                  </div>
-                  <h3 className="font-medium text-sm text-emerald-400">Green Theme</h3>
-                  <p className="text-xs text-emerald-500/70">Natural and dark</p>
-                </div>
-              </div>
-
-              <div className="mb-10">
-                <h3 className="text-sm font-medium mb-4 text-fg">Accent Color</h3>
-                <div className="flex gap-3">
-                  <div className="w-7 h-7 rounded-full bg-white border-2 border-accent ring-2 ring-base ring-offset-1 ring-offset-accent cursor-pointer"></div>
-                  <div className="w-7 h-7 rounded-full bg-blue-500 cursor-pointer hover:scale-110 transition-transform"></div>
-                  <div className="w-7 h-7 rounded-full bg-teal-400 cursor-pointer hover:scale-110 transition-transform"></div>
-                  <div className="w-7 h-7 rounded-full bg-purple-500 cursor-pointer hover:scale-110 transition-transform"></div>
-                  <div className="w-7 h-7 rounded-full bg-yellow-500 cursor-pointer hover:scale-110 transition-transform"></div>
-                  <div className="w-7 h-7 rounded-full bg-rose-500 cursor-pointer hover:scale-110 transition-transform"></div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-10">
-                <div>
-                  <div className="flex justify-between items-center mb-4">
-                    <label className="text-sm font-medium text-fg">UI Scale</label>
-                  </div>
-                  <div className="relative pt-2">
-                    <div className="h-1.5 w-full bg-surface rounded-full overflow-hidden border border-default">
-                      <div className="h-full w-1/2 bg-accent rounded-full"></div>
-                    </div>
-                    <div className="absolute top-1 left-1/2 w-4 h-4 bg-white rounded-full -ml-2 shadow-md border border-gray-300"></div>
-                    <div className="flex justify-between mt-3 text-xs text-fg-muted font-medium">
-                      <span>Compact</span>
-                      <span>Default</span>
-                      <span>Large</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-sm font-medium block mb-3 text-fg">Typography</label>
-                  <select className="w-full bg-surface border border-default rounded py-2.5 px-3 text-sm text-fg focus:outline-none focus:border-accent">
-                    <option>Monospace</option>
-                    <option>Inter</option>
-                    <option>System Default</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-sm font-medium block mb-3 text-fg">Interface Roundness</label>
-                  <select className="w-full bg-surface border border-default rounded py-2.5 px-3 text-sm text-fg focus:outline-none focus:border-accent">
-                    <option>Default</option>
-                    <option>Sharp</option>
-                    <option>Rounded</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-sm font-medium block mb-3 text-fg">App Opacity</label>
-                  <select className="w-full bg-surface border border-default rounded py-2.5 px-3 text-sm text-fg focus:outline-none focus:border-accent">
-                    <option>Transparent</option>
-                    <option>Opaque</option>
-                  </select>
-                </div>
-              </div>
-            </>
-          )}
-
-        </div>
+  return (
+    <div className="max-w-3xl">
+      <div role="tablist" aria-label="Settings sections" className="flex gap-6 overflow-x-auto border-b border-line">
+        {TABS.map(item => (
+          <button
+            key={item.id}
+            id={`tab-${item.id}`}
+            role="tab"
+            type="button"
+            aria-selected={active === item.id}
+            aria-controls={`panel-${item.id}`}
+            onClick={() => setUrl({ tab: item.id })}
+            className={cn(
+              '-mb-px whitespace-nowrap border-b-2 pb-2.5 text-sm transition-colors duration-150',
+              active === item.id ? 'border-accent font-medium text-fg' : 'border-transparent text-muted hover:text-fg',
+            )}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+      <div role="tabpanel" id={`panel-${active}`} aria-labelledby={`tab-${active}`} className="pt-8">
+        {active === 'profile' && <ProfileTab />}
+        {active === 'appearance' && <AppearanceTab />}
+        {active === 'health' && <HealthTab />}
       </div>
     </div>
+  );
+}
+
+export default function SettingsPage() {
+  return (
+    <Suspense fallback={<Loading />}>
+      <SettingsInner />
+    </Suspense>
   );
 }

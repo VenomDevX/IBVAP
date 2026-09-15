@@ -1,5 +1,9 @@
 // ======================== API Types ========================
 
+export type RiskLevel = 'low' | 'medium' | 'high' | 'critical';
+
+export type CameraStatus = 'online' | 'offline' | 'connecting' | 'error' | 'stopped' | 'retired';
+
 export interface Camera {
   camera_id: string;
   name: string;
@@ -8,7 +12,7 @@ export interface Camera {
   latitude?: number | null;
   longitude?: number | null;
   type?: string;
-  status: 'online' | 'offline' | 'connecting' | 'error' | 'stopped' | 'retired';
+  status: CameraStatus;
   enabled?: boolean;
   fps?: number;
   active_tracks?: number;
@@ -17,6 +21,14 @@ export interface Camera {
   last_frame_at?: string | null;
   last_heartbeat?: string | null;
   stream_status?: string;
+}
+
+export type AlertStatus = 'open' | 'acknowledged' | 'investigating' | 'resolved' | 'false_positive' | 'reopened';
+
+export interface IncidentNote {
+  author: string;
+  note: string;
+  created_at: string;
 }
 
 export interface Alert {
@@ -34,7 +46,7 @@ export interface Alert {
   snapshot_hash?: string;
   reviewed: boolean;
   reviewed_by?: string;
-  status?: 'open' | 'acknowledged' | 'investigating' | 'resolved' | 'false_positive' | 'reopened';
+  status?: AlertStatus;
   disposition?: 'true_alarm' | 'false_alarm' | 'test' | 'escalated' | null;
   assignee?: string | null;
   acknowledged_at?: string | null;
@@ -42,7 +54,7 @@ export interface Alert {
   acknowledged_by?: string | null;
   resolved_by?: string | null;
   false_positive?: boolean;
-  notes?: Array<{ author: string; note: string; created_at: string }>;
+  notes?: IncidentNote[];
 }
 
 export interface SpatialContext {
@@ -55,6 +67,13 @@ export interface TemporalContext {
   is_night: boolean;
   is_loitering: boolean;
   semantic_description?: string;
+}
+
+export interface ScoreBreakdownItem {
+  raw_score: number;
+  weight: number;
+  contribution: number;
+  reasons: string[];
 }
 
 export interface Event {
@@ -78,25 +97,20 @@ export interface Event {
   opened_at?: string | null;
   last_updated?: string | null;
   closed_at?: string | null;
-  score_breakdown?: Record<string, { raw_score: number; weight: number; contribution: number; reasons: string[] }>;
+  score_breakdown?: Record<string, ScoreBreakdownItem>;
   evidence?: Array<{ evidence_id: number; type: string; created_at: string; download_url: string }>;
 }
+
+export type ZoneType = 'restricted' | 'buffer' | 'safe' | 'entry_exit';
 
 export interface Zone {
   zone_id: string;
   name: string;
   camera_id: string;
-  type: string;
+  type: ZoneType | string;
   enabled: boolean;
   points: number[][];
   color?: number[];
-}
-
-export interface User {
-  username: string;
-  full_name: string;
-  role: 'admin' | 'operator';
-  is_active: boolean;
 }
 
 export interface DashboardSummary {
@@ -122,8 +136,6 @@ export interface TimeseriesData {
   data: number[];
 }
 
-export type RiskLevel = 'low' | 'medium' | 'high' | 'critical';
-
 export interface Threat {
   track_id: string;
   camera_id: string;
@@ -137,4 +149,20 @@ export interface Threat {
 export interface ThreatsData {
   top_threats: Threat[];
   camera_distribution: Record<string, number>;
+}
+
+export interface AuditEntry {
+  id: number;
+  timestamp: string | number;
+  username: string;
+  action: string;
+  ip_address?: string;
+  details?: unknown;
+}
+
+export interface Paged<T> {
+  items: T[];
+  total: number;
+  page?: number;
+  page_size?: number;
 }

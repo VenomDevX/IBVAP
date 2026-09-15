@@ -1,4 +1,6 @@
-import { apiFetch } from './client';
+import { apiFetch, apiJson } from './client';
+
+type Row = Record<string, string | number | null | undefined>;
 
 export interface DailyReport {
   generated_at: string;
@@ -8,48 +10,49 @@ export interface DailyReport {
     critical_alerts_24h: number;
     current_active_threats: number;
   };
-  alerts: any[];
-  active_threats: any[];
+  alerts: Row[];
+  active_threats: Row[];
 }
 
-export async function fetchDailyReport(): Promise<DailyReport> {
-  const res = await apiFetch('/api/reports/daily');
-  return res.json();
+export function fetchDailyReport(): Promise<DailyReport> {
+  return apiJson<DailyReport>('/api/reports/daily');
 }
+
+function download(url: string, filename: string) {
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+const today = () => new Date().toISOString().split('T')[0];
 
 export function generateCSV(report: DailyReport) {
   const cell = (value: unknown) => `"${String(value ?? '').replaceAll('"', '""')}"`;
   let csv = 'Type,ID,Camera,Risk Level,Risk Score,Timestamp\n';
-  
-  // Add active threats
   report.active_threats.forEach(t => {
     csv += ['Threat', t.object_type, t.camera_id, t.risk_level, t.risk_score, 'Live'].map(cell).join(',') + '\n';
   });
-
-  // Add alerts
   report.alerts.forEach(a => {
     csv += ['Alert', a.alert_id, a.camera_id, a.risk_level, a.risk_score, a.timestamp].map(cell).join(',') + '\n';
   });
-
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.setAttribute('href', url);
-  link.setAttribute('download', `ibvap_report_${new Date().toISOString().split('T')[0]}.csv`);
-  link.style.visibility = 'hidden';
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  download(URL.createObjectURL(blob), `ibvap_report_${today()}.csv`);
 }
 
 export async function generatePDF() {
   const response = await apiFetch('/api/reports/daily.pdf');
   if (!response.ok) throw new Error(`PDF request returned ${response.status}`);
-  const url = URL.createObjectURL(await response.blob());
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `ibvap_report_${new Date().toISOString().split('T')[0]}.pdf`;
-  link.click();
-  URL.revokeObjectURL(url);
+  download(URL.createObjectURL(await response.blob()), `ibvap_report_${today()}.pdf`);
+}
+
+/** Download an authenticated file (evidence) through a blob URL. */
+export async function downloadAuthenticated(path: string, filename: string) {
+  const response = await apiFetch(path);
+  if (!response.ok) throw new Error(`Download returned ${response.status}`);
+  download(URL.createObjectURL(await response.blob()), filename);
 }

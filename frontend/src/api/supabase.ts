@@ -14,8 +14,8 @@ if ((!supabaseUrl || !supabaseAnonKey) && typeof window !== 'undefined') {
     bar.id = 'supabase-env-banner';
     bar.textContent = msg;
     bar.style.cssText =
-      'position:fixed;top:0;left:0;right:0;z-index:9999;background:#b00;color:#fff;' +
-      'font:13px/1.4 monospace;padding:8px 12px';
+      'position:fixed;top:0;left:0;right:0;z-index:9999;background:#b42318;color:#fff;' +
+      'font:13px/1.4 ui-monospace,monospace;padding:8px 12px';
     document.body.prepend(bar);
   };
   if (document.body) show();

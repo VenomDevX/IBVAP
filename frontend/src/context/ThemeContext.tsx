@@ -1,42 +1,82 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
+
+export type ThemePreference = 'system' | 'light' | 'dark';
+export type ResolvedTheme = 'light' | 'dark';
 
 interface ThemeState {
-  isLight: boolean;
-  toggleTheme: () => void;
-  setTheme: (light: boolean) => void;
+  preference: ThemePreference;
+  resolved: ResolvedTheme;
+  setPreference: (preference: ThemePreference) => void;
+  toggle: () => void;
 }
 
-const ThemeContext = createContext<ThemeState | null>(null);
-const STORAGE_KEY = 'ibvap_theme';
+export const THEME_STORAGE_KEY = 'ibvap_theme';
+const THEME_COLOR: Record<ResolvedTheme, string> = { light: '#fafaf9', dark: '#161514' };
 
-function readInitial(): boolean {
-  if (typeof document !== 'undefined') {
-    return document.documentElement.classList.contains('light-theme');
+const ThemeContext = createContext<ThemeState | null>(null);
+
+function readPreference(): ThemePreference {
+  try {
+    const stored = localStorage.getItem(THEME_STORAGE_KEY);
+    return stored === 'light' || stored === 'dark' ? stored : 'system';
+  } catch {
+    return 'system';
   }
-  return false;
+}
+
+function systemTheme(): ResolvedTheme {
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
+export function applyTheme(theme: ResolvedTheme) {
+  const root = document.documentElement;
+  root.dataset.theme = theme;
+  root.style.colorScheme = theme;
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', THEME_COLOR[theme]);
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [isLight, setIsLight] = useState<boolean>(readInitial);
+  // Lazy initialisers read what the pre-paint script already applied, so the
+  // first client render matches the page and nothing flashes.
+  const [preference, setPreferenceState] = useState<ThemePreference>(() =>
+    typeof window === 'undefined' ? 'system' : readPreference());
+  const [resolved, setResolved] = useState<ResolvedTheme>(() =>
+    typeof document !== 'undefined' && document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
 
   useEffect(() => {
-    document.documentElement.classList.toggle('light-theme', isLight);
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const update = () => {
+      const next = preference === 'system' ? systemTheme() : preference;
+      setResolved(next);
+      applyTheme(next);
+    };
+    update();
+    if (preference !== 'system') return;
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, [preference]);
+
+  const setPreference = useCallback((next: ThemePreference) => {
+    setPreferenceState(next);
     try {
-      localStorage.setItem(STORAGE_KEY, isLight ? 'light' : 'dark');
+      if (next === 'system') localStorage.removeItem(THEME_STORAGE_KEY);
+      else localStorage.setItem(THEME_STORAGE_KEY, next);
     } catch {
-      /* private mode / storage disabled — theme still applies for this session */
+      /* storage blocked: the choice still applies for this visit */
     }
-  }, [isLight]);
+  }, []);
 
-  const value: ThemeState = {
-    isLight,
-    toggleTheme: () => setIsLight(v => !v),
-    setTheme: setIsLight,
-  };
+  const toggle = useCallback(() => {
+    setPreference(resolved === 'dark' ? 'light' : 'dark');
+  }, [resolved, setPreference]);
 
-  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
+  return (
+    <ThemeContext.Provider value={{ preference, resolved, setPreference, toggle }}>
+      {children}
+    </ThemeContext.Provider>
+  );
 }
 
 export function useTheme() {

@@ -1,71 +1,82 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useEffect, useState } from 'react';
+import { List, Moon, Sun } from '@phosphor-icons/react';
+import { formatClock } from '../../api/client';
 import { useTheme } from '../../context/ThemeContext';
-import Icon from '../ui/Icon';
 import { useSystemHealth } from '../../hooks/useSystemHealth';
+import { IconButton } from '../ui/Button';
+import { Dot } from '../ui/Indicators';
+import { normalizePath } from './Sidebar';
 
-const PAGE_TITLES: Record<string, string> = {
-  '/': 'Command Dashboard',
-  '/cameras': 'Camera Management',
-  '/multiview': 'Multi-Camera View',
-  '/map': 'Global Map View',
-  '/alerts': 'Alert Center',
-  '/events': 'Event History',
-  '/event': 'Event Detail',
-  '/zones': 'Virtual Zone Configuration',
-  '/settings': 'System Settings',
-  '/audit': 'Audit Log',
+const TITLES: Record<string, string> = {
+  '/': 'Dashboard',
+  '/cameras': 'Cameras',
+  '/multiview': 'Multi-View',
+  '/map': 'Map',
+  '/alerts': 'Alerts',
+  '/events': 'Events',
+  '/event': 'Event',
+  '/zones': 'Zones',
+  '/audit': 'Audit log',
+  '/settings': 'Settings',
 };
 
-export default function Topbar({ onMenuToggle }: { onMenuToggle: () => void }) {
-  const rawPath = usePathname();
-  const pathname = rawPath !== '/' ? rawPath.replace(/\/$/, '') : '/';
-  const { isLight, toggleTheme } = useTheme();
-  const { health, reachable } = useSystemHealth();
-  const [now, setNow] = useState('');
+function HealthIndicator() {
+  const { health, reachable } = useSystemHealth(15_000);
+  let color = 'var(--faint)';
+  let text = 'Checking backend…';
+  if (reachable === false) {
+    color = 'var(--bad)';
+    text = 'Backend unreachable';
+  } else if (health && health.pipeline !== 'ready') {
+    color = 'var(--warn)';
+    text = health.pipeline === 'starting' ? 'Pipeline starting' : 'Pipeline unavailable';
+  } else if (health) {
+    color = health.cameras.online < health.cameras.total ? 'var(--warn)' : 'var(--ok)';
+    text = `${health.cameras.online} of ${health.cameras.total} cameras online`;
+  }
+  return (
+    <Link href="/settings?tab=health" aria-live="polite"
+      className="hidden items-center gap-2 rounded-md px-2 py-1 text-sm text-muted transition-colors duration-150 hover:bg-subtle hover:text-fg md:inline-flex">
+      <Dot color={color} />
+      <span className="num">{text}</span>
+    </Link>
+  );
+}
+
+function Clock() {
+  const [now, setNow] = useState<Date | null>(null);
+  useEffect(() => {
+    setNow(new Date());
+    const id = window.setInterval(() => setNow(new Date()), 15_000);
+    return () => window.clearInterval(id);
+  }, []);
+  if (!now) return null;
+  return <time dateTime={now.toISOString()} className="num hidden text-sm text-muted sm:block">{formatClock(now)}</time>;
+}
+
+export default function Topbar({ onMenu }: { onMenu: () => void }) {
+  const pathname = usePathname();
+  const { resolved, toggle } = useTheme();
+  const title = TITLES[normalizePath(pathname)] ?? 'IBVAP';
 
   useEffect(() => {
-    const tick = () =>
-      setNow(new Date().toLocaleString('en-IN', {
-        weekday: 'short', day: '2-digit', month: 'short',
-        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
-      }));
-    tick();
-    const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
-  }, []);
-
-  const title = PAGE_TITLES[pathname] ?? 'IBVAP';
-  const state = !reachable
-    ? { label: reachable == null ? 'Checking system' : 'Backend unreachable', dot: 'bg-danger' }
-    : health?.ready
-      ? { label: `Operational · ${health.cameras.online}/${health.cameras.total} cameras`, dot: 'bg-success' }
-      : { label: `Degraded · ${health?.pipeline ?? 'starting'}`, dot: 'bg-warning' };
+    document.title = title === 'IBVAP' ? 'IBVAP' : `${title} | IBVAP`;
+  }, [title]);
 
   return (
-    <header className="sticky top-0 z-[50] flex h-16 items-center justify-between gap-4 border-b border-default bg-base px-4 sm:px-6">
-      <div className="flex items-center gap-3">
-        <button className="text-fg lg:hidden" onClick={onMenuToggle} aria-label="Toggle menu">
-          <Icon name="bars" className="text-lg" />
-        </button>
-        <h1 className="text-[1.05rem] font-semibold text-fg">{title}</h1>
-      </div>
-
-      <div className="flex items-center gap-3 sm:gap-5">
-        <button
-          onClick={toggleTheme}
-          title={isLight ? 'Switch to dark' : 'Switch to light'}
-          className="rounded-sm p-2 text-fg-subtle transition-colors hover:bg-elevated hover:text-fg"
-        >
-          <Icon name={isLight ? 'sun' : 'moon'} />
-        </button>
-        <span className="hidden items-center gap-2 text-[0.78rem] font-medium text-fg-muted sm:flex">
-          <span className={`size-2 rounded-full ${state.dot}`} aria-hidden />
-          {state.label}
-        </span>
-        <span className="hidden text-[0.8rem] tabular-nums text-fg-subtle md:block">{now}</span>
+    <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-line bg-canvas/90 px-4 backdrop-blur-sm sm:px-6 lg:px-8">
+      <IconButton label="Open menu" onClick={onMenu} className="-ml-2 lg:hidden"><List size={18} /></IconButton>
+      <h1 className="truncate text-lg font-semibold tracking-tight">{title}</h1>
+      <div className="ml-auto flex items-center gap-1 sm:gap-2">
+        <HealthIndicator />
+        <IconButton label={resolved === 'dark' ? 'Use light theme' : 'Use dark theme'} onClick={toggle}>
+          {resolved === 'dark' ? <Sun size={17} /> : <Moon size={17} />}
+        </IconButton>
+        <Clock />
       </div>
     </header>
   );

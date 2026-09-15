@@ -4,68 +4,62 @@ import { useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/src/api/supabase';
-import { pushToast } from '@/src/lib/toast';
 import AuthShell from '@/src/components/auth/AuthShell';
-import { Input, FieldLabel } from '@/src/components/ui/Field';
+import { Field, Input } from '@/src/components/ui/Field';
 import { Button } from '@/src/components/ui/Button';
+import { InlineError } from '@/src/components/ui/States';
 
 export default function SignupPage() {
   const router = useRouter();
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   if (process.env.NODE_ENV === 'production') {
     return (
-      <AuthShell subtitle="Register new account">
-        <p className="text-center text-[0.85rem] text-fg-muted">
-          Self-service registration is disabled. Contact an administrator for access.
-        </p>
-        <p className="mt-4 text-center text-[0.8rem]">
-          <Link href="/login" className="text-accent hover:text-accent-hover">Back to sign in</Link>
-        </p>
+      <AuthShell title="Create an account" footer={<Link href="/login" className="font-medium text-accent hover:text-accent-hover">Back to sign in</Link>}>
+        <p className="text-sm text-muted">Self-service registration is disabled. Ask an administrator for access.</p>
       </AuthShell>
     );
   }
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setSubmitting(true);
     setError('');
     try {
-      const email = identifier.includes('@') ? identifier : `${identifier}@ibvap.local`;
-      const username = identifier.includes('@') ? identifier.split('@')[0] : identifier;
-      const { error: authError } = await supabase.auth.signUp({
-        email, password, options: { data: { username } },
-      });
+      const value = identifier.trim();
+      const email = value.includes('@') ? value : `${value}@ibvap.local`;
+      const username = value.includes('@') ? value.split('@')[0] : value;
+      const { error: authError } = await supabase.auth.signUp({ email, password, options: { data: { username } } });
       if (authError) throw authError;
-      pushToast({ title: 'Account created', message: 'Sign in to continue.' });
       router.replace('/login');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error signing up');
+      setError(err instanceof Error ? err.message : 'Could not create the account. Try again.');
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   };
 
   return (
     <AuthShell
-      subtitle="Register new account"
-      footer={<p>Already have an account? <Link href="/login" className="text-accent hover:text-accent-hover">Sign in</Link></p>}
+      title="Create an account"
+      description="Development builds only. An administrator assigns your role afterwards."
+      footer={<>Already have an account? <Link href="/login" className="font-medium text-accent hover:text-accent-hover">Sign in</Link></>}
     >
       <form onSubmit={submit} className="space-y-4">
-        <div>
-          <FieldLabel icon="user">Username or email</FieldLabel>
-          <Input type="text" value={identifier} onChange={e => setIdentifier(e.target.value)} required autoComplete="username" placeholder="operator@ibvap.gov" />
-        </div>
-        <div>
-          <FieldLabel icon="lock">Password</FieldLabel>
-          <Input type="password" value={password} onChange={e => setPassword(e.target.value)} required autoComplete="new-password" placeholder="Choose a password" />
-        </div>
-        {error && <p className="rounded-sm border border-danger/40 px-3 py-2 text-[0.8rem] text-danger">{error}</p>}
-        <Button type="submit" variant="primary" size="md" block icon="user-plus" disabled={loading}>
-          {loading ? 'Creating account…' : 'Sign up'}
+        <Field label="Username or email" htmlFor="identifier">
+          <Input id="identifier" name="username" type="text" value={identifier} onChange={e => setIdentifier(e.target.value)}
+            required autoComplete="username" spellCheck={false} autoCapitalize="none" placeholder="operator@ibvap.gov" />
+        </Field>
+        <Field label="Password" htmlFor="password" hint="At least 6 characters.">
+          <Input id="password" name="password" type="password" value={password} onChange={e => setPassword(e.target.value)}
+            required minLength={6} autoComplete="new-password" placeholder="Choose a password" />
+        </Field>
+        {error && <InlineError>{error}</InlineError>}
+        <Button type="submit" variant="primary" className="h-9 w-full" loading={submitting}>
+          {submitting ? 'Creating account…' : 'Sign up'}
         </Button>
       </form>
     </AuthShell>

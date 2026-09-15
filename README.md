@@ -46,14 +46,15 @@ SIH 26187/
 │   │   ├── remap_to_coarse.py, verify_dataset.py, eval_detector.py
 │   └── requirements.txt
 │
-├── frontend/         # React 19 + TypeScript + Vite SPA (operator dashboard)
-│   └── src/
-│       ├── pages/        # Dashboard, Alerts, Events, EventDetail, Cameras, Zones,
-│       │                 #   MultiView, MapView, AuditLog, Settings, Login, Signup
-│       ├── components/   # Charts (ApexCharts), camera overlays, layout, UI kit
-│       ├── api/          # REST client + Supabase client (auth/session)
-│       ├── context/      # Auth + Theme context
-│       └── hooks/        # WebSocket, session timeout, polling
+├── frontend/         # Next.js 16 static export + Tailwind v4 (operator console)
+│   ├── app/              # Routes: dashboard, alerts, events, event, cameras, zones,
+│   │                     #   multiview, map, audit, settings, login, signup
+│   ├── src/
+│   │   ├── components/   # UI kit, app shell, video streams, charts (Recharts), map (Leaflet)
+│   │   ├── api/          # REST client + Supabase client (auth/session)
+│   │   ├── context/      # Auth + theme (light, dark or system)
+│   │   └── hooks/        # Alert WebSocket, polling, URL state, session timeout
+│   └── tests/            # Vitest unit tests; Playwright e2e in tests/e2e
 │
 ├── supabase/         # Supabase project — auth + Postgres schema
 │   ├── config.toml

@@ -1,132 +1,316 @@
 'use client';
 
-import { useCallback, useDeferredValue, useEffect, useState } from 'react';
-import { apiFetch, formatEventType, formatTime } from '@/src/api/client';
-import DataTable, { type Column } from '@/src/components/ui/DataTable';
-import RiskBadge from '@/src/components/ui/RiskBadge';
-import Icon from '@/src/components/ui/Icon';
-import { Button, ButtonLink } from '@/src/components/ui/Button';
-import { Input, SearchInput, Select } from '@/src/components/ui/Field';
-import { Toolbar } from '@/src/components/ui/Toolbar';
-import { Loading } from '@/src/components/ui/States';
-import Card from '@/src/components/ui/Card';
-import type { Alert, Camera } from '@/src/types';
+import Link from 'next/link';
+import { Suspense, useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { ArrowClockwise, X } from '@phosphor-icons/react';
+import {
+  apiJson, apiSend, errorMessage, formatEventType, formatRelative, formatStatus, formatTime, RISK_LEVELS, riskMeta,
+} from '@/src/api/client';
+import { canManageAlerts, useAuth } from '@/src/context/AuthContext';
+import { useCameras } from '@/src/hooks/useCameras';
+import { useInterval } from '@/src/hooks/useInterval';
+import { useDebouncedValue, useUrlState } from '@/src/hooks/useUrlState';
+import { pushToast } from '@/src/lib/toast';
+import { cn } from '@/src/lib/cn';
+import { Button, ButtonLink, IconButton } from '@/src/components/ui/Button';
+import DataTable, { type Column, type SortState } from '@/src/components/ui/DataTable';
+import Dialog from '@/src/components/ui/Dialog';
+import { Field, Input, SearchInput, Select, Textarea } from '@/src/components/ui/Field';
+import Pagination from '@/src/components/ui/Pagination';
+import Section, { Toolbar } from '@/src/components/ui/Section';
+import { InlineError, Loading } from '@/src/components/ui/States';
+import { AlertStatusLabel, RiskLabel } from '@/src/components/ui/Indicators';
+import type { Alert, AlertStatus, Paged } from '@/src/types';
 
-export default function AlertsPage() {
-  const [alerts, setAlerts] = useState<Alert[]>([]);
-  const [cameras, setCameras] = useState<Camera[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [query, setQuery] = useState('');
-  const [level, setLevel] = useState('');
-  const [reviewed, setReviewed] = useState('');
-  const [status, setStatus] = useState('');
-  const [camera, setCamera] = useState('');
-  const [startTime, setStartTime] = useState('');
-  const [endTime, setEndTime] = useState('');
-  const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
-  const [selected, setSelected] = useState<Alert | null>(null);
+const PAGE_SIZE = 25;
+
+const STATUSES: AlertStatus[] = ['open', 'acknowledged', 'investigating', 'resolved', 'false_positive', 'reopened'];
+
+const FALSE_ALARM_REASONS = [
+  'Wrong object detection',
+  'Duplicate alert',
+  'Authorized person',
+  'Authorized vehicle',
+  'Incorrect zone',
+  'Behavior incorrectly classified',
+  'Other',
+];
+
+const DEFAULTS = { q: '', level: '', status: '', reviewed: '', camera: '', from: '', to: '', page: '1', sort: '', dir: '', id: '' };
+
+const isClosed = (status: string | undefined) => status === 'resolved' || status === 'false_positive';
+
+function AlertPane({ alertId, onClose, onChanged }: { alertId: string; onClose: () => void; onChanged: () => void }) {
+  const { role } = useAuth();
+  const canManage = canManageAlerts(role);
+  const [alert, setAlert] = useState<Alert | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState<string | null>(null);
   const [assignee, setAssignee] = useState('');
   const [note, setNote] = useState('');
-  const [pending, setPending] = useState<Set<string>>(new Set());
-  const deferredQuery = useDeferredValue(query);
-  const pageSize = 25;
-
-  useEffect(() => {
-    apiFetch('/api/cameras').then(r => r.json()).then(setCameras).catch(console.error);
-  }, []);
+  const [falseAlarmOpen, setFalseAlarmOpen] = useState(false);
+  const [reason, setReason] = useState(FALSE_ALARM_REASONS[0]);
 
   const load = useCallback(async () => {
-    const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
-    if (level) params.set('risk_level', level);
-    if (reviewed) params.set('reviewed', reviewed);
-    if (status) params.set('status', status);
-    if (camera) params.set('camera_id', camera);
-    if (deferredQuery.trim()) params.set('search', deferredQuery.trim());
-    if (startTime) params.set('start_time', new Date(startTime).toISOString());
-    if (endTime) params.set('end_time', new Date(endTime).toISOString());
     try {
-      const res = await apiFetch(`/api/alerts/query?${params}`);
-      if (!res.ok) throw new Error(`Alerts request returned ${res.status}`);
-      const data = await res.json();
-      setAlerts(data.items);
-      setTotal(data.total);
+      const detail = await apiJson<Alert>(`/api/alerts/${encodeURIComponent(alertId)}`);
+      setAlert(detail);
+      setAssignee(detail.assignee ?? '');
+      setError(null);
     } catch (err) {
-      console.error('Failed to load alerts:', err);
-    } finally {
-      setLoading(false);
+      setError(errorMessage(err));
     }
-  }, [page, level, reviewed, status, camera, deferredQuery, startTime, endTime]);
+  }, [alertId]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { void load(); }, [load]);
 
-  useEffect(() => { setPage(1); }, [level, reviewed, status, camera, deferredQuery, startTime, endTime]);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !falseAlarmOpen && !(event.target as HTMLElement)?.closest('dialog')) onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose, falseAlarmOpen]);
 
-  const updateIncident = async (alertId: string, changes: Record<string, string>) => {
-    if (pending.has(alertId)) return;
-    setPending(current => new Set(current).add(alertId));
+  const update = async (key: string, changes: Record<string, string>, success: string) => {
+    setPending(key);
     try {
-      const response = await apiFetch(`/api/alerts/${alertId}`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(changes),
-      });
-      if (!response.ok) throw new Error(`Incident update returned ${response.status}`);
+      await apiSend(`/api/alerts/${encodeURIComponent(alertId)}`, 'PATCH', changes);
+      pushToast({ title: success, level: 'success' });
       await load();
-      if (selected?.alert_id === alertId) await openIncident(alertId);
+      onChanged();
+      return true;
     } catch (err) {
-      console.error('Review error:', err);
+      pushToast({ title: 'The alert was not updated', message: errorMessage(err), level: 'error' });
+      return false;
     } finally {
-      setPending(current => { const next = new Set(current); next.delete(alertId); return next; });
+      setPending(null);
     }
   };
 
-  const markFalsePositive = async (alertId: string) => {
-    const entered = window.prompt(
-      'False-positive reason: Wrong object detection, Duplicate alert, Authorized person, Authorized vehicle, Incorrect zone, Behavior incorrectly classified, or Other',
-      'Other',
-    );
-    if (entered === null) return;
-    const allowed = ['Wrong object detection', 'Duplicate alert', 'Authorized person', 'Authorized vehicle', 'Incorrect zone', 'Behavior incorrectly classified'];
-    await updateIncident(alertId, {
-      status: 'false_positive', disposition: 'false_alarm',
-      false_positive_reason: allowed.includes(entered) ? entered : 'Other',
-    });
+  const addNote = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!note.trim()) return;
+    if (await update('note', { note: note.trim() }, 'Note added')) setNote('');
   };
 
-  const openIncident = async (alertId: string) => {
-    const response = await apiFetch(`/api/alerts/${alertId}`);
-    if (!response.ok) return;
-    const detail: Alert = await response.json();
-    setSelected(detail);
-    setAssignee(detail.assignee ?? '');
-    setNote('');
-  };
+  return (
+    <>
+      <div aria-hidden onClick={onClose} className="fixed inset-0 z-40 bg-black/30 xl:hidden" />
+      <aside
+        aria-label="Alert details"
+        className={cn(
+          'fixed inset-y-0 right-0 z-50 w-full overflow-y-auto overscroll-contain bg-canvas px-5 py-5 shadow-pop sm:w-[26rem]',
+          'xl:sticky xl:top-[4.5rem] xl:z-auto xl:max-h-[calc(100dvh-5.5rem)] xl:w-auto xl:border-l xl:border-line xl:py-0 xl:pl-8 xl:pr-0 xl:shadow-none',
+        )}
+      >
+        <div className="flex items-center justify-between gap-3">
+          <p className="truncate font-mono text-xs text-muted" translate="no">{alertId}</p>
+          <IconButton label="Close details" size="sm" onClick={onClose} className="-mr-1.5"><X size={16} /></IconButton>
+        </div>
+
+        {error ? (
+          <div className="mt-4"><InlineError>This alert could not be loaded: {error}</InlineError></div>
+        ) : !alert ? (
+          <Loading label="Loading alert…" />
+        ) : (
+          <div className="space-y-8 pb-6">
+            <div>
+              <h2 className="text-xl font-semibold tracking-tight">{formatEventType(alert.event_type)}</h2>
+              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+                <RiskLabel level={alert.risk_level} score={alert.risk_score} />
+                <AlertStatusLabel status={alert.status} />
+              </div>
+              <p className="mt-2 text-sm text-muted">
+                Camera {alert.camera_id}
+                {alert.object_type && <>, <span className="capitalize">{alert.object_type}</span></>}
+                {alert.track_id != null && <>, Track #{alert.track_id}</>}
+              </p>
+              <p className="num text-sm text-muted">{formatTime(alert.timestamp)} ({formatRelative(alert.timestamp)})</p>
+            </div>
+
+            {canManage ? (
+              <Section title="Response">
+                <div className="flex flex-wrap gap-2">
+                  {(alert.status ?? 'open') === 'open' || alert.status === 'reopened' ? (
+                    <Button variant="primary" loading={pending === 'acknowledge'}
+                      onClick={() => void update('acknowledge', { status: 'acknowledged' }, 'Alert acknowledged')}>
+                      Acknowledge
+                    </Button>
+                  ) : null}
+                  {!isClosed(alert.status) ? (
+                    <>
+                      <Button loading={pending === 'resolve'}
+                        onClick={() => void update('resolve', { status: 'resolved', disposition: 'true_alarm' }, 'Alert resolved')}>
+                        Resolve
+                      </Button>
+                      <Button variant="ghost" onClick={() => setFalseAlarmOpen(true)}>Mark false alarm</Button>
+                    </>
+                  ) : (
+                    <Button loading={pending === 'reopen'} onClick={() => void update('reopen', { status: 'reopened' }, 'Alert reopened')}>
+                      Reopen
+                    </Button>
+                  )}
+                </div>
+                <div className="mt-5 space-y-4">
+                  <Field label="Status" htmlFor="alert-status">
+                    <Select id="alert-status" value={alert.status ?? 'open'} disabled={!!pending}
+                      onChange={e => void update('status', { status: e.target.value }, `Status set to ${formatStatus(e.target.value).toLowerCase()}`)}>
+                      {STATUSES.map(status => <option key={status} value={status}>{formatStatus(status)}</option>)}
+                    </Select>
+                  </Field>
+                  <form onSubmit={e => { e.preventDefault(); void update('assign', { assignee: assignee.trim() }, assignee.trim() ? `Assigned to ${assignee.trim()}` : 'Assignee cleared'); }}>
+                    <Field label="Assignee" htmlFor="alert-assignee">
+                      <div className="flex gap-2">
+                        <Input id="alert-assignee" name="assignee" autoComplete="off" value={assignee}
+                          onChange={e => setAssignee(e.target.value)} placeholder="Name or call sign…" />
+                        <Button type="submit" loading={pending === 'assign'} disabled={assignee.trim() === (alert.assignee ?? '')}>Assign</Button>
+                      </div>
+                    </Field>
+                  </form>
+                </div>
+              </Section>
+            ) : (
+              <p className="text-sm text-muted">Your role can view this alert but not change it.</p>
+            )}
+
+            {!!alert.contributing_factors?.length && (
+              <Section title="Why it was flagged">
+                <ul className="space-y-1.5">
+                  {alert.contributing_factors.map((factor, index) => (
+                    <li key={index} className="flex gap-2.5 text-sm">
+                      <span aria-hidden className="mt-2 size-1 shrink-0 rounded-full bg-muted" />{factor}
+                    </li>
+                  ))}
+                </ul>
+              </Section>
+            )}
+
+            <Section title="Notes" description="Notes are permanent and part of the audit trail.">
+              {alert.notes?.length ? (
+                <ol className="space-y-3">
+                  {alert.notes.map((item, index) => (
+                    <li key={`${item.created_at}-${index}`} className="text-sm">
+                      <p><span className="font-medium text-fg">{item.author}</span> <span className="num text-xs text-muted">{formatTime(item.created_at)}</span></p>
+                      <p className="mt-0.5 whitespace-pre-wrap break-words text-fg">{item.note}</p>
+                    </li>
+                  ))}
+                </ol>
+              ) : (
+                <p className="text-sm text-muted">No notes yet.</p>
+              )}
+              {canManage && (
+                <form onSubmit={addNote} className="mt-4 space-y-2">
+                  <label htmlFor="alert-note" className="sr-only">New note</label>
+                  <Textarea id="alert-note" name="note" value={note} onChange={e => setNote(e.target.value)} placeholder="What did you check or decide…" rows={3} />
+                  <Button type="submit" size="sm" loading={pending === 'note'} disabled={!note.trim()}>Add note</Button>
+                </form>
+              )}
+            </Section>
+
+            <ButtonLink href={`/event?id=${encodeURIComponent(alert.event_id)}`} variant="secondary">Open full event</ButtonLink>
+          </div>
+        )}
+      </aside>
+
+      <Dialog
+        open={falseAlarmOpen}
+        onClose={() => setFalseAlarmOpen(false)}
+        title="Mark as false alarm"
+        description="The reason is used to tune detection. Pick the closest match."
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setFalseAlarmOpen(false)}>Cancel</Button>
+            <Button variant="primary" loading={pending === 'false_alarm'} onClick={async () => {
+              const ok = await update('false_alarm', { status: 'false_positive', disposition: 'false_alarm', false_positive_reason: reason }, 'Marked as false alarm');
+              if (ok) setFalseAlarmOpen(false);
+            }}>
+              Mark false alarm
+            </Button>
+          </>
+        }
+      >
+        <fieldset className="space-y-1">
+          <legend className="sr-only">Reason</legend>
+          {FALSE_ALARM_REASONS.map(option => (
+            <label key={option} className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-sm hover:bg-subtle">
+              <input type="radio" name="false-alarm-reason" value={option} checked={reason === option}
+                onChange={() => setReason(option)} className="size-4 accent-[var(--accent)]" />
+              {option}
+            </label>
+          ))}
+        </fieldset>
+      </Dialog>
+    </>
+  );
+}
+
+function AlertsInner() {
+  const [url, setUrl] = useUrlState(DEFAULTS);
+  const cameras = useCameras();
+  const [search, setSearch] = useState(url.q);
+  const debouncedSearch = useDebouncedValue(search);
+  const [rows, setRows] = useState<Alert[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [fetching, setFetching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const requestId = useRef(0);
+
+  useEffect(() => {
+    if (debouncedSearch !== url.q) setUrl({ q: debouncedSearch, page: null });
+  }, [debouncedSearch]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const page = Math.max(1, Number(url.page) || 1);
+  const sort: SortState = url.sort ? { key: url.sort, dir: url.dir === 'asc' ? 'asc' : 'desc' } : null;
+
+  const load = useCallback(async () => {
+    const id = ++requestId.current;
+    setFetching(true);
+    const params = new URLSearchParams({ page: String(page), page_size: String(PAGE_SIZE) });
+    if (url.level) params.set('risk_level', url.level);
+    if (url.status) params.set('status', url.status);
+    if (url.reviewed) params.set('reviewed', url.reviewed);
+    if (url.camera) params.set('camera_id', url.camera);
+    if (url.q.trim()) params.set('search', url.q.trim());
+    if (url.from) params.set('start_time', new Date(url.from).toISOString());
+    if (url.to) params.set('end_time', new Date(url.to).toISOString());
+    if (url.sort) { params.set('sort_by', url.sort); params.set('sort_order', url.dir === 'asc' ? 'asc' : 'desc'); }
+    try {
+      const data = await apiJson<Paged<Alert>>(`/api/alerts/query?${params}`);
+      if (id !== requestId.current) return;
+      setRows(data.items);
+      setTotal(data.total);
+      setError(null);
+    } catch (err) {
+      if (id === requestId.current) setError(errorMessage(err));
+    } finally {
+      if (id === requestId.current) { setLoading(false); setFetching(false); }
+    }
+  }, [page, url.level, url.status, url.reviewed, url.camera, url.q, url.from, url.to, url.sort, url.dir]);
+
+  useEffect(() => { void load(); }, [load]);
+  useInterval(load, 15_000);
+
+  const closePane = useCallback(() => setUrl({ id: null }), [setUrl]);
+  const filtersActive = !!(url.q || url.level || url.status || url.reviewed || url.camera || url.from || url.to);
 
   const columns: Column<Alert>[] = [
-    { key: 'risk_level', header: 'Level', sortable: true, render: a => <RiskBadge level={a.risk_level} /> },
-    { key: 'alert_id', header: 'Alert ID', sortable: true, className: 'font-mono text-[0.78rem]' },
-    { key: 'event_type', header: 'Type', sortable: true, accessor: a => formatEventType(a.event_type), render: a => formatEventType(a.event_type) },
+    { key: 'priority', header: 'Level', sortable: true, render: alert => <RiskLabel level={alert.risk_level} score={alert.risk_score} /> },
+    { key: 'event_type', header: 'Type', render: alert => <span className="whitespace-nowrap">{formatEventType(alert.event_type)}</span> },
     { key: 'camera_id', header: 'Camera', sortable: true },
-    { key: 'timestamp', header: 'Time', sortable: true, accessor: a => a.timestamp, render: a => formatTime(a.timestamp) },
-    { key: 'risk_score', header: 'Score', sortable: true, align: 'right', accessor: a => a.risk_score ?? 0, render: a => (a.risk_score?.toFixed(0) ?? 0) },
+    { key: 'timestamp', header: 'Time', sortable: true, render: alert => <span className="num whitespace-nowrap" title={formatTime(alert.timestamp)}>{formatTime(alert.timestamp)}</span> },
+    { key: 'status', header: 'Status', sortable: true, render: alert => <AlertStatusLabel status={alert.status} /> },
+    { key: 'assignee', header: 'Assignee', hideBelow: '2xl', render: alert => <span className={alert.assignee ? 'text-fg' : 'text-muted'}>{alert.assignee || 'Unassigned'}</span> },
     {
-      key: 'status', header: 'Status', sortable: true,
-      accessor: a => a.status ?? (a.reviewed ? 'resolved' : 'open'),
-      render: a => {
-        const closed = a.status === 'resolved' || a.status === 'false_positive';
-        return <span className={`inline-flex items-center gap-1.5 text-[0.78rem] ${closed ? 'text-success' : 'text-warning'}`}>
-          <Icon name={closed ? 'check' : 'clock'} /> {(a.status ?? 'open').replace('_', ' ')}
-        </span>;
-      },
-    },
-    {
-      key: 'actions', header: 'Actions', align: 'right',
-      render: a => (
-        <span className="inline-flex justify-end gap-1.5">
-          <ButtonLink href={`/event?id=${a.event_id}`} size="xs" variant="outline">View</ButtonLink>
-          <Button size="xs" variant="outline" disabled={pending.has(a.alert_id)} onClick={() => openIncident(a.alert_id)}>Manage</Button>
-          {(a.status ?? 'open') === 'open' && <Button size="xs" disabled={pending.has(a.alert_id)} onClick={() => updateIncident(a.alert_id, { status: 'acknowledged' })}>Acknowledge</Button>}
-          {!a.reviewed && <Button size="xs" variant="success" disabled={pending.has(a.alert_id)} onClick={() => updateIncident(a.alert_id, { status: 'resolved', disposition: 'true_alarm' })}>Resolve</Button>}
-          {!a.reviewed && <Button size="xs" variant="outline" disabled={pending.has(a.alert_id)} onClick={() => markFalsePositive(a.alert_id)}>False alarm</Button>}
+      key: 'actions', header: '', align: 'right',
+      render: alert => (
+        <span className="inline-flex items-center justify-end gap-3">
+          <Link href={`/event?id=${encodeURIComponent(alert.event_id)}`} className="text-sm font-medium text-accent hover:text-accent-hover">View</Link>
+          <Button size="sm" variant={url.id === alert.alert_id ? 'secondary' : 'ghost'} aria-pressed={url.id === alert.alert_id}
+            onClick={() => setUrl({ id: url.id === alert.alert_id ? null : alert.alert_id })}>
+            Manage
+          </Button>
         </span>
       ),
     },
@@ -135,86 +319,69 @@ export default function AlertsPage() {
   return (
     <div>
       <Toolbar>
-          <SearchInput placeholder="Search alerts…" value={query} onChange={e => setQuery(e.target.value)} />
-          <Select value={level} onChange={e => setLevel(e.target.value)} className="w-auto">
-            <option value="">All levels</option>
-            <option value="critical">Critical</option>
-            <option value="high">High</option>
-            <option value="medium">Medium</option>
-            <option value="low">Low</option>
-          </Select>
-          <Select value={reviewed} onChange={e => setReviewed(e.target.value)} className="w-auto">
-            <option value="">All statuses</option>
-            <option value="false">Unreviewed</option>
-            <option value="true">Reviewed</option>
-          </Select>
-          <Select value={status} onChange={e => setStatus(e.target.value)} className="w-auto">
-            <option value="">All workflow states</option>
-            <option value="open">Open</option>
-            <option value="acknowledged">Acknowledged</option>
-            <option value="investigating">Investigating</option>
-            <option value="resolved">Resolved</option>
-            <option value="false_positive">False positive</option>
-            <option value="reopened">Reopened</option>
-          </Select>
-          <Select value={camera} onChange={e => setCamera(e.target.value)} className="w-auto">
-            <option value="">All cameras</option>
-            {cameras.map(c => <option key={c.camera_id} value={c.camera_id}>{c.name}</option>)}
-          </Select>
-          <Input type="datetime-local" aria-label="From time" value={startTime} onChange={e => setStartTime(e.target.value)} className="w-auto" />
-          <Input type="datetime-local" aria-label="To time" value={endTime} onChange={e => setEndTime(e.target.value)} className="w-auto" />
-          <Button icon="rotate-right" onClick={load}>Refresh</Button>
-        </Toolbar>
-
-        {selected && (
-          <Card title={`Incident ${selected.alert_id}`} icon="triangle-exclamation" className="mb-4">
-            <div className="grid gap-4 lg:grid-cols-[1fr_1.2fr]">
-              <div className="space-y-2 text-sm text-fg-muted">
-                <p><span className="text-fg-subtle">Event:</span> {formatEventType(selected.event_type)}</p>
-                <p><span className="text-fg-subtle">Camera:</span> {selected.camera_id}</p>
-                <p><span className="text-fg-subtle">Opened:</span> {formatTime(selected.timestamp)}</p>
-                <div className="flex flex-wrap gap-2 pt-2">
-                  <Select aria-label="Incident status" value={selected.status ?? 'open'} onChange={e => updateIncident(selected.alert_id, { status: e.target.value })} className="w-auto">
-                    {['open', 'acknowledged', 'investigating', 'resolved', 'false_positive', 'reopened'].map(value => <option key={value} value={value}>{value.replace('_', ' ')}</option>)}
-                  </Select>
-                  <Input aria-label="Assignee" placeholder="Assignee" value={assignee} onChange={e => setAssignee(e.target.value)} className="w-48" />
-                  <Button size="xs" onClick={() => updateIncident(selected.alert_id, { assignee })}>Assign</Button>
-                </div>
-              </div>
-              <div>
-                <div className="max-h-36 space-y-2 overflow-auto rounded border border-default bg-surface p-3" aria-label="Incident notes">
-                  {selected.notes?.length ? selected.notes.map((item, index) => <div key={`${item.created_at}-${index}`} className="text-sm"><span className="font-medium text-fg">{item.author}</span><span className="ml-2 text-xs text-fg-subtle">{formatTime(item.created_at)}</span><p className="text-fg-muted">{item.note}</p></div>) : <p className="text-sm text-fg-subtle">No investigation notes yet.</p>}
-                </div>
-                <div className="mt-2 flex gap-2">
-                  <Input aria-label="New incident note" placeholder="Add an immutable investigation note" value={note} onChange={e => setNote(e.target.value)} />
-                  <Button disabled={!note.trim()} onClick={() => updateIncident(selected.alert_id, { note: note.trim() })}>Add note</Button>
-                  <Button variant="ghost" onClick={() => setSelected(null)}>Close</Button>
-                </div>
-              </div>
-            </div>
-          </Card>
+        <SearchInput placeholder="Search alerts…" aria-label="Search alerts" value={search}
+          onChange={e => setSearch(e.target.value)} wrapperClassName="w-full sm:w-64" />
+        <Select aria-label="Risk level" value={url.level} onChange={e => setUrl({ level: e.target.value, page: null })} wrapperClassName="w-36">
+          <option value="">Any risk</option>
+          {RISK_LEVELS.map(level => <option key={level} value={level}>{riskMeta(level).label}</option>)}
+        </Select>
+        <Select aria-label="Status" value={url.status} onChange={e => setUrl({ status: e.target.value, page: null })} wrapperClassName="w-40">
+          <option value="">Any status</option>
+          {STATUSES.map(status => <option key={status} value={status}>{formatStatus(status)}</option>)}
+        </Select>
+        <Select aria-label="Review state" value={url.reviewed} onChange={e => setUrl({ reviewed: e.target.value, page: null })} wrapperClassName="w-40">
+          <option value="">Reviewed or not</option>
+          <option value="false">Not reviewed</option>
+          <option value="true">Reviewed</option>
+        </Select>
+        <Select aria-label="Camera" value={url.camera} onChange={e => setUrl({ camera: e.target.value, page: null })} wrapperClassName="w-44">
+          <option value="">All cameras</option>
+          {cameras.map(camera => <option key={camera.camera_id} value={camera.camera_id}>{camera.name}</option>)}
+        </Select>
+        <div className="w-[13.5rem]">
+          <Input type="datetime-local" aria-label="From" title="From" value={url.from} onChange={e => setUrl({ from: e.target.value, page: null })} />
+        </div>
+        <div className="w-[13.5rem]">
+          <Input type="datetime-local" aria-label="To" title="To" value={url.to} onChange={e => setUrl({ to: e.target.value, page: null })} />
+        </div>
+        {filtersActive && (
+          <Button variant="ghost" onClick={() => { setSearch(''); setUrl({ q: null, level: null, status: null, reviewed: null, camera: null, from: null, to: null, page: null }); }}>
+            Clear filters
+          </Button>
         )}
+        <Button variant="ghost" className="ml-auto" icon={<ArrowClockwise size={14} />} loading={fetching && !loading} onClick={() => void load()}>
+          Refresh
+        </Button>
+      </Toolbar>
 
-        {loading ? (
-          <Loading label="Loading alerts…" />
-        ) : (
+      <div className={cn('grid gap-8', url.id && 'xl:grid-cols-[minmax(0,1fr)_25rem]')}>
+        <div className="min-w-0">
+          {error && <div className="mb-4"><InlineError>Alerts could not be loaded: {error}</InlineError></div>}
           <DataTable
+            label="Alerts"
             columns={columns}
-            rows={alerts}
-            rowKey={a => a.alert_id}
-            pageSize={pageSize}
-            emptyMessage="No alerts match these filters"
+            rows={rows}
+            rowKey={alert => alert.alert_id}
+            sort={sort}
+            onSortChange={next => setUrl({ sort: next?.key ?? null, dir: next?.dir ?? null, page: null })}
+            loading={loading}
+            selectedKey={url.id || null}
+            emptyTitle={filtersActive ? 'No alerts match these filters' : 'No alerts yet'}
+            emptyDescription={filtersActive ? 'Widen the time range or clear a filter.' : 'Alerts are raised when an event crosses the risk threshold.'}
+            rowAccent={alert => (alert.risk_level === 'critical' && !isClosed(alert.status) ? riskMeta('critical').color : undefined)}
           />
-        )}
-        {!loading && total > 0 && (
-          <div className="mt-3 flex items-center justify-between text-sm text-fg-muted">
-            <span>{(page - 1) * pageSize + 1}–{Math.min(page * pageSize, total)} of {total}</span>
-            <span className="flex gap-2">
-              <Button size="xs" variant="outline" disabled={page === 1} onClick={() => setPage(p => p - 1)}>Previous</Button>
-              <Button size="xs" variant="outline" disabled={page * pageSize >= total} onClick={() => setPage(p => p + 1)}>Next</Button>
-            </span>
-          </div>
-        )}
+          <Pagination page={page} pageSize={PAGE_SIZE} total={total} onPageChange={next => setUrl({ page: String(next) })} />
+        </div>
+        {url.id && <AlertPane key={url.id} alertId={url.id} onClose={closePane} onChanged={() => void load()} />}
+      </div>
     </div>
+  );
+}
+
+export default function AlertsPage() {
+  return (
+    <Suspense fallback={<Loading label="Loading alerts…" />}>
+      <AlertsInner />
+    </Suspense>
   );
 }

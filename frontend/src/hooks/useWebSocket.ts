@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import type { Alert } from '../types';
 import { supabase } from '../api/supabase';
 
@@ -10,6 +10,7 @@ function wsOrigin(): string {
   return `${protocol}//${window.location.host}`;
 }
 
+/** Subscribe to /ws/alerts with exponential-backoff reconnects. */
 export function useWebSocket(onAlert: (alert: Alert) => void) {
   const wsRef = useRef<WebSocket | null>(null);
   const connectRef = useRef<() => void>(() => {});
@@ -27,24 +28,19 @@ export function useWebSocket(onAlert: (alert: Alert) => void) {
       return;
     }
 
-    // Pass the JWT as a WebSocket subprotocol, not a query param — it never
-    // lands in a URL or an access log. Server echoes the "bearer" subprotocol.
+    // The JWT goes in the subprotocol, never in a URL or an access log.
     const ws = new WebSocket(`${wsOrigin()}/ws/alerts`, ['bearer', token]);
 
     ws.onopen = () => {
       attemptRef.current = 0;
-      if (reconnectRef.current) {
-        clearTimeout(reconnectRef.current);
-        reconnectRef.current = null;
-      }
     };
 
-    ws.onmessage = (event) => {
+    ws.onmessage = event => {
       try {
         const msg = JSON.parse(event.data);
         if (msg.type === 'alert') onAlert(msg.data);
       } catch (e) {
-        console.error('WS message parse error:', e);
+        console.warn('WS message parse error:', e);
       }
     };
 
@@ -55,17 +51,13 @@ export function useWebSocket(onAlert: (alert: Alert) => void) {
       reconnectRef.current = setTimeout(() => connectRef.current(), delay);
     };
 
-    ws.onerror = () => {
-      /* onclose will handle reconnect */
-    };
-
     wsRef.current = ws;
   }, [onAlert]);
 
   useEffect(() => {
     closedRef.current = false;
     connectRef.current = connect;
-    connect();
+    void connect();
     return () => {
       closedRef.current = true;
       wsRef.current?.close();

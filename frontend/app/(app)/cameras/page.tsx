@@ -1,180 +1,305 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { ArrowClockwise, Fire, Plus, VideoCameraSlash } from '@phosphor-icons/react';
+import { apiJson, apiSend, errorMessage, formatRelative, formatStatus, mediaSrc } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
-import { apiFetch, formatTime, mediaSrc } from '@/src/api/client';
 import { useInterval } from '@/src/hooks/useInterval';
-import Icon from '@/src/components/ui/Icon';
-import { Button } from '@/src/components/ui/Button';
-import { Input, Select } from '@/src/components/ui/Field';
-import Card from '@/src/components/ui/Card';
-import StatusDot from '@/src/components/ui/StatusDot';
-import { EmptyState, Loading } from '@/src/components/ui/States';
 import { pushToast } from '@/src/lib/toast';
+import { Button } from '@/src/components/ui/Button';
+import Dialog from '@/src/components/ui/Dialog';
+import { Field, Input, SearchInput, Select } from '@/src/components/ui/Field';
+import { Toolbar } from '@/src/components/ui/Section';
+import { EmptyState, InlineError, Loading } from '@/src/components/ui/States';
+import { cameraDisplayStatus, isCameraLive, StatusLabel } from '@/src/components/ui/Indicators';
+import HeatmapLayer from '@/src/components/video/HeatmapLayer';
 import type { Camera } from '@/src/types';
 
-type CameraForm = { camera_id: string; name: string; source: string; type: string; location: string; enabled: boolean; fps_limit: number; latitude: string; longitude: string };
-const EMPTY_CAMERA: CameraForm = { camera_id: '', name: '', source: '', type: 'general', location: '', enabled: true, fps_limit: 15, latitude: '', longitude: '' };
+type CameraForm = {
+  camera_id: string; name: string; source: string; type: string; location: string;
+  enabled: boolean; fps_limit: number; latitude: string; longitude: string;
+};
+
+const EMPTY_FORM: CameraForm = {
+  camera_id: '', name: '', source: '', type: 'general', location: '', enabled: true, fps_limit: 15, latitude: '', longitude: '',
+};
+
+const CAMERA_TYPES = [['general', 'General'], ['checkpoint', 'Checkpoint'], ['border', 'Border'], ['traffic', 'Traffic']];
+
+function CameraTile({ camera, tick, isAdmin, onEdit, onAction, busy }: {
+  camera: Camera;
+  tick: number;
+  isAdmin: boolean;
+  onEdit: (camera: Camera) => void;
+  onAction: (camera: Camera, action: 'test' | 'restart' | 'toggle') => void;
+  busy: string | undefined;
+}) {
+  const { mediaTicket } = useAuth();
+  const [failed, setFailed] = useState(false);
+  const [heatmap, setHeatmap] = useState(false);
+  const online = isCameraLive(camera);
+  const disabled = camera.enabled === false;
+
+  return (
+    <article className="min-w-0">
+      <div className="relative aspect-video overflow-hidden rounded-lg bg-video">
+        {/* Offline cameras still serve their last frame; disabled ones return 404. */}
+        {mediaTicket && !disabled && !failed && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={mediaSrc(`/api/stream/${camera.camera_id}/snapshot?v=${tick}`, mediaTicket)}
+            alt={`Latest frame from ${camera.name}`}
+            width={1280}
+            height={720}
+            loading="lazy"
+            className={online ? 'absolute inset-0 size-full object-contain' : 'absolute inset-0 size-full object-contain opacity-40 grayscale'}
+            onError={() => setFailed(true)}
+          />
+        )}
+        {heatmap && online && <HeatmapLayer cameraId={camera.camera_id} />}
+        {(!online || failed) && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-center text-sm text-white/75">
+            <VideoCameraSlash size={20} aria-hidden />
+            <span>{disabled ? 'Disabled' : online ? 'No frame available' : formatStatus(camera.status)}</span>
+            <span className="text-xs text-white/55">
+              {camera.last_frame_at ? `Last frame ${formatRelative(camera.last_frame_at)}` : 'No frame received yet'}
+            </span>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-3 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="truncate text-base font-medium text-fg">{camera.name}</h2>
+          <p className="truncate text-sm text-muted">
+            {camera.location || camera.camera_id}{camera.type ? `, ${formatStatus(camera.type)}` : ''}
+          </p>
+        </div>
+        <StatusLabel status={cameraDisplayStatus(camera)} className="pt-0.5 text-sm text-muted" />
+      </div>
+
+      <div className="-ml-2.5 mt-1.5 flex flex-wrap items-center gap-0.5">
+        <Button size="sm" variant={heatmap ? 'secondary' : 'ghost'} aria-pressed={heatmap} disabled={!online}
+          icon={<Fire size={14} />} onClick={() => setHeatmap(v => !v)}>
+          Heatmap
+        </Button>
+        {isAdmin && (
+          <>
+            <Button size="sm" variant="ghost" onClick={() => onEdit(camera)}>Edit</Button>
+            <Button size="sm" variant="ghost" loading={busy === 'test'} onClick={() => onAction(camera, 'test')}>Test</Button>
+            {camera.enabled !== false && (
+              <Button size="sm" variant="ghost" loading={busy === 'restart'} onClick={() => onAction(camera, 'restart')}>Restart</Button>
+            )}
+            <Button size="sm" variant="ghost" loading={busy === 'toggle'} onClick={() => onAction(camera, 'toggle')}
+              className={camera.enabled !== false ? 'text-bad hover:text-bad' : undefined}>
+              {camera.enabled !== false ? 'Disable' : 'Enable'}
+            </Button>
+          </>
+        )}
+      </div>
+    </article>
+  );
+}
 
 export default function CamerasPage() {
-  const { mediaTicket, role } = useAuth();
+  const { role } = useAuth();
   const isAdmin = role === 'admin';
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [loading, setLoading] = useState(true);
-  const [heatmaps, setHeatmaps] = useState<Record<string, boolean>>({});
-  const [snapshotTick, setSnapshotTick] = useState(0);
-  const [showCreate, setShowCreate] = useState(false);
-  const [form, setForm] = useState(EMPTY_CAMERA);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0);
+  const [query, setQuery] = useState('');
+  const [busy, setBusy] = useState<Record<string, string>>({});
+  const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState<CameraForm>(EMPTY_FORM);
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const res = await apiFetch('/api/cameras');
-      if (!res.ok) throw new Error(`Camera request returned ${res.status}`);
-      setCameras(await res.json());
-      setSnapshotTick(Date.now());
+      setCameras(await apiJson<Camera[]>('/api/cameras'));
+      setTick(Date.now());
+      setLoadError(null);
     } catch (err) {
-      console.error('Failed to load cameras:', err);
+      setLoadError(errorMessage(err));
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => { void load(); }, [load]);
-  useInterval(load, 10000);
+  useInterval(load, 10_000);
 
-  const saveCamera = async () => {
+  const set = <K extends keyof CameraForm>(key: K, value: CameraForm[K]) => setForm(current => ({ ...current, [key]: value }));
+
+  const openCreate = () => {
+    setEditingId(null);
+    setForm(EMPTY_FORM);
+    setFormError(null);
+    setFormOpen(true);
+  };
+
+  const openEdit = async (camera: Camera) => {
+    try {
+      const config = await apiJson<Camera>(`/api/cameras/${encodeURIComponent(camera.camera_id)}/config`);
+      setForm({
+        camera_id: config.camera_id, name: config.name, source: config.source ?? '', type: config.type ?? 'general',
+        location: config.location ?? '', enabled: config.enabled ?? true, fps_limit: config.fps_limit ?? 15,
+        latitude: config.latitude == null ? '' : String(config.latitude),
+        longitude: config.longitude == null ? '' : String(config.longitude),
+      });
+      setEditingId(camera.camera_id);
+      setFormError(null);
+      setFormOpen(true);
+    } catch (err) {
+      pushToast({ title: `Could not load settings for ${camera.name}`, message: errorMessage(err), level: 'error' });
+    }
+  };
+
+  const save = async (event: FormEvent) => {
+    event.preventDefault();
+    setSaving(true);
+    setFormError(null);
     const payload = {
       ...form,
       latitude: form.latitude === '' ? null : Number(form.latitude),
       longitude: form.longitude === '' ? null : Number(form.longitude),
     };
-    const requestBody = editingId ? (({ camera_id: _cameraId, ...changes }) => changes)(payload) : payload;
-    const response = await apiFetch(editingId ? `/api/cameras/${editingId}` : '/api/cameras', {
-      method: editingId ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestBody),
-    });
-    if (!response.ok) {
-      pushToast({ title: 'Camera creation failed', message: await response.text(), level: 'high' });
-      return;
+    try {
+      if (editingId) {
+        const { camera_id: _ignored, ...changes } = payload;
+        void _ignored;
+        await apiSend(`/api/cameras/${encodeURIComponent(editingId)}`, 'PATCH', changes);
+      } else {
+        await apiSend('/api/cameras', 'POST', payload);
+      }
+      setFormOpen(false);
+      pushToast({ title: editingId ? 'Camera saved' : 'Camera added', message: form.name, level: 'success' });
+      await load();
+    } catch (err) {
+      setFormError(errorMessage(err));
+    } finally {
+      setSaving(false);
     }
-    setShowCreate(false);
-    setEditingId(null);
-    setForm(EMPTY_CAMERA);
-    pushToast({ title: editingId ? 'Camera updated' : 'Camera added', message: form.name });
-    await load();
   };
 
-  const editCamera = async (camera: Camera) => {
-    const response = await apiFetch(`/api/cameras/${camera.camera_id}/config`);
-    if (!response.ok) {
-      pushToast({ title: 'Could not load camera settings', message: camera.name, level: 'high' });
-      return;
+  const runAction = async (camera: Camera, action: 'test' | 'restart' | 'toggle') => {
+    setBusy(current => ({ ...current, [camera.camera_id]: action }));
+    const id = encodeURIComponent(camera.camera_id);
+    try {
+      if (action === 'test') {
+        const result = await apiSend<{ reachable?: boolean; frame_received?: boolean }>(`/api/cameras/${id}/test`, 'POST');
+        const ok = result.frame_received ?? result.reachable;
+        pushToast({
+          title: ok ? `${camera.name} returned a frame` : `${camera.name} did not return a frame`,
+          message: ok ? undefined : 'Check the source address and that the camera is powered and on the network.',
+          level: ok ? 'success' : 'error',
+        });
+      } else if (action === 'restart') {
+        await apiSend(`/api/cameras/${id}/restart`, 'POST');
+        pushToast({ title: `Restarting ${camera.name}`, level: 'success' });
+      } else {
+        const enabled = camera.enabled === false;
+        await apiSend(`/api/cameras/${id}`, 'PATCH', { enabled });
+        pushToast({ title: `${camera.name} ${enabled ? 'enabled' : 'disabled'}`, level: 'success' });
+      }
+      await load();
+    } catch (err) {
+      pushToast({ title: `Could not ${action === 'toggle' ? 'update' : action} ${camera.name}`, message: errorMessage(err), level: 'error' });
+    } finally {
+      setBusy(current => { const next = { ...current }; delete next[camera.camera_id]; return next; });
     }
-    const config: Camera = await response.json();
-    setForm({
-      camera_id: config.camera_id, name: config.name, source: config.source ?? '', type: config.type ?? 'general',
-      location: config.location ?? '', enabled: config.enabled ?? true, fps_limit: config.fps_limit ?? 15,
-      latitude: config.latitude == null ? '' : String(config.latitude), longitude: config.longitude == null ? '' : String(config.longitude),
-    });
-    setEditingId(camera.camera_id);
-    setShowCreate(true);
-  };
-
-  const closeForm = () => { setShowCreate(false); setEditingId(null); setForm(EMPTY_CAMERA); };
-
-  const cameraAction = async (camera: Camera, action: 'test' | 'restart' | 'toggle') => {
-    const path = action === 'toggle' ? `/api/cameras/${camera.camera_id}` : `/api/cameras/${camera.camera_id}/${action}`;
-    const response = await apiFetch(path, action === 'toggle' ? {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled: !camera.enabled }),
-    } : { method: 'POST' });
-    const result = await response.json().catch(() => ({}));
-    pushToast({
-      title: response.ok ? `Camera ${action} complete` : `Camera ${action} failed`,
-      message: action === 'test' && response.ok ? (result.reachable ? 'Frame received' : 'Source did not return a frame') : camera.name,
-      level: response.ok ? 'low' : 'high',
-    });
-    await load();
   };
 
   if (loading) return <Loading label="Loading cameras…" />;
 
-  return (
-    <div className="space-y-4">
-      {isAdmin && <div className="flex justify-end"><Button variant="primary" icon="plus" onClick={() => { if (showCreate) closeForm(); else setShowCreate(true); }}>Add camera</Button></div>}
+  const q = query.trim().toLowerCase();
+  const visible = q
+    ? cameras.filter(c => [c.name, c.camera_id, c.location].some(v => v?.toLowerCase().includes(q)))
+    : cameras;
+  const online = cameras.filter(isCameraLive).length;
 
-      {showCreate && (
-        <Card title={editingId ? `Edit ${form.name}` : 'Add Camera'} icon="video">
-          <div className="grid gap-3 md:grid-cols-2">
-            <Input placeholder="Camera ID" value={form.camera_id} disabled={!!editingId} onChange={e => setForm(value => ({ ...value, camera_id: e.target.value }))} />
-            <Input placeholder="Display name" value={form.name} onChange={e => setForm(value => ({ ...value, name: e.target.value }))} />
-            <Input placeholder="RTSP, HTTP, or local video source" value={form.source} onChange={e => setForm(value => ({ ...value, source: e.target.value }))} className="md:col-span-2" />
-            <Input placeholder="Location label" value={form.location} onChange={e => setForm(value => ({ ...value, location: e.target.value }))} />
-            <Select value={form.type} onChange={e => setForm(value => ({ ...value, type: e.target.value }))}>
-              <option value="general">General</option><option value="checkpoint">Checkpoint</option><option value="border">Border</option><option value="traffic">Traffic</option>
-            </Select>
-            <Input type="number" min={1} max={120} aria-label="FPS limit" placeholder="FPS limit" value={form.fps_limit} onChange={e => setForm(value => ({ ...value, fps_limit: Number(e.target.value) }))} />
-            <Input type="number" min={-90} max={90} step="any" aria-label="Latitude" placeholder="Latitude (optional)" value={form.latitude} onChange={e => setForm(value => ({ ...value, latitude: e.target.value }))} />
-            <Input type="number" min={-180} max={180} step="any" aria-label="Longitude" placeholder="Longitude (optional)" value={form.longitude} onChange={e => setForm(value => ({ ...value, longitude: e.target.value }))} />
-          </div>
-          <div className="mt-3 flex justify-end gap-2">
-            <Button variant="ghost" onClick={closeForm}>Cancel</Button>
-            <Button variant="primary" disabled={!form.camera_id || !form.name || !form.source} onClick={saveCamera}>{editingId ? 'Save changes' : 'Create camera'}</Button>
-          </div>
-        </Card>
+  return (
+    <div>
+      <Toolbar>
+        <SearchInput placeholder="Search by name, ID or location…" aria-label="Search cameras" value={query}
+          onChange={e => setQuery(e.target.value)} wrapperClassName="w-full sm:w-72" />
+        <span className="num text-sm text-muted">{online} of {cameras.length} online</span>
+        <div className="ml-auto flex gap-2">
+          <Button size="md" variant="ghost" icon={<ArrowClockwise size={14} />} onClick={() => void load()}>Refresh</Button>
+          {isAdmin && <Button variant="primary" icon={<Plus size={14} />} onClick={openCreate}>Add camera</Button>}
+        </div>
+      </Toolbar>
+
+      {loadError && cameras.length > 0 && (
+        <div className="mb-4"><InlineError>Showing the last known list. Refresh failed: {loadError}</InlineError></div>
       )}
 
-      {cameras.length === 0 ? <EmptyState icon="video-slash" message="No cameras configured" /> : (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {cameras.map(camera => {
-            const showHeatmap = !!heatmaps[camera.camera_id];
-            return (
-              <article key={camera.camera_id} className="flex flex-col overflow-hidden rounded-lg border border-default bg-card shadow-sm">
-                <div className="relative aspect-video bg-black">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={mediaSrc(`/api/stream/${camera.camera_id}/snapshot?v=${snapshotTick}`, mediaTicket)} alt={camera.name}
-                    className={`absolute inset-0 size-full object-cover ${camera.status === 'online' ? '' : 'opacity-45 grayscale'}`}
-                    onError={event => {
-                      const img = event.target as HTMLImageElement;
-                      img.style.display = 'none';
-                      (img.parentElement?.querySelector('[data-offline]') as HTMLElement | null)?.style.setProperty('display', 'flex');
-                    }}
-                    onLoad={event => {
-                      const img = event.target as HTMLImageElement;
-                      img.style.display = 'block';
-                      if (camera.status === 'online') (img.parentElement?.querySelector('[data-offline]') as HTMLElement | null)?.style.setProperty('display', 'none');
-                    }}
-                  />
-                  {showHeatmap && (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={mediaSrc(`/api/cameras/${camera.camera_id}/heatmap`, mediaTicket)} alt="" className="pointer-events-none absolute inset-0 size-full object-cover opacity-80 mix-blend-screen" />
-                  )}
-                  <div data-offline className={`absolute inset-0 flex-col items-center justify-center gap-2 bg-black/45 text-white ${camera.status === 'online' ? 'hidden' : 'flex'}`}>
-                    <Icon name="video-slash" className="text-2xl opacity-80" /><p className="text-sm font-semibold">OFFLINE</p>
-                    <p className="text-xs text-white/75">Last frame at: {camera.last_frame_at ? formatTime(camera.last_frame_at) : 'Unavailable'}</p>
-                  </div>
-                </div>
-
-                <div className="space-y-3 p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0"><h2 className="font-semibold text-fg">{camera.name}</h2><p className="text-sm text-fg-muted">{camera.location || camera.camera_id}</p></div>
-                    <span className="flex items-center gap-2 text-sm text-fg-muted"><StatusDot status={camera.status === 'retired' ? 'offline' : camera.status} /><span className="capitalize">{camera.status}</span></span>
-                  </div>
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <Button size="xs" variant={showHeatmap ? 'primary' : 'outline'} icon="fire" onClick={() => setHeatmaps(value => ({ ...value, [camera.camera_id]: !value[camera.camera_id] }))}>{showHeatmap ? 'Hide heatmap' : 'Heatmap'}</Button>
-                    {isAdmin && <span className="flex flex-wrap justify-end gap-1.5">
-                      <Button size="xs" variant="outline" onClick={() => editCamera(camera)}>Edit</Button>
-                      <Button size="xs" variant="outline" onClick={() => cameraAction(camera, 'test')}>Test</Button>
-                      {camera.enabled && <Button size="xs" variant="outline" onClick={() => cameraAction(camera, 'restart')}>Restart</Button>}
-                      <Button size="xs" variant={camera.enabled ? 'danger' : 'success'} onClick={() => cameraAction(camera, 'toggle')}>{camera.enabled ? 'Disable' : 'Enable'}</Button>
-                    </span>}
-                  </div>
-                </div>
-              </article>
-            );
-          })}
+      {cameras.length === 0 ? (
+        loadError
+          ? <EmptyState title="Cameras could not be loaded" description={loadError} action={<Button onClick={() => void load()}>Try again</Button>} />
+          : <EmptyState title="No cameras yet" description={isAdmin ? 'Add a camera with its RTSP, HTTP or file source to start analysing video.' : 'An administrator has not added any cameras you can access.'}
+              action={isAdmin && <Button variant="primary" icon={<Plus size={14} />} onClick={openCreate}>Add camera</Button>} />
+      ) : visible.length === 0 ? (
+        <EmptyState title="No cameras match your search" action={<Button onClick={() => setQuery('')}>Clear search</Button>} />
+      ) : (
+        <div className="grid gap-x-6 gap-y-8 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+          {visible.map(camera => (
+            <CameraTile key={camera.camera_id} camera={camera} tick={tick} isAdmin={isAdmin}
+              onEdit={openEdit} onAction={runAction} busy={busy[camera.camera_id]} />
+          ))}
         </div>
       )}
+
+      <Dialog
+        open={formOpen}
+        onClose={() => setFormOpen(false)}
+        size="lg"
+        title={editingId ? `Edit ${form.name || editingId}` : 'Add camera'}
+        description={editingId ? 'Changes apply when the pipeline next reads the camera configuration.' : 'The camera starts streaming as soon as it is saved.'}
+      >
+        <form id="camera-form" onSubmit={save} className="grid gap-4 sm:grid-cols-2">
+          <Field label="Camera ID" htmlFor="camera_id" hint={editingId ? 'IDs cannot be changed.' : 'Short and unique, e.g. gate-north-1.'}>
+            <Input id="camera_id" name="camera_id" required disabled={!!editingId} value={form.camera_id} spellCheck={false}
+              autoComplete="off" onChange={e => set('camera_id', e.target.value)} placeholder="gate-north-1" />
+          </Field>
+          <Field label="Display name" htmlFor="name">
+            <Input id="name" name="name" required value={form.name} autoComplete="off" onChange={e => set('name', e.target.value)} placeholder="North gate…" />
+          </Field>
+          <Field label="Video source" htmlFor="source" hint="RTSP or HTTP URL, or a local file path." className="sm:col-span-2">
+            <Input id="source" name="source" required value={form.source} spellCheck={false} autoComplete="off"
+              onChange={e => set('source', e.target.value)} placeholder="rtsp://10.0.0.12:554/stream1" />
+          </Field>
+          <Field label="Location" htmlFor="location">
+            <Input id="location" name="location" value={form.location} autoComplete="off" onChange={e => set('location', e.target.value)} placeholder="Sector 4, outer fence…" />
+          </Field>
+          <Field label="Type" htmlFor="type">
+            <Select id="type" name="type" value={form.type} onChange={e => set('type', e.target.value)}>
+              {CAMERA_TYPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </Select>
+          </Field>
+          <Field label="Frame rate limit" htmlFor="fps_limit" hint="Frames per second analysed, 1 to 120.">
+            <Input id="fps_limit" name="fps_limit" type="number" inputMode="numeric" min={1} max={120} required
+              value={form.fps_limit} onChange={e => set('fps_limit', Number(e.target.value))} />
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Latitude" htmlFor="latitude">
+              <Input id="latitude" name="latitude" type="number" inputMode="decimal" step="any" min={-90} max={90}
+                value={form.latitude} onChange={e => set('latitude', e.target.value)} placeholder="28.6139" />
+            </Field>
+            <Field label="Longitude" htmlFor="longitude">
+              <Input id="longitude" name="longitude" type="number" inputMode="decimal" step="any" min={-180} max={180}
+                value={form.longitude} onChange={e => set('longitude', e.target.value)} placeholder="77.2090" />
+            </Field>
+          </div>
+          {formError && <div className="sm:col-span-2"><InlineError>{formError}</InlineError></div>}
+          <div className="flex justify-end gap-2 border-t border-line pt-4 sm:col-span-2">
+            <Button variant="ghost" onClick={() => setFormOpen(false)}>Cancel</Button>
+            <Button type="submit" variant="primary" loading={saving}>{editingId ? 'Save changes' : 'Add camera'}</Button>
+          </div>
+        </form>
+      </Dialog>
     </div>
   );
 }
