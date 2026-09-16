@@ -53,9 +53,10 @@ export default function SignupPage() {
           <Input id="identifier" name="username" type="text" value={identifier} onChange={e => setIdentifier(e.target.value)}
             required autoComplete="username" spellCheck={false} autoCapitalize="none" placeholder="operator@ibvap.gov" />
         </Field>
-        <Field label="Password" htmlFor="password" hint="At least 6 characters.">
+        <Field label="Password" htmlFor="password" hint="At least 8 characters, with both letters and numbers.">
           <Input id="password" name="password" type="password" value={password} onChange={e => setPassword(e.target.value)}
-            required minLength={6} autoComplete="new-password" placeholder="Choose a password" />
+            required minLength={8} pattern="(?=.*[A-Za-z])(?=.*\d).{8,}" title="At least 8 characters, with both letters and numbers"
+            autoComplete="new-password" placeholder="Choose a password" />
         </Field>
         {error && <InlineError>{error}</InlineError>}
         <Button type="submit" variant="primary" className="h-9 w-full" loading={submitting}>

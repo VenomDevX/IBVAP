@@ -46,5 +46,5 @@ def family(filename: str) -> str:
 
 
 def stable_bucket(key: str, seed: int) -> float:
-    h = hashlib.md5(f"{seed}:{key}".encode()).hexdigest()
+    h = hashlib.md5(f"{seed}:{key}".encode(), usedforsecurity=False).hexdigest()  # deterministic split bucket
     return int(h[:8], 16) / 0xFFFFFFFF

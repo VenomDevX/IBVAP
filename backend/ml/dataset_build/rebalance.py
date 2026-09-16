@@ -52,7 +52,7 @@ def rare_first_priority(labels: dict[str, list[int]]):
 
 def _jitter(path: str, seed: int) -> float:
     """Stable per-path pseudo-random value; keeps selection order-independent."""
-    h = hashlib.md5(f"{seed}:{path}".encode()).hexdigest()
+    h = hashlib.md5(f"{seed}:{path}".encode(), usedforsecurity=False).hexdigest()
     return int(h[:8], 16) / 0xFFFFFFFF
 
 

@@ -61,7 +61,7 @@ export default function Toasts() {
       message: `Camera ${alert.camera_id}, score ${Math.round(alert.risk_score ?? 0)}`,
       level: alert.risk_level,
       eventKey: alert.event_id,
-      href: alert.event_id ? `/event?id=${alert.event_id}` : undefined,
+      href: alert.event_id ? `/event?id=${encodeURIComponent(alert.event_id)}` : undefined,
     });
   }, [add]);
 

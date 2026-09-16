@@ -18,6 +18,7 @@ import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from email.message import EmailMessage
+from urllib.parse import urlparse
 
 from loguru import logger
 
@@ -36,6 +37,28 @@ def _redact_phone(num: str) -> str:
     return f"***{digits[-4:]}" if len(digits) >= 4 else "<unset>"
 
 
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+def _safe_webhook_url(raw: str) -> str:
+    """Accept https URLs, or plain http only to this machine; otherwise disable.
+
+    urlopen() also follows file:, ftp: and custom schemes, and plain http would
+    send alert details unencrypted across the network.
+    """
+    url = (raw or "").strip()
+    if not url:
+        return ""
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme == "https" and host:
+        return url
+    if parsed.scheme == "http" and host in _LOOPBACK_HOSTS:
+        return url
+    logger.error("IBVAP_CRITICAL_WEBHOOK_URL ignored: use an https:// URL (plain http is allowed only to localhost)")
+    return ""
+
+
 class NotificationManager:
     _pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ibvap-notify")
 
@@ -50,7 +73,7 @@ class NotificationManager:
         self.twilio_token = os.getenv("TWILIO_AUTH_TOKEN", "")
         self.twilio_from = os.getenv("TWILIO_FROM_NUM", "")
         self.target_phone = os.getenv("ALERT_TARGET_PHONE", "")
-        self.webhook_url = os.getenv("IBVAP_CRITICAL_WEBHOOK_URL", "").strip()
+        self.webhook_url = _safe_webhook_url(os.getenv("IBVAP_CRITICAL_WEBHOOK_URL", ""))
         self.webhook_secret = os.getenv("IBVAP_WEBHOOK_SECRET", "")
 
         self.twilio_client = None
@@ -109,9 +132,7 @@ class NotificationManager:
         if self.webhook_url and self.webhook_secret:
             self._send_webhook(alert)
         elif self.webhook_url:
-            logger.error(
-                "Critical webhook configured without IBVAP_WEBHOOK_SECRET; delivery suppressed"
-            )
+            logger.error("Critical webhook configured without IBVAP_WEBHOOK_SECRET; delivery suppressed")
 
     def _send_webhook(self, alert: dict) -> None:
         body = json.dumps(alert, separators=(",", ":"), sort_keys=True).encode("utf-8")
@@ -119,7 +140,9 @@ class NotificationManager:
         idempotency_key = str(alert.get("alert_id") or alert.get("event_id") or "")
         for attempt in range(3):
             request = urllib.request.Request(
-                self.webhook_url, data=body, method="POST",
+                self.webhook_url,
+                data=body,
+                method="POST",
                 headers={
                     "Content-Type": "application/json",
                     "X-IBVAP-Signature": f"sha256={signature}",
@@ -127,7 +150,8 @@ class NotificationManager:
                 },
             )
             try:
-                with urllib.request.urlopen(request, timeout=10) as response:
+                # URL scheme/host validated by _safe_webhook_url (https, or http to loopback).
+                with urllib.request.urlopen(request, timeout=10) as response:  # nosec B310
                     if 200 <= response.status < 300:
                         logger.info("Critical webhook delivered alert_id={}", idempotency_key)
                         return
@@ -136,4 +160,4 @@ class NotificationManager:
                 if attempt == 2:
                     logger.error("Critical webhook failed alert_id={} error={}", idempotency_key, type(exc).__name__)
                     return
-                time.sleep(2 ** attempt)
+                time.sleep(2**attempt)

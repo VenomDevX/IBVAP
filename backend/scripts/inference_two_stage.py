@@ -15,6 +15,7 @@ import json
 import cv2
 import torch
 from torchvision import models, transforms
+
 from ultralytics import YOLO
 
 
@@ -38,12 +39,12 @@ class TwoStageDetector:
 
         # Load EfficientNet-B0
         print(f"Loading EfficientNet-B0 from: {resnet_weights}")
-        checkpoint = torch.load(resnet_weights, map_location=self.device)
+        # weights_only=True: the checkpoint is a dict of tensors and plain values;
+        # never unpickle arbitrary objects from a weights file.
+        checkpoint = torch.load(resnet_weights, map_location=self.device, weights_only=True)
 
         self.classifier = models.efficientnet_b0(weights=None)
-        self.classifier.classifier[1] = torch.nn.Linear(
-            self.classifier.classifier[1].in_features, self.num_classes
-        )
+        self.classifier.classifier[1] = torch.nn.Linear(self.classifier.classifier[1].in_features, self.num_classes)
         self.classifier.load_state_dict(checkpoint["model_state_dict"])
         self.classifier.to(self.device)
         self.classifier.eval()

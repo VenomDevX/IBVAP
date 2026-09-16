@@ -10,6 +10,7 @@ from pathlib import Path
 import uvicorn
 from dotenv import load_dotenv
 from loguru import logger
+
 from src.paths import output_dir
 
 
@@ -27,6 +28,15 @@ def setup_logging():
     )
 
 
+def default_host() -> str:
+    """Bind address: $IBVAP_HOST if set, else loopback only.
+
+    The API is reached through the frontend proxy or Docker's own bind flag, so
+    it does not need to listen on every interface unless asked to.
+    """
+    return os.getenv("IBVAP_HOST", "").strip() or "127.0.0.1"
+
+
 def main():
     """Main entry point for IBVAP."""
     # Load environment variables FIRST: --port's default below reads IBVAP_PORT,
@@ -38,10 +48,12 @@ def main():
     # left the frontend talking to a port nothing was listening on.
     load_dotenv()
 
-    parser = argparse.ArgumentParser(
-        description="IBVAP — Intelligent Border Video Analytics Platform"
+    parser = argparse.ArgumentParser(description="IBVAP — Intelligent Border Video Analytics Platform")
+    parser.add_argument(
+        "--host",
+        default=default_host(),
+        help="Host to bind (default: $IBVAP_HOST from .env, else 127.0.0.1)",
     )
-    parser.add_argument("--host", default="0.0.0.0", help="Host to bind (default: 0.0.0.0)")
     parser.add_argument(
         "--port",
         type=int,
@@ -62,9 +74,17 @@ def main():
     model_base = os.getenv("IBVAP_MODEL_DIR", "./models")
     data_base = os.getenv("IBVAP_DATA_DIR", "./data")
 
-    for d in [f"{output_base}/snapshots", f"{output_base}/logs", f"{output_base}/metrics",
-              f"{output_base}/videos", f"{model_base}/detection", f"{model_base}/face",
-              f"{model_base}/anpr", f"{model_base}/risk", f"{data_base}/demo"]:
+    for d in [
+        f"{output_base}/snapshots",
+        f"{output_base}/logs",
+        f"{output_base}/metrics",
+        f"{output_base}/videos",
+        f"{model_base}/detection",
+        f"{model_base}/face",
+        f"{model_base}/anpr",
+        f"{model_base}/risk",
+        f"{data_base}/demo",
+    ]:
         Path(d).mkdir(parents=True, exist_ok=True)
 
     # Banner
