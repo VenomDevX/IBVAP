@@ -1,9 +1,11 @@
 # RTX 40-series Windows/Linux CUDA runtime for the pinned PyTorch release.
 # Install after requirements.txt:
 #   python -m pip install -r requirements-cuda.txt
---extra-index-url https://download.pytorch.org/whl/cu124
-torch==2.5.1+cu124
-torchvision==0.20.1+cu124
+# CUDA 12.6 build: onnxruntime-gpu 1.20 needs CUDA 12 libraries; TensorRT ships
+# its own CUDA 13 runtime. Needs an NVIDIA driver >= 560.
+--extra-index-url https://download.pytorch.org/whl/cu126
+torch==2.14.0+cu126
+torchvision==0.29.0+cu126
 onnxruntime-gpu==1.20.2
 
 # TensorRT engine export (FP16 compilation for RTX 40-series)
