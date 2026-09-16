@@ -60,6 +60,10 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down IBVAP...")
+    watchdog = getattr(app.state, "camera_watchdog", None)
+    if watchdog is not None:
+        # Stop first so it cannot restart cameras that are shutting down.
+        await asyncio.to_thread(watchdog.stop)
     if pipeline:
         await asyncio.to_thread(pipeline.stop_all)
     if startup_task is not None and not startup_task.done():
@@ -86,6 +90,13 @@ def _initialize_pipeline(app: FastAPI) -> None:
         pipeline = candidate
         app.state.pipeline_status = "ready"
         logger.success("IBVAP video pipeline is ready")
+
+        from src.pipeline.watchdog import CameraWatchdog
+
+        if CameraWatchdog.enabled_from_env():
+            watchdog = CameraWatchdog.from_env(candidate)
+            watchdog.start()
+            app.state.camera_watchdog = watchdog
     except BaseException as exc:
         # MemoryError during ML import/initialisation is recoverable: database
         # APIs and the dashboard should stay available in degraded mode.

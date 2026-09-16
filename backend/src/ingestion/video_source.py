@@ -80,6 +80,12 @@ class VideoSource:
         return self._last_frame_time or None
 
     @property
+    def is_capturing(self) -> bool:
+        """True while the background capture thread is running."""
+        reader = self._reader_thread
+        return self._running and reader is not None and reader.is_alive()
+
+    @property
     def source_resolution(self) -> tuple[int, int]:
         return (self._source_width, self._source_height)
 
@@ -223,32 +229,39 @@ class VideoSource:
         source_interval = 1.0 / max(decode_fps, 1.0) if self._is_file else 0.0
         output_interval = 1.0 / max(self.camera_info.fps_limit, 1) if self.camera_info.fps_limit > 0 else 0.0
         last_stored = self._last_frame_time
-        while self._running and not self._reader_stop.is_set():
-            started = time.perf_counter()
-            with self._lock:
-                capture = self._cap
-                if capture is None or not capture.isOpened():
-                    break
-                ret, frame = capture.read()
-                if (not ret or frame is None) and self._is_file:
-                    capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                    ret, frame = capture.read()
-
-            if not ret or frame is None:
-                self._status = CameraStatus.ERROR if not self._is_file else CameraStatus.OFFLINE
-                break
-
-            now = time.time()
-            if output_interval == 0.0 or now - last_stored >= output_interval * 0.9:
+        try:
+            while self._running and not self._reader_stop.is_set():
+                started = time.perf_counter()
                 with self._lock:
-                    self._store_frame(frame, now)
-                last_stored = now
+                    capture = self._cap
+                    if capture is None or not capture.isOpened():
+                        break
+                    ret, frame = capture.read()
+                    if (not ret or frame is None) and self._is_file:
+                        capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        ret, frame = capture.read()
 
-            if source_interval:
-                remaining = source_interval - (time.perf_counter() - started)
-                if remaining > 0:
-                    self._reader_stop.wait(remaining)
-        self._running = False
+                if not ret or frame is None:
+                    self._status = CameraStatus.ERROR if not self._is_file else CameraStatus.OFFLINE
+                    break
+
+                now = time.time()
+                if output_interval == 0.0 or now - last_stored >= output_interval * 0.9:
+                    with self._lock:
+                        self._store_frame(frame, now)
+                    last_stored = now
+
+                if source_interval:
+                    remaining = source_interval - (time.perf_counter() - started)
+                    if remaining > 0:
+                        self._reader_stop.wait(remaining)
+        except Exception as exc:
+            # Without this the thread dies silently (e.g. OpenCV out of memory)
+            # while the camera keeps reporting ONLINE with a frozen last frame.
+            logger.error(f"[{self.camera_info.camera_id}] Capture thread failed: {exc!r}")
+            self._status = CameraStatus.ERROR
+        finally:
+            self._running = False
 
     def reconnect(self, stop_event: threading.Event | None = None) -> bool:
         """Attempt to reconnect to the video source."""
