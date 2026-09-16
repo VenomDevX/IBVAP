@@ -81,7 +81,7 @@ cameras:
     # re-encoded every frame at full 4K for nothing - the resize path
     # already existed, it was just configured to resize to the same size.
     resolution: [1920, 1080]
-    enabled: false  # disabled: 10 concurrent CUDA pipelines hard-crashes this 6GB GPU
+    enabled: true  # 8th live camera (detector batches up to 8). 10 concurrent CUDA pipelines hard-crashes this 6GB GPU; 8 fits (~2.7GB used)
     capabilities:
       - "detection"
       - "tracking"

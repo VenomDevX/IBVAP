@@ -1,4 +1,4 @@
-import { formatStatus, riskMeta } from '../../api/client';
+import { formatStatus, riskMeta, toDate } from '../../api/client';
 import { cn } from '../../lib/cn';
 
 export function Dot({ color, className }: { color: string; className?: string }) {
@@ -21,21 +21,37 @@ export function RiskLabel({ level, score, className }: { level: string | null | 
   );
 }
 
-interface CameraLike { status: string; enabled?: boolean }
+interface CameraLike { status: string; enabled?: boolean; last_frame_at?: string | null }
 
-/** The backend can report a disabled camera as "online"; show it as disabled. */
-export function cameraDisplayStatus(camera: CameraLike): string {
-  return camera.enabled === false ? 'disabled' : camera.status;
+/** An "online" camera with no frame for this long is treated as stalled. */
+export const STALE_AFTER_MS = 60_000;
+
+/**
+ * The backend keeps reporting "online" when a capture thread dies (e.g. after
+ * running out of memory), so the last frame time is the real signal.
+ */
+export function isCameraStalled(camera: CameraLike, now = Date.now()): boolean {
+  if (camera.enabled === false || camera.status !== 'online' || !camera.last_frame_at) return false;
+  const last = toDate(camera.last_frame_at);
+  return !!last && now - last.getTime() > STALE_AFTER_MS;
 }
 
-export function isCameraLive(camera: CameraLike): boolean {
-  return camera.enabled !== false && camera.status === 'online';
+/** Disabled beats the reported status; a frozen "online" camera shows as stalled. */
+export function cameraDisplayStatus(camera: CameraLike, now = Date.now()): string {
+  if (camera.enabled === false) return 'disabled';
+  if (isCameraStalled(camera, now)) return 'stalled';
+  return camera.status;
+}
+
+export function isCameraLive(camera: CameraLike, now = Date.now()): boolean {
+  return camera.enabled !== false && camera.status === 'online' && !isCameraStalled(camera, now);
 }
 
 export function statusColor(status: string | null | undefined): string {
   switch (status) {
     case 'online': return 'var(--ok)';
-    case 'connecting': return 'var(--warn)';
+    case 'connecting':
+    case 'stalled': return 'var(--warn)';
     case 'error': return 'var(--bad)';
     default: return 'var(--faint)';
   }

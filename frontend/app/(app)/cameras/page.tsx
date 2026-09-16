@@ -60,7 +60,7 @@ function CameraTile({ camera, tick, isAdmin, onEdit, onAction, busy }: {
         {(!online || failed) && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-center text-sm text-white/75">
             <VideoCameraSlash size={20} aria-hidden />
-            <span>{disabled ? 'Disabled' : online ? 'No frame available' : formatStatus(camera.status)}</span>
+            <span>{online ? 'No frame available' : formatStatus(cameraDisplayStatus(camera))}</span>
             <span className="text-xs text-white/55">
               {camera.last_frame_at ? `Last frame ${formatRelative(camera.last_frame_at)}` : 'No frame received yet'}
             </span>

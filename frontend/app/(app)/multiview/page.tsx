@@ -20,6 +20,11 @@ const LAYOUTS: { value: GridSize; label: string }[] = [
   { value: '16', label: '4 × 4' },
 ];
 
+// Browsers keep at most 6 connections per host and each MJPEG stream holds one
+// open for good. Beyond 4 tiles the grid polls snapshots, leaving room for the
+// page's own API requests.
+const MAX_LIVE_STREAMS = 4;
+
 // Static class strings so Tailwind can see them.
 const GRID: Record<GridSize, string> = {
   '4': 'sm:grid-cols-2 lg:grid-rows-2',
@@ -88,7 +93,7 @@ export default function MultiViewPage() {
               {camera ? (
                 <>
                   <StreamView path={camera.enabled === false ? null : `/api/stream/${camera.camera_id}`} alt={camera.name}
-                    idleLabel="Camera disabled" className="absolute inset-0" />
+                    mode={count > MAX_LIVE_STREAMS ? 'poll' : 'stream'} idleLabel="Camera disabled" className="size-full" />
                   <div className="absolute inset-x-0 bottom-0 flex items-center gap-2 bg-black/60 px-2 py-1 text-white">
                     <select
                       aria-label={`Camera for tile ${index + 1}`}
