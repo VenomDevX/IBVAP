@@ -23,10 +23,11 @@ from src.database.models import (
     AlertModel,
     ANPRResultModel,
     AuditLogModel,
+    EventEvidenceModel,
     IdentityResultModel,
     TrackModel,
 )
-from src.paths import snapshots_dir
+from src.paths import output_dir, snapshots_dir
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BACKEND = os.path.dirname(HERE)
@@ -43,6 +44,47 @@ MODELS = {
     "events": None,
     "audit_logs": (AuditLogModel, "timestamp"),
 }
+
+
+def purge_clips(session, clip_dir: str, days: int | None, now: datetime, dry_run: bool) -> int:
+    """Remove evidence clips past the retention window and clips no event references."""
+    if not os.path.isdir(clip_dir):
+        print("clip files to remove: 0 (no clip directory)")
+        return 0
+    rows = session.query(EventEvidenceModel).filter(EventEvidenceModel.clip_path.isnot(None)).all()
+    by_name = {}
+    for row in rows:
+        by_name.setdefault(os.path.basename(row.clip_path), []).append(row)
+    cutoff = (now - timedelta(days=days)).timestamp() if days else None
+    expired, orphans, size = [], [], 0
+    with os.scandir(clip_dir) as entries:
+        for entry in entries:
+            if not entry.is_file() or not entry.name.lower().endswith(".avi"):
+                continue
+            stat = entry.stat()
+            if entry.name not in by_name:
+                orphans.append(entry.name)
+            elif cutoff is not None and stat.st_mtime < cutoff:
+                expired.append(entry.name)
+            else:
+                continue
+            size += stat.st_size
+    print(f"expired clip files: {len(expired)}")
+    print(f"orphaned clip files: {len(orphans)}")
+    print(f"clip files to remove: {len(expired) + len(orphans)} ({size / 1024**3:.1f} GB)")
+    if dry_run:
+        return len(expired) + len(orphans)
+    for name in expired + orphans:
+        try:
+            os.remove(os.path.join(clip_dir, name))
+        except FileNotFoundError:
+            pass
+    # event_evidence is not hash-chained; drop the rows whose clip is gone.
+    for name in expired:
+        for row in by_name[name]:
+            session.delete(row)
+    session.commit()
+    return len(expired) + len(orphans)
 
 
 def main():
@@ -106,6 +148,8 @@ def main():
                 if os.path.basename(alert.snapshot_path) in removed:
                     alert.snapshot_path = None
             session.commit()
+
+        purge_clips(session, str(output_dir() / "clips"), days.get("clips"), now, args.dry_run)
     finally:
         session.close()
 

@@ -2,6 +2,7 @@
 # Set generously for a border-surveillance context; tighten per local policy.
 retention_days:
   snapshots: 90        # outputs/snapshots/*.jpg + the referencing alert row
+  clips: 30            # outputs/clips/*.avi (~1.5 MB each) + their event_evidence rows
   events: 180
   alerts: 180
   tracks: 30

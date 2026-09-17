@@ -141,6 +141,9 @@ class CameraPipeline:
             max_width=evidence_cfg.get("max_width", 960),
             jpeg_quality=evidence_cfg.get("jpeg_quality", 65),
             on_complete=self._clip_completed,
+            max_clips_per_hour=evidence_cfg.get("max_clips_per_hour", 60),
+            max_storage_mb=evidence_cfg.get("max_clip_storage_mb", 4096),
+            min_free_mb=evidence_cfg.get("min_free_storage_mb", 1024),
         ) if evidence_cfg.get("clips_enabled", True) else None
         self.fine_classifier = fine_classifier or FineClassifier(enabled=False)
         self._fine_check_times: dict[str, float] = {}
@@ -750,7 +753,9 @@ class CameraPipeline:
                 if alert:
                     self.alert_engine.publish_alert(alert)
                     self._stats["alerts_generated"] += 1
-                if action == "opened" and self.evidence_buffer is not None:
+                # Clip only incidents that became alerts: alerts are already
+                # risk-gated and rate-limited, events are not.
+                if alert and self.evidence_buffer is not None:
                     self.evidence_buffer.trigger(fused_event.event_id)
 
     def _clip_completed(self, event_id: str, clip_path: str) -> None:

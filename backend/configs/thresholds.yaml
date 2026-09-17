@@ -143,6 +143,10 @@ evidence:
   capture_fps: 5
   max_width: 960
   jpeg_quality: 65
+  # Budgets (clips are ~1.5 MB each). Only alerting incidents are clipped.
+  max_clips_per_hour: 60        # per camera
+  max_clip_storage_mb: 4096     # shared by all cameras (outputs/clips)
+  min_free_storage_mb: 1024     # stop recording below this much free disk
 
 classifier:
   # Stage 2: names the specific type of a military detection (F16 rather than

@@ -80,7 +80,8 @@ docker compose -f docker-compose.yml -f docker-compose.tls.yml up --build
 | Task | Command |
 |---|---|
 | Verify evidence chain | `python scripts/verify_evidence_chain.py` |
-| Enforce retention (`configs/retention.yaml`) | `python scripts/purge_expired.py` (cron; `--dry-run` first) |
+| Enforce retention (`configs/retention.yaml`: rows, snapshots, clips) | `python scripts/purge_expired.py` (cron; `--dry-run` first) |
+| Cap evidence clip disk use | `configs/thresholds.yaml → evidence.max_clips_per_hour / max_clip_storage_mb / min_free_storage_mb` |
 | Point the detector at trained weights | `configs/thresholds.yaml → detection.weights_path` |
 | Reset the DB (destructive, blocked in prod) | `python scripts/reset_db.py --yes` |
 

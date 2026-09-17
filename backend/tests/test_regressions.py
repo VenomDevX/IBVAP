@@ -262,11 +262,28 @@ def test_event_persists_when_alert_is_suppressed(tmp_db, tmp_path, suppression):
     )
     with tmp_db.get_session() as session:
         Repository(session).create_camera("a", "A", "test")
+    pipeline.evidence_buffer = Mock()
     track = Track(1, "person", "a", bbox=(20, 20, 40, 40))
     pipeline._process_track(track, np.full((100, 100, 3), 255, dtype=np.uint8))
     with tmp_db.get_session() as session:
         assert session.query(EventModel).count() == 1
         assert session.query(AlertModel).count() == 0
+    # No alert -> no evidence clip (clips used to be cut for every event and filled the disk).
+    pipeline.evidence_buffer.trigger.assert_not_called()
+
+
+def test_alerting_incident_gets_an_evidence_clip(tmp_db, tmp_path):
+    from src.database.repository import Repository
+
+    pipeline = camera_pipeline(tmp_path)
+    pipeline.evidence_buffer = Mock()
+    pipeline.night_detector.get_night_context = Mock(
+        return_value={"is_night": False, "is_night_time": False, "brightness": 255}
+    )
+    with tmp_db.get_session() as session:
+        Repository(session).create_camera("a", "A", "test")
+    pipeline._process_track(Track(1, "person", "a", bbox=(20, 20, 40, 40)), np.full((100, 100, 3), 255, np.uint8))
+    pipeline.evidence_buffer.trigger.assert_called_once()
 
 
 def test_publish_after_commit_and_rollback_on_failure(tmp_db, tmp_path, monkeypatch):
