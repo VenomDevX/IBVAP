@@ -29,6 +29,11 @@ supabase==2.31.0
 jinja2==3.1.6
 aiofiles==25.1.0
 
+# --- ANPR OCR (src/anpr/ocr.py) ---
+# PaddleOCR 3.x, CPU. ~0.5 s per plate; runs on the enrichment worker threads.
+paddlepaddle==3.3.1
+paddleocr==3.7.0
+
 # --- Database ---
 sqlalchemy==2.0.52
 aiosqlite==0.20.0

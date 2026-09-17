@@ -72,6 +72,10 @@ class Track:
     identity_score: float = 0.0
     identity_status: str = "unknown"  # known | uncertain | unknown | wanted
 
+    # Best number-plate view the detector found inside this vehicle (full-res crop).
+    plate_crop: Any = field(default=None, repr=False, compare=False)
+    plate_crop_score: float = 0.0
+
     # Watchlist hit (WatchlistHit.to_dict()) for this track's face or plate.
     watchlist: dict | None = None
 

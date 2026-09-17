@@ -49,15 +49,19 @@ def _contour_plate_crop(crop: np.ndarray) -> np.ndarray:
     return crop
 
 
-def extract_plate(vehicle_crop: np.ndarray, strict_format: bool = True) -> dict:
+def extract_plate(vehicle_crop: np.ndarray, strict_format: bool = True, plate_located: bool = False) -> dict:
     """strict_format: only accept reads that fit an Indian plate format
-    (drops signboards and partial reads); off keeps foreign plates too."""
+    (drops signboards and partial reads); off keeps foreign plates too.
+    plate_located: the image is already a plate (found by the detector), so
+    skip localisation and OCR it as is."""
     if vehicle_crop is None or getattr(vehicle_crop, "size", 0) == 0:
         return {"text": "Unknown", "confidence": 0.0, "bbox": None, "format": "unknown"}
 
     plate_bbox = None
-    det = _plate_detector()
-    if det is not None:
+    det = None if plate_located else _plate_detector()
+    if plate_located:
+        plate_img = vehicle_crop
+    elif det is not None:
         plates = det.detect_plates(vehicle_crop)
         if plates:
             best = max(plates, key=lambda p: p["confidence"])

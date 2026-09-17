@@ -15,6 +15,7 @@ from loguru import logger
 
 from src.alerts.alert_engine import AlertEngine
 from src.alerts.evidence_clip import EvidenceClipBuffer
+from src.anpr.plate_assign import assign_plates, split_plates
 from src.behavior.behavior_engine import BehaviorEngine
 from src.classification.fine_classifier import FineClassifier
 from src.database.db import get_database
@@ -285,8 +286,11 @@ class CameraPipeline:
                     detections = self.detector.detect(frame, frame_id, camera_id)
                 self._stats["detections"] = len(detections.detections)
 
-                # 3. Track objects
+                # 3. Track objects. Plates are not objects of their own: they are
+                # attached to the vehicle that carries them.
+                detections, plate_detections = split_plates(detections)
                 active_tracks = self.tracker.update(detections)
+                assign_plates(active_tracks, plate_detections, frame)
                 self.track_manager.update_tracks(self.tracker.all_tracks)
                 self.heatmap_tracker.add_points(active_tracks)
                 self._stats["active_tracks"] = len(active_tracks)
@@ -327,7 +331,7 @@ class CameraPipeline:
                             if (
                                 vehicle
                                 and track.license_plate == "Unknown"
-                                and track.best_frame_score >= 0.35
+                                and (track.plate_crop is not None or track.best_frame_score >= 0.35)
                             ):
                                 last = self._anpr_check_times.get(track.track_uuid, 0.0)
                                 if time.time() - last >= self._ANPR_RECHECK_S:
@@ -398,10 +402,11 @@ class CameraPipeline:
     def _run_anpr_check(self, track) -> None:
         """ANPR OCR is slow (easyocr/paddleocr/tesseract cascade). Run it off
         the frame-production thread so a plate read can never stall video."""
-        crop = track.best_frame
+        located = track.plate_crop is not None
+        crop = track.plate_crop if located else track.best_frame
 
         def _work() -> None:
-            plate = extract_plate(crop, strict_format=self._ANPR_STRICT_FORMAT)
+            plate = extract_plate(crop, strict_format=self._ANPR_STRICT_FORMAT, plate_located=located)
             if plate is not None and plate["text"] != "Unknown" and plate["confidence"] > 0:
                 text, confidence = self.plate_consensus.add(track, plate["text"], plate["confidence"])
                 if text != "UNKNOWN":
