@@ -8,7 +8,7 @@ from datetime import datetime
 from sqlalchemy import asc, case, desc, or_
 from sqlalchemy.orm import Session
 
-from src.alerts import evidence
+from src.alerts import evidence_chain
 from src.database.models import (
     AlertModel,
     ANPRResultModel,
@@ -166,21 +166,7 @@ class Repository:
             evidence_path=event_data.get("evidence_path"),
             evidence_hash=event_data.get("evidence_hash"),
         )
-        self._chain(
-            event,
-            EventModel,
-            [
-                "event_id",
-                "camera_id",
-                "track_id",
-                "event_type",
-                "timestamp",
-                "object_type",
-                "risk_score",
-                "risk_level",
-                "evidence_hash",
-            ],
-        )
+        evidence_chain.append(self.session, event, "events")
         self.session.add(event)
         self.session.flush()
         if commit:
@@ -229,16 +215,6 @@ class Repository:
 
     def get_event_evidence(self, event_id: str) -> list[EventEvidenceModel]:
         return self.session.query(EventEvidenceModel).filter_by(event_id=event_id).order_by(EventEvidenceModel.created_at).all()
-
-    def _chain(self, row, model, fields):
-        """Attach prev_hash / chain_hash linking this row to the previous one."""
-        last = (
-            self.session.query(model.chain_hash).filter(model.chain_hash.isnot(None)).order_by(desc(model.id)).first()
-        )
-        prev = last[0] if last else None
-        record = {f: getattr(row, f) for f in fields}
-        row.prev_hash = prev or evidence.GENESIS
-        row.chain_hash = evidence.compute_hash(record, prev)
 
     def get_event(self, event_id: str) -> EventModel | None:
         return self.session.query(EventModel).filter_by(event_id=event_id).first()
@@ -343,22 +319,7 @@ class Repository:
             plate_result=alert_data.get("plate_result"),
             identity_result=alert_data.get("identity_result"),
         )
-        self._chain(
-            alert,
-            AlertModel,
-            [
-                "alert_id",
-                "camera_id",
-                "event_id",
-                "track_id",
-                "event_type",
-                "timestamp",
-                "risk_score",
-                "risk_level",
-                "object_type",
-                "snapshot_hash",
-            ],
-        )
+        evidence_chain.append(self.session, alert, "alerts")
         self.session.add(alert)
         self.session.flush()
         if commit:

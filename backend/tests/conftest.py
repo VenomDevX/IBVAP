@@ -24,6 +24,23 @@ from src.api.ratelimit import limiter  # noqa: E402
 limiter.enabled = False
 
 
+@pytest.fixture(autouse=True)
+def _isolated_database(monkeypatch, tmp_path):
+    """Every test gets its own SQLite file.
+
+    Code under test (e.g. CameraPipeline) calls get_database() on its own; without
+    this, those tests silently wrote to — and migrated — the developer's real
+    backend/ibvap.db.
+    """
+    import src.database.db as dbmod
+
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{(tmp_path / 'ibvap-test.db').as_posix()}")
+    monkeypatch.setattr(dbmod, "_db_instance", None)
+    yield
+    if dbmod._db_instance is not None:
+        dbmod._db_instance.close()
+
+
 @pytest.fixture()
 def tmp_db(monkeypatch):
     path = tempfile.mktemp(suffix=".db")

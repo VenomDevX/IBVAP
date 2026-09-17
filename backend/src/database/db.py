@@ -93,6 +93,7 @@ class Database:
             (5, self._migration_incident_state),
             (6, self._migration_profile_description),
             (7, self._migration_zone_trigger_classes),
+            (8, self._migration_chain_v2),
         ]
         for version, migration in migrations:
             if version in applied:
@@ -226,6 +227,28 @@ class Database:
             ddl = "JSONB" if self.db_url.startswith("postgres") else "JSON"
             with self.engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE zones ADD COLUMN trigger_classes {ddl}"))
+
+    def _migration_chain_v2(self, insp, text):
+        with self.engine.begin() as conn:
+            for table in ("events", "alerts"):
+                if not insp.has_table(table):
+                    continue
+                existing = {column["name"] for column in insp.get_columns(table)}
+                if "chain_version" not in existing:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN chain_version INTEGER"))
+                # Seed the head row from the newest chained row so v2 appends
+                # continue the existing chain.
+                head = conn.execute(text(
+                    f"SELECT chain_hash FROM {table} WHERE chain_hash IS NOT NULL ORDER BY id DESC LIMIT 1"
+                )).scalar()
+                present = conn.execute(
+                    text("SELECT 1 FROM evidence_chain_heads WHERE table_name = :t"), {"t": table}
+                ).scalar()
+                if not present:
+                    conn.execute(
+                        text("INSERT INTO evidence_chain_heads(table_name, head_hash, updated_at) VALUES (:t, :h, :at)"),
+                        {"t": table, "h": head, "at": datetime.utcnow()},
+                    )
 
     def get_session(self) -> Session:
         """Get a new database session."""

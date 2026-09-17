@@ -19,25 +19,68 @@ from src.database.models import (
     AlertModel,
     EventEvidenceModel,
     EventModel,
+    EvidenceChainHeadModel,
     EvidenceCheckpointModel,
     IncidentNoteModel,
     OperatorFeedbackModel,
 )
 
-# Must match the field lists passed to Repository._chain().
-EVENT_FIELDS = [
-    "event_id", "camera_id", "track_id", "event_type", "timestamp",
-    "object_type", "risk_score", "risk_level", "evidence_hash",
-]
-ALERT_FIELDS = [
-    "alert_id", "camera_id", "event_id", "track_id", "event_type",
-    "timestamp", "risk_score", "risk_level", "object_type", "snapshot_hash",
-]
+CURRENT_VERSION = 2
+
+# Hashed fields per chain version. v1 also hashed risk_score/risk_level, which
+# incident escalation rewrites, so escalated v1 rows can no longer verify.
+# v2 hashes only what never changes after insert; escalations are recorded in
+# the audit trail / score_breakdown instead.
+EVENT_FIELDS = {
+    1: ["event_id", "camera_id", "track_id", "event_type", "timestamp",
+        "object_type", "risk_score", "risk_level", "evidence_hash"],
+    2: ["event_id", "camera_id", "track_id", "event_type", "timestamp",
+        "object_type", "evidence_hash"],
+}
+ALERT_FIELDS = {
+    1: ["alert_id", "camera_id", "event_id", "track_id", "event_type",
+        "timestamp", "risk_score", "risk_level", "object_type", "snapshot_hash"],
+    2: ["alert_id", "camera_id", "event_id", "track_id", "event_type",
+        "timestamp", "object_type", "snapshot_hash"],
+}
 
 CHAINED = {
     "events": (EventModel, EVENT_FIELDS),
     "alerts": (AlertModel, ALERT_FIELDS),
 }
+
+
+def fields_for(table: str, version: int | None) -> list[str]:
+    return CHAINED[table][1][version or 1]
+
+
+def append(session, row, table: str) -> None:
+    """Link `row` to the chain head. Call inside the transaction that inserts it."""
+    model = CHAINED[table][0]
+    head = (
+        session.query(EvidenceChainHeadModel)
+        .filter_by(table_name=table)
+        .with_for_update()
+        .one_or_none()
+    )
+    if head is None:
+        head = EvidenceChainHeadModel(table_name=table)
+        session.add(head)
+    # Writing the head row first takes the write lock before the tail is read,
+    # so a concurrent appender in another process waits instead of forking.
+    head.updated_at = datetime.utcnow()
+    session.flush()
+
+    # Link to the newest row actually in the table (read under the lock). The
+    # head row is only the lock + tail marker: a process still running older
+    # code appends without updating it.
+    last = session.query(model.chain_hash).filter(model.chain_hash.isnot(None)).order_by(model.id.desc()).first()
+    prev = last[0] if last else None
+    record = {f: getattr(row, f) for f in fields_for(table, CURRENT_VERSION)}
+    row.chain_version = CURRENT_VERSION
+    row.prev_hash = prev or evidence.GENESIS
+    row.chain_hash = evidence.compute_hash(record, prev)
+    head.head_hash = row.chain_hash
 
 
 @dataclass
@@ -69,8 +112,11 @@ def _valid_anchors(session, table: str) -> set[str]:
 
 
 def verify_table(session, table: str) -> ChainReport:
-    model, fields = CHAINED[table]
+    model, _fields = CHAINED[table]
     report = ChainReport(table)
+    # Read the head BEFORE the rows: a live backend may append meanwhile, and the
+    # head we saw must then be somewhere in the rows we read.
+    stored_head = session.query(EvidenceChainHeadModel.head_hash).filter_by(table_name=table).scalar()
     rows = session.query(model).filter(model.chain_hash.isnot(None)).order_by(model.id).all()
     report.rows = len(rows)
     if not rows:
@@ -81,14 +127,21 @@ def verify_table(session, table: str) -> ChainReport:
         prev = head.prev_hash
     else:
         # Rows were removed from the start of the chain without a purge checkpoint.
-        report.breaks.append(f"{getattr(head, fields[0])} (chain head truncated)")
+        report.breaks.append(f"{getattr(head, fields_for(table, head.chain_version)[0])} (chain head truncated)")
         prev = head.prev_hash
 
+    seen = set()
     for row in rows:
+        fields = fields_for(table, row.chain_version)
         record = {f: getattr(row, f) for f in fields}
         if not evidence.verify(record, prev, row.chain_hash):
             report.breaks.append(str(getattr(row, fields[0])))
         prev = row.chain_hash
+        seen.add(row.chain_hash)
+
+    if stored_head and stored_head not in seen:
+        # The newest row the chain recorded is gone: rows were removed from the end.
+        report.breaks.append("(chain tail truncated: recorded head row is missing)")
     return report
 
 

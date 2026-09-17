@@ -34,16 +34,38 @@ class FaceMatcher:
         self._load_gallery()
 
     def _load_gallery(self):
-        """Load authorized face gallery from file."""
-        if os.path.exists(self.gallery_path):
+        """Load authorized face gallery from file.
+
+        Accepts the documented format ``{"identities": [{"name", "embedding"}]}``
+        (an entry may also carry an ``embeddings`` list) and the older flat
+        ``{label: [embedding, ...]}`` map. Keys starting with ``_`` are comments.
+        """
+        if not os.path.exists(self.gallery_path):
+            return
+        try:
+            with open(self.gallery_path, encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            logger.error(f"Gallery load error: {e}")
+            return
+
+        if isinstance(data.get("identities"), list):
+            entries = []
+            for item in data["identities"]:
+                vectors = item.get("embeddings") or ([item["embedding"]] if "embedding" in item else [])
+                entries.append((item.get("name"), vectors))
+        else:
+            entries = [(label, embs) for label, embs in data.items() if not label.startswith("_")]
+
+        for label, vectors in entries:
             try:
-                with open(self.gallery_path) as f:
-                    data = json.load(f)
-                for label, embs in data.items():
-                    self._gallery[label] = [np.array(e, dtype=np.float32) for e in embs]
-                logger.info(f"Loaded face gallery: {len(self._gallery)} identities")
-            except Exception as e:
-                logger.error(f"Gallery load error: {e}")
+                arrays = [np.asarray(v, dtype=np.float32) for v in vectors]
+            except (TypeError, ValueError) as e:
+                logger.error(f"Gallery entry {label!r} skipped: {e}")
+                continue
+            if label and arrays:
+                self._gallery.setdefault(str(label), []).extend(arrays)
+        logger.info(f"Loaded face gallery: {len(self._gallery)} identities")
 
     def match(self, face_data: dict) -> dict:
         """
@@ -87,8 +109,14 @@ class FaceMatcher:
         """Save gallery to file."""
         try:
             os.makedirs(os.path.dirname(self.gallery_path), exist_ok=True)
-            data = {label: [e.tolist() for e in embs] for label, embs in self._gallery.items()}
-            with open(self.gallery_path, "w") as f:
+            data = {
+                "_info": "IBVAP Face Gallery — add entries with: name, embedding (512-dim ArcFace vector)",
+                "identities": [
+                    {"name": label, "embeddings": [e.tolist() for e in embs]}
+                    for label, embs in self._gallery.items()
+                ],
+            }
+            with open(self.gallery_path, "w", encoding="utf-8") as f:
                 json.dump(data, f)
         except Exception as e:
             logger.error(f"Gallery save error: {e}")

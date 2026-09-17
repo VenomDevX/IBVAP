@@ -163,3 +163,39 @@ def test_ocr_reader_is_never_entered_concurrently(monkeypatch):
         t.join()
     # EasyOCR's shared reader is not thread-safe; the enrichment pool must queue.
     assert state["peak"] == 1
+
+
+def test_face_gallery_loads_documented_and_legacy_formats(tmp_path):
+    import json
+
+    from src.face.face_matcher import FaceMatcher
+
+    documented = tmp_path / "gallery.json"
+    documented.write_text(json.dumps({
+        "_info": "comment",
+        "identities": [
+            {"name": "guard_1", "embedding": [1.0, 0.0]},
+            {"name": "guard_2", "embeddings": [[0.0, 1.0], [0.1, 0.9]]},
+        ],
+    }), encoding="utf-8")
+    matcher = FaceMatcher(gallery_path=str(documented))
+    assert {k: len(v) for k, v in matcher._gallery.items()} == {"guard_1": 1, "guard_2": 2}
+
+    # The shipped empty template must load cleanly (it used to raise on "_info").
+    empty = tmp_path / "empty.json"
+    empty.write_text(json.dumps({"_info": "x", "identities": []}), encoding="utf-8")
+    assert FaceMatcher(gallery_path=str(empty))._gallery == {}
+
+    legacy = tmp_path / "legacy.json"
+    legacy.write_text(json.dumps({"_note": "x", "guard_3": [[0.5, 0.5]]}), encoding="utf-8")
+    assert list(FaceMatcher(gallery_path=str(legacy))._gallery) == ["guard_3"]
+
+
+def test_face_gallery_save_round_trips(tmp_path):
+    from src.face.face_matcher import FaceMatcher
+
+    path = tmp_path / "face" / "gallery.json"
+    matcher = FaceMatcher(gallery_path=str(path))
+    matcher.add_to_gallery("guard_1", np.array([0.6, 0.8], np.float32))
+    reloaded = FaceMatcher(gallery_path=str(path))
+    assert np.allclose(reloaded._gallery["guard_1"][0], [0.6, 0.8])

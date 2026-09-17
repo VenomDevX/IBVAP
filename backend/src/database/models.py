@@ -93,6 +93,9 @@ class EventModel(Base):
     evidence_hash = Column(String(64), nullable=True)
     prev_hash = Column(String(64), nullable=True)
     chain_hash = Column(String(64), nullable=True, index=True)
+    # NULL = v1 (hashed risk_score/risk_level, which escalation later changes);
+    # 2 = only fields that never change after insert. See alerts/evidence_chain.py.
+    chain_version = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
@@ -133,6 +136,9 @@ class AlertModel(Base):
     false_positive = Column(Boolean, default=False, nullable=False)
     prev_hash = Column(String(64), nullable=True)
     chain_hash = Column(String(64), nullable=True, index=True)
+    # NULL = v1 (hashed risk_score/risk_level, which escalation later changes);
+    # 2 = only fields that never change after insert. See alerts/evidence_chain.py.
+    chain_version = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
@@ -322,3 +328,18 @@ class EvidenceCheckpointModel(Base):
     rows_purged = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     mac = Column(String(64), nullable=False)
+
+
+class EvidenceChainHeadModel(Base):
+    """Latest chain hash per chained table.
+
+    Every append updates this row first, inside the same transaction, which
+    takes the database write lock (SQLite) / a row lock (Postgres). That
+    serialises chain appends across processes, so two backends sharing one
+    database can no longer fork the chain.
+    """
+
+    __tablename__ = "evidence_chain_heads"
+    table_name = Column(String(50), primary_key=True)
+    head_hash = Column(String(64), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
