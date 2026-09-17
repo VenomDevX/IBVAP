@@ -88,6 +88,17 @@ class EvidenceClipBuffer:
                 capture = self._pending.pop(event_id)
                 self._writers.submit(self._write, event_id, capture["frames"])
 
+    @classmethod
+    def refresh_store(cls, directory) -> None:
+        """Re-measure a clip directory after files were deleted outside the writer."""
+        key = str(Path(directory).resolve())
+        with cls._stores_lock:
+            store = cls._stores.get(key)
+        if store is not None:
+            fresh = _ClipStore(Path(directory))
+            with store.lock:
+                store.bytes = fresh.bytes
+
     def trigger(self, event_id: str, timestamp: float | None = None) -> bool:
         """Start recording a clip for event_id. Returns False if a budget refused it."""
         now = time.time() if timestamp is None else timestamp

@@ -85,10 +85,10 @@ def test_purge_removes_expired_and_orphaned_clips(repo, tmp_path):
     os.utime(tmp_path / "c1_OLD.avi", (old, old))
 
     # Dry run reports but keeps everything.
-    assert purge.purge_clips(repo.session, str(tmp_path), 30, datetime.utcnow(), dry_run=True) == 2
+    assert purge.purge_clips(repo.session, str(tmp_path), 30, datetime.utcnow(), dry_run=True)["files"] == 2
     assert len(list(tmp_path.glob("*.avi"))) == 3
 
-    assert purge.purge_clips(repo.session, str(tmp_path), 30, datetime.utcnow(), dry_run=False) == 2
+    assert purge.purge_clips(repo.session, str(tmp_path), 30, datetime.utcnow(), dry_run=False)["files"] == 2
     assert sorted(p.name for p in tmp_path.glob("*.avi")) == ["c1_NEW.avi"]
     remaining = repo.session.query(EventEvidenceModel).filter(EventEvidenceModel.clip_path.isnot(None)).all()
     assert [os.path.basename(r.clip_path) for r in remaining] == ["c1_NEW.avi"]

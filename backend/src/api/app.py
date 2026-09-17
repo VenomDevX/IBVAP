@@ -32,6 +32,7 @@ from src.api.routes import (
     reports,
     snapshots,
     statistics,
+    storage,
     stream,
     tracks,
     watchlists,
@@ -211,6 +212,7 @@ def create_app() -> FastAPI:
     app.include_router(reports.router, prefix="/api/reports", tags=["Reports"])
     app.include_router(audit.router, prefix="/api/audit", tags=["Audit Logs"])
     app.include_router(watchlists.router, prefix="/api/watchlists", tags=["Watchlists"])
+    app.include_router(storage.router, prefix="/api/storage", tags=["Storage"])
     app.include_router(snapshots.router, prefix="/snapshots", tags=["Snapshots"])
 
     # Stable integration aliases. Existing unversioned routes remain intact for

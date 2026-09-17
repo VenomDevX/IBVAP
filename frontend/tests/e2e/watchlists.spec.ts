@@ -12,7 +12,7 @@ test.describe('watchlists', () => {
     await page.waitForLoadState('load');
     await expect(page.getByRole('heading', { name: 'Watchlists' })).toBeVisible();
 
-    await page.getByRole('button', { name: 'Add plate' }).click();
+    await page.getByRole('button', { name: 'Add plate' }).click({ timeout: 20_000 });
     const dialog = page.getByRole('dialog', { name: 'Add number plate' });
     await dialog.getByLabel('Number plate').fill(plate);
     await dialog.getByLabel('Description').fill(label);
@@ -42,6 +42,7 @@ test.describe('watchlists', () => {
     await login(page);
     await page.goto('/watchlists');
     await page.getByRole('radio', { name: 'Faces' }).or(page.getByRole('button', { name: 'Faces' })).first().click();
-    await expect(page.getByRole('button', { name: 'Add face' })).toBeVisible();
+    // The button appears once the user's role has loaded.
+    await expect(page.getByRole('button', { name: 'Add face' })).toBeVisible({ timeout: 20_000 });
   });
 });

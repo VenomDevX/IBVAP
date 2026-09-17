@@ -167,6 +167,20 @@ export interface Paged<T> {
   page_size?: number;
 }
 
+export interface ClipStorage {
+  files: number;
+  used_mb: number;
+  limit_mb: number | null;
+  recording: boolean;
+}
+
+export interface ClipPurgeResult {
+  files: number;
+  freed_mb: number;
+  freed_bytes: number;
+  dry_run: boolean;
+}
+
 export type WatchlistKind = 'face' | 'plate';
 export type WatchlistListType = 'wanted' | 'authorized' | 'vip';
 

@@ -1,19 +1,22 @@
 'use client';
 
-import { Suspense, useEffect, useState, type ReactNode } from 'react';
+import { Suspense, useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { SignOut } from '@phosphor-icons/react';
 import { useRouter } from 'next/navigation';
-import { apiJson, formatNumber, formatStatus } from '@/src/api/client';
+import { apiJson, apiSend, errorMessage, formatNumber, formatStatus } from '@/src/api/client';
 import { useAuth } from '@/src/context/AuthContext';
 import { useTheme, type ThemePreference } from '@/src/context/ThemeContext';
 import { useSystemHealth } from '@/src/hooks/useSystemHealth';
 import { useUrlState } from '@/src/hooks/useUrlState';
 import { cn } from '@/src/lib/cn';
+import { pushToast } from '@/src/lib/toast';
 import { Button } from '@/src/components/ui/Button';
+import Dialog from '@/src/components/ui/Dialog';
+import { Field, Input } from '@/src/components/ui/Field';
 import Section from '@/src/components/ui/Section';
 import { Dot } from '@/src/components/ui/Indicators';
-import { Loading } from '@/src/components/ui/States';
-import type { DashboardSummary } from '@/src/types';
+import { InlineError, Loading } from '@/src/components/ui/States';
+import type { ClipPurgeResult, ClipStorage, DashboardSummary } from '@/src/types';
 
 const TABS = [
   { id: 'profile', label: 'Profile' },
@@ -127,6 +130,112 @@ function AppearanceTab() {
   );
 }
 
+function formatSize(mb: number) {
+  return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${formatNumber(Math.round(mb))} MB`;
+}
+
+function ClipStorageRows() {
+  const { role } = useAuth();
+  const isAdmin = role === 'admin';
+  const [usage, setUsage] = useState<ClipStorage | null>(null);
+  const [days, setDays] = useState(30);
+  const [preview, setPreview] = useState<ClipPurgeResult | null>(null);
+  const [busy, setBusy] = useState<'preview' | 'delete' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+
+  const loadUsage = useCallback(() => {
+    apiJson<ClipStorage>('/api/storage/clips').then(setUsage).catch(() => setUsage(null));
+  }, []);
+
+  useEffect(() => { loadUsage(); }, [loadUsage]);
+
+  const runPreview = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy('preview');
+    setError(null);
+    try {
+      setPreview(await apiSend<ClipPurgeResult>('/api/storage/clips/purge', 'POST', { older_than_days: days, dry_run: true }));
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const runDelete = async () => {
+    setBusy('delete');
+    try {
+      const result = await apiSend<ClipPurgeResult>('/api/storage/clips/purge', 'POST', { older_than_days: days });
+      pushToast({ title: `Deleted ${formatNumber(result.files)} clips`, message: `${formatSize(result.freed_mb)} freed`, level: 'success' });
+      setConfirming(false);
+      setPreview(null);
+      loadUsage();
+    } catch (err) {
+      pushToast({ title: 'Clips could not be deleted', message: errorMessage(err), level: 'error' });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <>
+      <Row label="Video clip recording">
+        {usage
+          ? <Health ok={usage.recording} tone="warn">{usage.recording ? 'Recording' : 'Paused: clip storage full'}</Health>
+          : 'Unknown'}
+      </Row>
+      <Row label="Video clips">
+        {usage
+          ? (
+            <span className="num">
+              {formatNumber(usage.files)} clips, {formatSize(usage.used_mb)}
+              {usage.limit_mb != null && ` of ${formatSize(usage.limit_mb)}`}
+            </span>
+          )
+          : 'Not measured'}
+      </Row>
+      {isAdmin && (
+        <Row label="Delete old clips">
+          <form onSubmit={runPreview} className="flex flex-wrap items-end gap-2">
+            <Field label="Older than (days)" htmlFor="clip-days" className="w-40">
+              <Input id="clip-days" name="older_than_days" type="number" inputMode="numeric" min={1} max={3650} required
+                value={days} onChange={e => { setDays(Number(e.target.value)); setPreview(null); }} />
+            </Field>
+            <Button type="submit" loading={busy === 'preview'}>Check</Button>
+          </form>
+          {preview && (
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <span className="num text-muted">
+                {preview.files === 0
+                  ? 'No clips are that old.'
+                  : `${formatNumber(preview.files)} clips (${formatSize(preview.freed_mb)}) would be deleted.`}
+              </span>
+              {preview.files > 0 && (
+                <Button variant="danger" onClick={() => setConfirming(true)}>Delete {formatNumber(preview.files)} clips</Button>
+              )}
+            </div>
+          )}
+          {error && <div className="mt-3"><InlineError>{error}</InlineError></div>}
+          <p className="mt-2 text-xs text-muted">Removes alert video clips older than this, and clip files no event uses. Snapshots and alert records are kept.</p>
+        </Row>
+      )}
+      <Dialog
+        open={confirming}
+        onClose={() => setConfirming(false)}
+        title="Delete old video clips?"
+        description={preview ? `${formatNumber(preview.files)} clips older than ${days} days (${formatSize(preview.freed_mb)}) will be permanently deleted. This cannot be undone and is recorded in the audit log.` : undefined}
+        footer={(
+          <>
+            <Button variant="ghost" onClick={() => setConfirming(false)}>Cancel</Button>
+            <Button variant="danger" loading={busy === 'delete'} onClick={() => void runDelete()}>Delete clips</Button>
+          </>
+        )}
+      />
+    </>
+  );
+}
+
 function HealthTab() {
   const { health, reachable } = useSystemHealth();
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
@@ -176,11 +285,12 @@ function HealthTab() {
           <Row label="Snapshot capture">
             <Health ok={!!storage?.capture_enabled} tone="warn">{storage?.capture_enabled ? 'Recording' : 'Paused'}</Health>
           </Row>
-          <Row label="Used">
+          <Row label="Snapshot storage">
             {storage?.snapshot_storage_mb == null
               ? 'Not measured'
               : <span className="num">{formatNumber(Math.round(storage.snapshot_storage_mb))} MB of {formatNumber(storage.snapshot_storage_limit_mb)} MB</span>}
           </Row>
+          <ClipStorageRows />
           {storage && <Row label="Free disk space"><span className="num">{formatNumber(Math.round(storage.free_storage_mb))} MB</span></Row>}
         </dl>
         {overLimit && (
