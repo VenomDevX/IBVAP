@@ -5,7 +5,7 @@ SQLAlchemy ORM models matching TRD Section 17 schema.
 
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Integer, String
+from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
@@ -343,3 +343,26 @@ class EvidenceChainHeadModel(Base):
     table_name = Column(String(50), primary_key=True)
     head_hash = Column(String(64), nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class WatchlistEntryModel(Base):
+    """A face or number plate operators want flagged.
+
+    list_type: "wanted" (critical alert), "authorized" (known, lowers risk) or
+    "vip" (informational). Face embeddings are stored Fernet-encrypted.
+    """
+
+    __tablename__ = "watchlist_entries"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    entry_id = Column(String(50), unique=True, nullable=False, index=True)
+    kind = Column(String(10), nullable=False, index=True)  # face | plate
+    list_type = Column(String(20), nullable=False, index=True)
+    label = Column(String(200), nullable=False)
+    plate = Column(String(20), nullable=True, index=True)  # normalised; plates only
+    embedding_enc = Column(Text, nullable=True)  # faces only
+    notes = Column(String(1000), default="")
+    active = Column(Boolean, default=True, nullable=False, index=True)
+    created_by = Column(String(100), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    deactivated_by = Column(String(100), nullable=True)
+    deactivated_at = Column(DateTime, nullable=True)

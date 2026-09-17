@@ -42,6 +42,28 @@ from src.temporal.night_detector import NightDetector
 from src.tracking.track import configure_type_upgrade
 from src.tracking.track_manager import TrackManager
 from src.tracking.tracker import MultiObjectTracker
+from src.watchlist.service import get_watchlist, reload_watchlist
+
+_LIST_PRIORITY = {"wanted": 3, "vip": 2, "authorized": 1}
+
+
+def apply_watchlist_hit(track, hit) -> bool:
+    """Attach a watchlist hit to a track; a stronger list is never downgraded."""
+    if hit is None:
+        return False
+    current = track.watchlist
+    if current and _LIST_PRIORITY.get(current["list_type"], 0) >= _LIST_PRIORITY.get(hit.list_type, 0):
+        return False
+    track.watchlist = hit.to_dict()
+    if hit.kind == "face":
+        track.identity_label = hit.label
+        track.identity_score = hit.score
+        track.identity_status = "wanted" if hit.list_type == "wanted" else "known"
+    logger.warning(
+        "Watchlist {} match camera={} track={} list={} label={} score={:.2f}",
+        hit.kind, track.camera_id, track.track_uuid, hit.list_type, hit.label, hit.score,
+    )
+    return True
 
 
 class CameraPipeline:
@@ -385,6 +407,7 @@ class CameraPipeline:
                     changed = track.license_plate != text
                     track.license_plate = text
                     track.plate_confidence = confidence
+                    apply_watchlist_hit(track, get_watchlist().match_plate(text))
                     if changed:
                         self._persist_recognition("anpr", track, text, confidence)
 
@@ -413,9 +436,15 @@ class CameraPipeline:
         crop = track.best_frame
 
         def _work() -> None:
-            match = self.face_recognizer.identify(crop)
-            if match is not None:
-                self._stats["face_embeddings"] += 1
+            face = self.face_recognizer.best_face(crop)
+            if face is None:
+                return
+            self._stats["face_embeddings"] += 1
+            hit = get_watchlist().match_face(face.get("embedding"))
+            if apply_watchlist_hit(track, hit):
+                self._persist_recognition("face", track, hit.label, hit.score)
+                return
+            match = self.face_recognizer.match(face)
             if match and match["status"] != "unknown":
                 track.identity_label = match["identity"]
                 track.identity_score = match["similarity"]
@@ -611,6 +640,8 @@ class CameraPipeline:
             identity_context["identity"] = track.identity_label
             identity_context["identity_status"] = track.identity_status if self.face_recognizer.active else "not_checked"
             identity_context["identity_score"] = track.identity_score
+        if track.watchlist and track.watchlist["kind"] == "face":
+            identity_context["watchlist"] = track.watchlist
 
         vehicle_context = {}
         if track.object_type in (
@@ -623,6 +654,8 @@ class CameraPipeline:
                 "not_detected" if track.license_plate == "Unknown" else
                 "low_confidence" if track.plate_confidence < 0.6 else "read"
             )
+        if track.watchlist and track.watchlist["kind"] == "plate":
+            vehicle_context["watchlist"] = track.watchlist
 
         fused_event = self.context_fusion.fuse_events(
             track_id=track.track_id,
@@ -1011,6 +1044,14 @@ class IBVAPPipeline:
         # Import YAML zone defaults once; database rows, including soft
         # deletions, take precedence after their parent cameras exist.
         self._restore_zones(zones_config)
+
+        watchlist = get_watchlist()
+        watchlist.face_threshold = float(fc.get("watchlist_threshold", fc.get("similarity_threshold", 0.45)))
+        try:
+            reload_watchlist()
+            logger.info("Watchlist loaded: {}", watchlist.size)
+        except Exception as exc:
+            logger.error("Watchlist load failed error={}", type(exc).__name__)
 
         # Initialize camera pipelines
         for cam_cfg in cameras_config.get("cameras", []):

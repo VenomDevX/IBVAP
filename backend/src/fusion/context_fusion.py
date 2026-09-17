@@ -324,7 +324,11 @@ class ContextFusion:
         is_night = temporal_context.get("is_night", False)
         in_restricted = spatial_context.get("in_restricted", False)
 
-        # Combined suspicious — highest priority
+        # A wanted person/vehicle outranks every behavioural pattern.
+        if BehaviorType.WATCHLIST_MATCH in behavior_types:
+            return "watchlist_match"
+
+        # Combined suspicious
         if BehaviorType.COMBINED_SUSPICIOUS in behavior_types:
             if in_restricted and is_night:
                 return "critical_intrusion"

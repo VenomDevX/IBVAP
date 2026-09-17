@@ -24,7 +24,19 @@ from src.api.auth import issue_media_ticket, require_auth
 from src.api.middleware.input_validator import InputValidationMiddleware
 from src.api.middleware.security import RequestLoggingMiddleware, SecurityHeadersMiddleware
 from src.api.ratelimit import limiter
-from src.api.routes import alerts, audit, cameras, events, reports, snapshots, statistics, stream, tracks, zones
+from src.api.routes import (
+    alerts,
+    audit,
+    cameras,
+    events,
+    reports,
+    snapshots,
+    statistics,
+    stream,
+    tracks,
+    watchlists,
+    zones,
+)
 from src.api.routes import evidence as evidence_routes
 from src.api.token_revocation import revoke_token
 from src.api.websocket import authenticate_ws, ws_manager
@@ -198,6 +210,7 @@ def create_app() -> FastAPI:
     app.include_router(stream.router, prefix="/api/stream", tags=["Video Stream"])
     app.include_router(reports.router, prefix="/api/reports", tags=["Reports"])
     app.include_router(audit.router, prefix="/api/audit", tags=["Audit Logs"])
+    app.include_router(watchlists.router, prefix="/api/watchlists", tags=["Watchlists"])
     app.include_router(snapshots.router, prefix="/snapshots", tags=["Snapshots"])
 
     # Stable integration aliases. Existing unversioned routes remain intact for

@@ -54,6 +54,14 @@ identity_scores:
   known_authorized: 0
   no_face_detected: 20
 
+# Watchlist hits (face or plate). A "wanted" hit also floors the final
+# score, so it is critical regardless of zone/time context.
+watchlist_scores:
+  wanted: 100
+  wanted_floor: 90
+  authorized: 0
+  vip: 0
+
 # Individual vehicle risk scores
 vehicle_scores:
   unknown_plate: 50

@@ -21,6 +21,7 @@ const TITLES: Record<string, string> = {
   '/event': 'Event',
   '/zones': 'Zones',
   '/audit': 'Audit log',
+  '/watchlists': 'Watchlists',
   '/settings': 'Settings',
 };
 

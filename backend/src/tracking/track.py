@@ -70,7 +70,10 @@ class Track:
     # Identity (face recognition)
     identity_label: str = "unknown"
     identity_score: float = 0.0
-    identity_status: str = "unknown"  # known | uncertain | unknown
+    identity_status: str = "unknown"  # known | uncertain | unknown | wanted
+
+    # Watchlist hit (WatchlistHit.to_dict()) for this track's face or plate.
+    watchlist: dict | None = None
 
     # Fine-grained type (stage 2 classifier, military crops only).
     # "unknown" means either not yet classified or below the confidence gate;
@@ -145,6 +148,11 @@ class Track:
             self.object_type = new_class
             self.suspected_type = None
             self.type_confidence = new_conf
+
+    @property
+    def watchlist_status(self) -> str:
+        """wanted | authorized | vip | none"""
+        return self.watchlist["list_type"] if self.watchlist else "none"
 
     @property
     def centroid(self) -> tuple[int, int]:
@@ -261,6 +269,7 @@ class Track:
             "identity_label": self.identity_label,
             "identity_score": round(self.identity_score, 3),
             "identity_status": self.identity_status,
+            "watchlist": self.watchlist,
             "fine_type": self.fine_type,
             "fine_confidence": round(self.fine_confidence, 3),
             "risk_score": round(self.risk_score, 1),

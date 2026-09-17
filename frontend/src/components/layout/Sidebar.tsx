@@ -4,7 +4,8 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState, type ComponentType } from 'react';
 import {
-  Bell, ClipboardText, GearSix, GridFour, ListBullets, MapTrifold, Polygon, SignOut, SquaresFour, VideoCamera, X,
+  Bell, ClipboardText, GearSix, GridFour, IdentificationCard, ListBullets, MapTrifold, Polygon, SignOut, SquaresFour,
+  VideoCamera, X,
   type IconProps,
 } from '@phosphor-icons/react';
 import { apiFetch, formatStatus } from '../../api/client';
@@ -31,6 +32,7 @@ const GROUPS: NavItem[][] = [
   [
     { href: '/alerts', label: 'Alerts', icon: Bell, countsAlerts: true },
     { href: '/events', label: 'Events', icon: ListBullets },
+    { href: '/watchlists', label: 'Watchlists', icon: IdentificationCard },
   ],
   [
     { href: '/cameras', label: 'Cameras', icon: VideoCamera },

@@ -40,6 +40,7 @@ class RiskEngine:
         self.behavioral_scores = config.get("behavioral_scores", {})
         self.identity_scores = config.get("identity_scores", {})
         self.vehicle_scores = config.get("vehicle_scores", {})
+        self.watchlist_scores = config.get("watchlist_scores", {})
         # Minimum behavioural risk implied by the detected object class itself
         self.object_scores = config.get("object_scores", {})
 
@@ -84,6 +85,10 @@ class RiskEngine:
             + self.w_identity * i_score
             + self.w_vehicle * v_score
         )
+
+        # A wanted face/plate is critical whatever the scene looks like.
+        if self._wanted_hit(fused_event):
+            risk_score = max(risk_score, float(self.watchlist_scores.get("wanted_floor", 90)))
 
         # Clamp to 0-100
         risk_score = max(0.0, min(100.0, risk_score))
@@ -188,6 +193,7 @@ class RiskEngine:
 
         # Score based on event type
         type_scores = {
+            "watchlist_match": 95,
             "critical_intrusion": 95,
             "combined_suspicious_activity": 85,
             "night_fence_crossing": 90,
@@ -229,10 +235,33 @@ class RiskEngine:
 
         return score, reasons
 
+    @staticmethod
+    def _wanted_hit(fused_event: FusedEvent) -> dict | None:
+        for ctx in (fused_event.identity_context, fused_event.vehicle_context):
+            hit = (ctx or {}).get("watchlist")
+            if hit and hit.get("list_type") == "wanted":
+                return hit
+        return None
+
+    def _watchlist_risk(self, ctx: dict) -> tuple[float, list[str]] | None:
+        hit = ctx.get("watchlist")
+        if not hit:
+            return None
+        label = hit.get("label", "")
+        if hit.get("list_type") == "wanted":
+            return float(self.watchlist_scores.get("wanted", 100)), [f"Wanted watchlist match: {label}"]
+        if hit.get("list_type") == "authorized":
+            return float(self.watchlist_scores.get("authorized", 0)), [f"Authorized: {label}"]
+        return float(self.watchlist_scores.get("vip", 0)), [f"VIP watchlist: {label}"]
+
     def _calculate_identity_risk(self, ctx: dict) -> tuple[float, list[str]]:
         """Calculate identity component of risk."""
         score = 0.0
         reasons = []
+
+        listed = self._watchlist_risk(ctx)
+        if listed is not None:
+            return listed
 
         identity = ctx.get("identity_status", ctx.get("identity", "not_checked"))
 
@@ -251,6 +280,10 @@ class RiskEngine:
         """Calculate vehicle component of risk."""
         score = 0.0
         reasons = []
+
+        listed = self._watchlist_risk(ctx)
+        if listed is not None:
+            return listed
 
         plate = ctx.get("plate_status", str(ctx.get("plate", "not_checked")).lower())
 

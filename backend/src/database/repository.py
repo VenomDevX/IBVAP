@@ -23,6 +23,7 @@ from src.database.models import (
     TrackModel,
     UserModel,
     VehicleProfileModel,
+    WatchlistEntryModel,
     ZoneModel,
 )
 
@@ -589,6 +590,7 @@ class Repository:
         row.plate = track.license_plate.upper() if track.license_plate else "UNKNOWN"
         row.plate_confidence = track.plate_confidence
         row.threat_score = track.risk_score
+        row.watchlist_status = str(getattr(track, "watchlist_status", "none")).upper()
         row.description = describe_vehicle(track)
         row.zone_history = [
             {"zone_id": zone_id, "session_id": session_id, "entered_at": track.zone_entry_times.get(zone_id)}
@@ -664,6 +666,64 @@ class Repository:
         return self.session.query(UserModel).count()
 
     # ======================== AUDIT LOGS ========================
+
+    # ======================== WATCHLISTS ========================
+
+    def create_watchlist_entry(
+        self,
+        kind: str,
+        list_type: str,
+        label: str,
+        created_by: str,
+        plate: str | None = None,
+        embedding=None,
+        notes: str = "",
+    ) -> WatchlistEntryModel:
+        import uuid
+
+        from src.watchlist import crypto
+        from src.watchlist.service import LIST_TYPES, normalize_plate
+
+        if list_type not in LIST_TYPES:
+            raise ValueError(f"list_type must be one of {LIST_TYPES}")
+        row = WatchlistEntryModel(
+            entry_id=f"WL_{uuid.uuid4().hex[:16]}", kind=kind, list_type=list_type,
+            label=label, notes=notes or "", created_by=created_by, active=True,
+        )
+        if kind == "plate":
+            row.plate = normalize_plate(plate)
+            if not 4 <= len(row.plate) <= 20:
+                raise ValueError("plate must have 4-20 letters/digits")
+            clash = self.session.query(WatchlistEntryModel).filter_by(kind="plate", plate=row.plate, active=True)
+            if clash.first() is not None:
+                raise ValueError("this plate is already on an active watchlist")
+        elif kind == "face":
+            if embedding is None:
+                raise ValueError("a face entry needs an embedding")
+            row.embedding_enc = crypto.encrypt_embedding(embedding)
+        else:
+            raise ValueError("kind must be 'face' or 'plate'")
+        self.session.add(row)
+        self.session.commit()
+        return row
+
+    def list_watchlist_entries(self, kind: str | None = None, include_inactive: bool = False):
+        query = self.session.query(WatchlistEntryModel)
+        if kind:
+            query = query.filter_by(kind=kind)
+        if not include_inactive:
+            query = query.filter_by(active=True)
+        return query.order_by(desc(WatchlistEntryModel.created_at)).all()
+
+    def deactivate_watchlist_entry(self, entry_id: str, actor: str) -> bool:
+        row = self.session.query(WatchlistEntryModel).filter_by(entry_id=entry_id, active=True).first()
+        if row is None:
+            return False
+        row.active = False
+        row.deactivated_by = actor
+        row.deactivated_at = datetime.utcnow()
+        self.session.commit()
+        return True
 
     def create_audit_log(self, action: str, username: str, details: dict = None, ip_address: str = None):
         log = AuditLogModel(action=action, username=username, details=details or {}, ip_address=ip_address)

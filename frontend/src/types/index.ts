@@ -166,3 +166,25 @@ export interface Paged<T> {
   page?: number;
   page_size?: number;
 }
+
+export type WatchlistKind = 'face' | 'plate';
+export type WatchlistListType = 'wanted' | 'authorized' | 'vip';
+
+export interface WatchlistEntry {
+  entry_id: string;
+  kind: WatchlistKind;
+  list_type: WatchlistListType;
+  label: string;
+  plate: string | null;
+  notes: string;
+  active: boolean;
+  created_by: string;
+  created_at: string | null;
+  deactivated_by: string | null;
+  deactivated_at: string | null;
+}
+
+export interface WatchlistResponse {
+  entries: WatchlistEntry[];
+  loaded: { plates: number; faces: number };
+}
