@@ -117,27 +117,34 @@ def verify_table(session, table: str) -> ChainReport:
     # Read the head BEFORE the rows: a live backend may append meanwhile, and the
     # head we saw must then be somewhere in the rows we read.
     stored_head = session.query(EvidenceChainHeadModel.head_hash).filter_by(table_name=table).scalar()
-    rows = session.query(model).filter(model.chain_hash.isnot(None)).order_by(model.id).all()
-    report.rows = len(rows)
-    if not rows:
-        return report
+    # Stream just the hashed columns: ORM objects for a few hundred thousand rows
+    # cost gigabytes, and this runs next to a live, memory-hungry backend.
+    all_fields = sorted({f for fields in CHAINED[table][1].values() for f in fields})
+    columns = [getattr(model, f) for f in all_fields] + [model.prev_hash, model.chain_hash, model.chain_version]
+    rows = (
+        session.query(*columns)
+        .filter(model.chain_hash.isnot(None))
+        .order_by(model.id)
+        .yield_per(5000)
+    )
 
-    head = rows[0]
-    if head.prev_hash in (None, evidence.GENESIS) or head.prev_hash in _valid_anchors(session, table):
-        prev = head.prev_hash
-    else:
-        # Rows were removed from the start of the chain without a purge checkpoint.
-        report.breaks.append(f"{getattr(head, fields_for(table, head.chain_version)[0])} (chain head truncated)")
-        prev = head.prev_hash
-
+    prev = None
     seen = set()
-    for row in rows:
+    for index, row in enumerate(rows):
         fields = fields_for(table, row.chain_version)
+        if index == 0:
+            if row.prev_hash in (None, evidence.GENESIS) or row.prev_hash in _valid_anchors(session, table):
+                prev = row.prev_hash
+            else:
+                # Rows were removed from the start of the chain without a purge checkpoint.
+                report.breaks.append(f"{getattr(row, fields[0])} (chain head truncated)")
+                prev = row.prev_hash
         record = {f: getattr(row, f) for f in fields}
         if not evidence.verify(record, prev, row.chain_hash):
             report.breaks.append(str(getattr(row, fields[0])))
         prev = row.chain_hash
         seen.add(row.chain_hash)
+        report.rows += 1
 
     if stored_head and stored_head not in seen:
         # The newest row the chain recorded is gone: rows were removed from the end.

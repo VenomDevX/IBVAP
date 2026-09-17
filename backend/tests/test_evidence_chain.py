@@ -205,18 +205,18 @@ def test_rows_appended_during_verification_are_not_reported(repo, monkeypatch):
     import src.alerts.evidence_chain as ec
 
     _seed(repo, [2, 1], with_alerts=False)
-    real_all = Query.all
+    real_iter = Query.__iter__
     state = {"appended": False}
 
-    def all_then_append(self):
-        result = real_all(self)
-        # A live writer appends right AFTER the verifier has read the rows.
-        if not state["appended"] and result and isinstance(result[0], EventModel):
+    def iter_then_append(self):
+        reading_events = self.column_descriptions and self.column_descriptions[0].get("entity") is EventModel
+        yield from real_iter(self)
+        # A live writer appends right AFTER the verifier has read all the rows.
+        if reading_events and not state["appended"]:
             state["appended"] = True
             repo.create_event({"event_id": "LIVE", "camera_id": "c1", "event_type": "t",
                                "timestamp": time.time()})
-        return result
 
-    monkeypatch.setattr(Query, "all", all_then_append)
+    monkeypatch.setattr(Query, "__iter__", iter_then_append)
     assert ec.verify_table(repo.session, "events").ok
     assert state["appended"]
