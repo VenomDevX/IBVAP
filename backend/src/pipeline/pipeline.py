@@ -19,6 +19,7 @@ from src.behavior.behavior_engine import BehaviorEngine
 from src.classification.fine_classifier import FineClassifier
 from src.database.db import get_database
 from src.database.repository import Repository
+from src.detection.batch_coordinator import BatchDetectionCoordinator
 from src.detection.detector import ObjectDetector
 from src.face.face_recognizer import FaceRecognizer
 from src.features.anpr import PlateConsensus, extract_plate
@@ -30,6 +31,7 @@ from src.ingestion.video_source import CameraInfo, CameraStatus, VideoSource
 from src.model_registry import ModelRegistry
 from src.paths import backend_path, output_dir, snapshots_dir
 from src.paths import config_dir as default_config_dir
+from src.pipeline.enrichment_worker import EnrichmentWorker
 from src.risk.risk_engine import RiskEngine
 from src.spatial.direction_analyzer import DirectionAnalyzer
 from src.spatial.fence_detector import FenceDetector
@@ -37,6 +39,7 @@ from src.spatial.heatmap_tracker import HeatmapTracker
 from src.spatial.zone_manager import Zone, ZoneManager
 from src.temporal.loitering_detector import LoiteringDetector
 from src.temporal.night_detector import NightDetector
+from src.tracking.track import configure_type_upgrade
 from src.tracking.track_manager import TrackManager
 from src.tracking.tracker import MultiObjectTracker
 
@@ -55,6 +58,8 @@ class CameraPipeline:
         face_recognizer: FaceRecognizer | None = None,
         fine_classifier: FineClassifier | None = None,
         thresholds: dict | None = None,
+        batch_coordinator: BatchDetectionCoordinator | None = None,
+        enrichment_worker: EnrichmentWorker | None = None,
     ):
         self.camera_info = camera_info
         thresholds = thresholds or {}
@@ -64,6 +69,15 @@ class CameraPipeline:
         self.stream_session_id = str(uuid.uuid4())
         self.video_source = VideoSource(camera_info)
         self.detector = detector  # Shared detector across cameras
+        # Optional: route detect() through a shared multi-camera batch
+        # coordinator instead of calling the detector directly, so the GPU
+        # sees one batched forward pass per tick across all cameras. Both
+        # are optional so tests/callers can still construct a CameraPipeline
+        # standalone (falls back to calling self.detector directly).
+        self.batch_coordinator = batch_coordinator
+        self.enrichment_worker = enrichment_worker
+        if self.batch_coordinator is not None:
+            self.batch_coordinator.register_camera(camera_info.camera_id)
         self.tracker = MultiObjectTracker(
             max_age=tracking.get("max_age", 30), min_hits=tracking.get("min_hits", 3),
             iou_threshold=tracking.get("iou_threshold", 0.3),
@@ -106,7 +120,8 @@ class CameraPipeline:
         self.risk_engine = RiskEngine(risk_config)
         self.alert_engine = alert_engine
         self.face_recognizer = face_recognizer or FaceRecognizer(enabled=False)
-        self._face_check_times: dict[int, float] = {}
+        self._face_check_times: dict[str, float] = {}
+        self._timers_pruned_at = 0.0
         self._anpr_check_times: dict[str, float] = {}
         self._profile_persist_times: dict[str, float] = {}
         self._runtime_persisted_at = 0.0
@@ -128,7 +143,8 @@ class CameraPipeline:
             on_complete=self._clip_completed,
         ) if evidence_cfg.get("clips_enabled", True) else None
         self.fine_classifier = fine_classifier or FineClassifier(enabled=False)
-        self._fine_check_times: dict[int, float] = {}
+        self._fine_check_times: dict[str, float] = {}
+        self._best_frame_check_times: dict[str, float] = {}
         self._FACE_RECHECK_S = 0.8  # Check faces more frequently (was 2.0)
         self._FINE_RECHECK_S = 2.0
         self._persist_events = os.getenv("IBVAP_PERSIST_EVENTS", "true").strip().lower() not in {
@@ -159,6 +175,10 @@ class CameraPipeline:
             return
 
         self._stop_event.clear()
+        if self.batch_coordinator is not None:
+            # stop() unregisters the camera; without this a restarted camera
+            # silently falls back to slow single-frame detect() calls.
+            self.batch_coordinator.register_camera(self.camera_info.camera_id)
         self._register_stream_session()
         self._running = True
         self._thread = threading.Thread(target=self._process_loop, daemon=True)
@@ -178,6 +198,8 @@ class CameraPipeline:
         self.video_source.release()
         self._persist_camera_runtime("offline", force=True)
         self._close_stream_session()
+        if self.batch_coordinator is not None:
+            self.batch_coordinator.unregister_camera(self.camera_info.camera_id)
         logger.info(f"Pipeline stopped for {self.camera_info.camera_id}")
 
     def request_stop(self) -> None:
@@ -228,8 +250,13 @@ class CameraPipeline:
                     self.evidence_buffer.add_frame(frame)
                 self._persist_camera_runtime("online")
 
-                # 2. Detect objects
-                detections = self.detector.detect(frame, frame_id, camera_id)
+                # 2. Detect objects. Routed through the shared batch coordinator
+                # when available so multiple cameras' frames are combined into
+                # one GPU forward pass per tick instead of one call each.
+                if self.batch_coordinator is not None:
+                    detections = self.batch_coordinator.submit(camera_id, frame, frame_id)
+                else:
+                    detections = self.detector.detect(frame, frame_id, camera_id)
                 self._stats["detections"] = len(detections.detections)
 
                 # 3. Track objects
@@ -254,11 +281,20 @@ class CameraPipeline:
 
                         if x2 > x1 and y2 > y1:
                             crop = frame[y1:y2, x1:x2]
-                            improved = update_best_frame(
-                                track, crop, frame.shape, (x1, y1, x2, y2), detections.timestamp
-                            )
+                            # Crop quality scoring (grayscale + Laplacian) for
+                            # every track on every frame was ~5% of GIL time on
+                            # busy cameras; 4 checks/s per track is plenty.
+                            last_scored = self._best_frame_check_times.get(track.track_uuid, 0.0)
+                            if detections.timestamp - last_scored >= 0.25:
+                                self._best_frame_check_times[track.track_uuid] = detections.timestamp
+                                improved = update_best_frame(
+                                    track, crop, frame.shape, (x1, y1, x2, y2), detections.timestamp
+                                )
+                            else:
+                                improved = False
                             vehicle = track.object_type in (
-                                "car", "truck", "bus", "motorcycle", "vehicle", "military_ground_vehicle"
+                                "car", "truck", "bus", "motorcycle", "vehicle",
+                                "military_ground_vehicle", "night_vision_object",
                             )
                             if improved and vehicle:
                                 track.color = get_dominant_color(track.best_frame)
@@ -268,18 +304,9 @@ class CameraPipeline:
                                 and track.best_frame_score >= 0.35
                             ):
                                 last = self._anpr_check_times.get(track.track_uuid, 0.0)
-                                if time.time() - last < self._ANPR_RECHECK_S:
-                                    plate = None
-                                else:
+                                if time.time() - last >= self._ANPR_RECHECK_S:
                                     self._anpr_check_times[track.track_uuid] = time.time()
-                                    plate = extract_plate(track.best_frame)
-                                if plate is not None and plate["text"] != "Unknown" and plate["confidence"] > 0:
-                                    text, confidence = self.plate_consensus.add(
-                                        track, plate["text"], plate["confidence"]
-                                    )
-                                    if text != "UNKNOWN":
-                                        track.license_plate = text
-                                        track.plate_confidence = confidence
+                                    self._run_anpr_check(track)
                             if (
                                 self.fine_classifier.active
                                 and FineClassifier.is_military(track.object_type)
@@ -291,13 +318,10 @@ class CameraPipeline:
                                 # answer every few seconds is plenty, and the
                                 # gate inside classify() keeps low-confidence
                                 # guesses out of an operator's display.
-                                last = self._fine_check_times.get(tid, 0.0)
+                                last = self._fine_check_times.get(track.track_uuid, 0.0)
                                 if time.time() - last >= self._FINE_RECHECK_S:
-                                    self._fine_check_times[tid] = time.time()
-                                    fine = self.fine_classifier.classify(track.best_frame)
-                                    if fine:
-                                        track.fine_type = fine["type"]
-                                        track.fine_confidence = fine["confidence"]
+                                    self._fine_check_times[track.track_uuid] = time.time()
+                                    self._run_fine_classify(track)
                             if (
                                 track.object_type == "person"
                                 and track.identity_status == "unknown"
@@ -309,21 +333,15 @@ class CameraPipeline:
                                 if time.time() - last >= self._FACE_RECHECK_S:
                                     self._face_check_times[track.track_uuid] = time.time()
                                     self._stats["face_checks"] += 1
-                                    match = self.face_recognizer.identify(track.best_frame)
-                                    if match is not None:
-                                        self._stats["face_embeddings"] += 1
-                                    if match and match["status"] != "unknown":
-                                        track.identity_label = match["identity"]
-                                        track.identity_score = match["similarity"]
-                                        track.identity_status = match["status"]
+                                    self._run_face_identify(track)
 
                     self._process_track(track, frame, night_context)
 
                 self._persist_track_profiles(active_tracks.values())
 
-                for transition in self.event_state_machine.expire_inactive(
-                    {track.track_uuid for track in active_tracks.values()}
-                ):
+                active_uuids = {track.track_uuid for track in active_tracks.values()}
+                self._prune_track_timers(active_uuids)
+                for transition in self.event_state_machine.expire_inactive(active_uuids):
                     self._persist_transition(transition, frame=None)
 
                 # Annotate frame
@@ -333,7 +351,7 @@ class CameraPipeline:
                 if camera_zones:
                     annotated = ZoneManager.draw_zones(annotated, camera_zones)
                 # Draw fences
-                fences = [f for f in self.fence_detector._fences.values() if f.camera_id == camera_id]
+                fences = self.fence_detector.camera_fences(camera_id)
                 if fences:
                     annotated = FenceDetector.draw_fences(annotated, fences)
                 # Draw tracks
@@ -350,6 +368,95 @@ class CameraPipeline:
             except Exception as e:
                 logger.error(f"Pipeline error ({self.camera_info.camera_id}): {e}")
                 time.sleep(0.1)
+
+    def _run_anpr_check(self, track) -> None:
+        """ANPR OCR is slow (easyocr/paddleocr/tesseract cascade). Run it off
+        the frame-production thread so a plate read can never stall video."""
+        crop = track.best_frame
+
+        def _work() -> None:
+            plate = extract_plate(crop)
+            if plate is not None and plate["text"] != "Unknown" and plate["confidence"] > 0:
+                text, confidence = self.plate_consensus.add(track, plate["text"], plate["confidence"])
+                if text != "UNKNOWN":
+                    changed = track.license_plate != text
+                    track.license_plate = text
+                    track.plate_confidence = confidence
+                    if changed:
+                        self._persist_recognition("anpr", track, text, confidence)
+
+        if self.enrichment_worker is not None:
+            self.enrichment_worker.submit(track.track_uuid, "anpr", _work)
+        else:
+            _work()
+
+    def _run_fine_classify(self, track) -> None:
+        """Stage-2 classifier (GPU model call) run off the frame thread."""
+        crop = track.best_frame
+
+        def _work() -> None:
+            fine = self.fine_classifier.classify(crop)
+            if fine:
+                track.fine_type = fine["type"]
+                track.fine_confidence = fine["confidence"]
+
+        if self.enrichment_worker is not None:
+            self.enrichment_worker.submit(track.track_uuid, "fine_classify", _work)
+        else:
+            _work()
+
+    def _run_face_identify(self, track) -> None:
+        """Face embedding + gallery match (GPU model call) run off the frame thread."""
+        crop = track.best_frame
+
+        def _work() -> None:
+            match = self.face_recognizer.identify(crop)
+            if match is not None:
+                self._stats["face_embeddings"] += 1
+            if match and match["status"] != "unknown":
+                track.identity_label = match["identity"]
+                track.identity_score = match["similarity"]
+                track.identity_status = match["status"]
+                self._persist_recognition("face", track, match["identity"], match["similarity"])
+
+        if self.enrichment_worker is not None:
+            self.enrichment_worker.submit(track.track_uuid, "face_identify", _work)
+        else:
+            _work()
+
+    def _prune_track_timers(self, active_uuids: set[str]) -> None:
+        """Drop per-track throttle state for tracks that are gone (long sessions
+        on busy roads otherwise accumulate one entry per track ever seen)."""
+        now = time.time()
+        if now - self._timers_pruned_at < 30.0:
+            return
+        self._timers_pruned_at = now
+        for timers in (
+            self._face_check_times,
+            self._anpr_check_times,
+            self._fine_check_times,
+            self._best_frame_check_times,
+            self._profile_persist_times,
+        ):
+            for key in [k for k in timers if k not in active_uuids]:
+                del timers[key]
+
+    def _persist_recognition(self, kind: str, track, label: str, score: float) -> None:
+        """Record a plate read / face match so it is searchable after the track ends."""
+        if not self._persist_events:
+            return
+        try:
+            with get_database().get_session() as session:
+                repo = Repository(session)
+                if kind == "anpr":
+                    repo.create_anpr_result(track.track_id, self.camera_info.camera_id, label, float(score))
+                else:
+                    repo.create_identity_result(track.track_id, self.camera_info.camera_id, label, float(score))
+        except Exception as exc:
+            logger.warning(
+                "Could not persist {} result camera={} error={}",
+                kind, self.camera_info.camera_id, type(exc).__name__,
+            )
 
     def _recover_source(self) -> bool:
         if not self.video_source.is_stream():
@@ -413,9 +520,10 @@ class CameraPipeline:
         cx, cy = track.centroid
 
         # 4. Spatial analysis
-        current_zone_ids = self.zone_manager.check_track_zones(camera_id, (cx, cy))
+        object_type = track.object_type
+        current_zone_ids = self.zone_manager.check_track_zones(camera_id, (cx, cy), object_type)
         track.current_zones = current_zone_ids
-        in_restricted = self.zone_manager.is_in_restricted_zone(camera_id, cx, cy)
+        in_restricted = self.zone_manager.is_in_restricted_zone(camera_id, cx, cy, object_type)
 
         spatial_context = {
             "in_restricted": in_restricted,
@@ -450,7 +558,7 @@ class CameraPipeline:
         track.movement_direction = direction
         toward_restricted = False
         for zone in self.zone_manager.get_camera_zones(camera_id):
-            if zone.zone_type == "restricted":
+            if zone.enabled and zone.zone_type == "restricted" and zone.applies_to(object_type):
                 zone_center = (int(np.mean([p[0] for p in zone.points])), int(np.mean([p[1] for p in zone.points])))
                 if self.direction_analyzer.is_moving_toward_zone(track, zone_center):
                     toward_restricted = True
@@ -502,7 +610,10 @@ class CameraPipeline:
             identity_context["identity_score"] = track.identity_score
 
         vehicle_context = {}
-        if track.object_type in ("car", "truck", "bus", "motorcycle", "vehicle", "military_ground_vehicle"):
+        if track.object_type in (
+            "car", "truck", "bus", "motorcycle", "vehicle",
+            "military_ground_vehicle", "night_vision_object",
+        ):
             vehicle_context["plate"] = track.license_plate
             vehicle_context["plate_confidence"] = track.plate_confidence
             vehicle_context["plate_status"] = (
@@ -521,6 +632,8 @@ class CameraPipeline:
             identity_context=identity_context,
             vehicle_context=vehicle_context,
             track_duration=track.duration,
+            raw_class=track.raw_class,
+            suspected_type=track.suspected_type,
         )
 
         if fused_event is None:
@@ -549,20 +662,21 @@ class CameraPipeline:
         if not self._persist_events:
             return
         now = time.time()
+        # Every upsert serializes the track's whole trajectory (up to 500
+        # points) to JSON; at 1s this was ~13% of GIL time on busy cameras.
         due = [
             track for track in tracks
-            if now - self._profile_persist_times.get(track.track_uuid, 0.0) >= 1.0
+            if now - self._profile_persist_times.get(track.track_uuid, 0.0) >= 5.0
         ]
         if not due:
             return
-        vehicle_types = {"car", "truck", "bus", "motorcycle", "vehicle", "military_ground_vehicle"}
+        vehicle_types = {
+            "car", "truck", "bus", "motorcycle", "vehicle",
+            "military_ground_vehicle", "night_vision_object",
+        }
         try:
             with get_database().get_session() as session:
-                repo = Repository(session)
-                for track in due:
-                    repo.upsert_track(track, commit=False)
-                    if track.object_type in vehicle_types:
-                        repo.upsert_vehicle_profile(track, commit=False)
+                Repository(session).upsert_track_profiles(due, vehicle_types)
                 session.commit()
             for track in due:
                 self._profile_persist_times[track.track_uuid] = now
@@ -679,6 +793,8 @@ class IBVAPPipeline:
         self.config_dir = Path(config_dir).resolve() if config_dir else default_config_dir()
         self.camera_pipelines: dict[str, CameraPipeline] = {}
         self.detector: ObjectDetector | None = None
+        self.batch_coordinator: BatchDetectionCoordinator | None = None
+        self.enrichment_worker: EnrichmentWorker | None = None
         self.zone_manager = ZoneManager()
         self.fence_detector = FenceDetector()
         self.alert_engine = AlertEngine()
@@ -699,6 +815,11 @@ class IBVAPPipeline:
         thresholds_config = self._load_yaml("thresholds.yaml")
         self._thresholds_config = thresholds_config
         self._risk_config = self._load_yaml("risk_weights.yaml")
+        tracking_cfg = thresholds_config.get("tracking", {})
+        configure_type_upgrade(
+            tracking_cfg.get("type_upgrade_confidence", 0.45),
+            tracking_cfg.get("type_upgrade_margin", 0.10),
+        )
 
         # Initialize detector (shared across cameras)
         det_cfg = thresholds_config.get("detection", {})
@@ -731,6 +852,9 @@ class IBVAPPipeline:
             half_precision=det_cfg.get("half_precision", True),
             fallback_model_path=fallback_path,
             engine_path=engine_path or None,
+            agnostic_nms=det_cfg.get("agnostic_nms", False),
+            augment=det_cfg.get("augment", False),
+            max_det=det_cfg.get("max_det", 300),
         )
         if self.detector._model is None:
             self.model_registry.failed(
@@ -740,6 +864,37 @@ class IBVAPPipeline:
             self.model_registry.ready(
                 "object_detector", self.detector._device, os.path.basename(detector_identifier)
             )
+
+        # Batches per-camera frames into one GPU forward pass per tick
+        # instead of each CameraPipeline calling detect() one frame at a
+        # time (see plan: "full GPU utilization") — but ONLY when the loaded
+        # model can actually accept a multi-frame batch. A TensorRT engine
+        # compiled with a fixed batch dimension (this deployment's
+        # models/ibvap_coarse.engine is fixed at 1) rejects anything larger,
+        # so detect_batch() falls back to calling the model once per frame
+        # ANYWAY — except now every camera also pays the coordinator's
+        # submit/tick/timeout overhead on top for zero benefit. Measured
+        # impact of enabling it unconditionally: per-camera FPS collapsed
+        # from ~10-15 to ~0.6-0.9 (every submission timed out after the
+        # full submit_timeout_s before falling back). Probe once at
+        # startup with a real 2-frame batch and only wire the coordinator
+        # in if the model accepts it.
+        if self.detector._model is not None:
+            dummy = np.zeros((64, 64, 3), dtype=np.uint8)
+            self.detector.detect_batch([dummy, dummy])
+        if self.detector._model is not None and not self.detector._batch_unsupported_warned:
+            self.batch_coordinator = BatchDetectionCoordinator(self.detector)
+        else:
+            if self.detector._model is not None:
+                logger.info(
+                    "Loaded model does not support multi-frame batching "
+                    "(fixed batch size) — cameras will call detect() directly."
+                )
+            self.batch_coordinator = None
+        # Runs ANPR OCR / face recognition / fine classification off the
+        # frame-production thread so a slow recheck can't stall the video
+        # stream (see plan: "smooth video without losing accuracy").
+        self.enrichment_worker = EnrichmentWorker()
 
         # Initialize fences
         self.fence_detector.load_from_config(zones_config)
@@ -889,6 +1044,8 @@ class IBVAPPipeline:
                 face_recognizer=self.face_recognizer,
                 fine_classifier=self.fine_classifier,
                 thresholds=thresholds_config,
+                batch_coordinator=self.batch_coordinator,
+                enrichment_worker=self.enrichment_worker,
             )
 
             self.camera_pipelines[camera_info.camera_id] = pipeline
@@ -930,10 +1087,15 @@ class IBVAPPipeline:
                     repo.create_zone(zone)
             self.zone_manager = ZoneManager()
             for row in repo.get_zones():
+                default = defaults.get_zone(row.zone_id)
+                if row.trigger_classes is None and default is not None and default.trigger_classes:
+                    # Zones seeded before trigger_classes was persisted: backfill from YAML.
+                    repo.update_zone(row.zone_id, {"trigger_classes": list(default.trigger_classes)})
                 self.zone_manager.add_zone(Zone(
                     zone_id=row.zone_id, camera_id=row.camera_id, name=row.name,
                     zone_type=row.zone_type, points=[tuple(p) for p in row.points],
                     color=tuple(row.color), enabled=row.enabled,
+                    trigger_classes=list(row.trigger_classes or []),
                 ))
 
     def stop_all(self):
@@ -945,6 +1107,10 @@ class IBVAPPipeline:
             pipeline.request_stop()
         for pipeline in self.camera_pipelines.values():
             pipeline.stop()
+        if self.batch_coordinator is not None:
+            self.batch_coordinator.stop()
+        if self.enrichment_worker is not None:
+            self.enrichment_worker.shutdown()
 
     def get_pipeline(self, camera_id: str) -> CameraPipeline | None:
         return self.camera_pipelines.get(camera_id)
@@ -978,6 +1144,8 @@ class IBVAPPipeline:
             face_recognizer=self.face_recognizer,
             fine_classifier=self.fine_classifier,
             thresholds=self._thresholds_config,
+            batch_coordinator=self.batch_coordinator,
+            enrichment_worker=self.enrichment_worker,
         )
         self.camera_pipelines[camera.camera_id] = runtime
         if self._started:

@@ -4,7 +4,8 @@ Detects line/boundary crossing events using trajectory analysis.
 """
 
 import math
-from dataclasses import dataclass
+from collections import OrderedDict, deque
+from dataclasses import dataclass, field
 
 import cv2
 import numpy as np
@@ -25,6 +26,11 @@ class FenceLine:
     trigger_direction: str = "both"  # "both", "top_to_bottom", "bottom_to_top"
     enabled: bool = True
     color: tuple[int, int, int] = (0, 0, 255)
+    # Object classes this fence reacts to; empty = every class.
+    trigger_classes: list[str] = field(default_factory=list)
+
+    def applies_to(self, object_type: str | None) -> bool:
+        return not self.trigger_classes or object_type is None or object_type in self.trigger_classes
 
 
 @dataclass
@@ -46,12 +52,17 @@ class FenceDetector:
     Uses line segment intersection to determine if and where crossing occurred.
     """
 
+    # Per-fence memory of tracks that already crossed (one event per track),
+    # kept as a bounded LRU so long-running cameras don't grow it forever.
+    MAX_CROSSING_HISTORY = 5000
+
     def __init__(self):
         self._fences: dict[str, FenceLine] = {}
-        self._crossing_history: dict[str, set] = {}  # fence_id -> set of track_ids that crossed
-        from collections import deque
-
+        self._crossing_history: dict[str, OrderedDict[str, None]] = {}
         self._recent_crossings = deque(maxlen=500)
+
+    def camera_fences(self, camera_id: str) -> list[FenceLine]:
+        return [f for f in self._fences.values() if f.camera_id == camera_id]
 
     def load_from_config(self, config: dict):
         """Load fences from YAML config."""
@@ -68,6 +79,7 @@ class FenceDetector:
                     trigger_direction=fence_cfg.get("trigger_direction", "both"),
                     enabled=fence_cfg.get("enabled", True),
                     color=tuple(fence_cfg.get("color", [0, 0, 255])),
+                    trigger_classes=list(fence_cfg.get("trigger_classes") or []),
                 )
                 self.add_fence(fence)
                 logger.info(f"Loaded fence: {fence.name} for {camera_id}")
@@ -75,7 +87,7 @@ class FenceDetector:
     def add_fence(self, fence: FenceLine):
         """Add a virtual fence."""
         self._fences[fence.fence_id] = fence
-        self._crossing_history[fence.fence_id] = set()
+        self._crossing_history[fence.fence_id] = OrderedDict()
 
     def check_crossing(self, track: Track) -> list[FenceCrossingEvent]:
         """
@@ -92,11 +104,11 @@ class FenceDetector:
         curr_x, curr_y, curr_t = track.trajectory[-1]
 
         for fence_id, fence in self._fences.items():
-            if not fence.enabled or fence.camera_id != track.camera_id:
+            if not fence.enabled or fence.camera_id != track.camera_id or not fence.applies_to(track.object_type):
                 continue
 
             # Skip if already crossed this fence
-            if track.track_uuid in self._crossing_history.get(fence_id, set()):
+            if track.track_uuid in self._crossing_history.get(fence_id, ()):
                 continue
 
             # Check line segment intersection
@@ -125,7 +137,10 @@ class FenceDetector:
                 )
 
                 events.append(event)
-                self._crossing_history[fence_id].add(track.track_uuid)
+                history = self._crossing_history.setdefault(fence_id, OrderedDict())
+                history[track.track_uuid] = None
+                while len(history) > self.MAX_CROSSING_HISTORY:
+                    history.popitem(last=False)
                 self._recent_crossings.append(event)
                 track.has_crossed_fence = True
 
@@ -143,7 +158,7 @@ class FenceDetector:
         cx, cy = track.centroid
 
         for fence_id, fence in self._fences.items():
-            if not fence.enabled or fence.camera_id != track.camera_id:
+            if not fence.enabled or fence.camera_id != track.camera_id or not fence.applies_to(track.object_type):
                 continue
 
             dist = self._point_to_line_distance((cx, cy), fence.point_a, fence.point_b)

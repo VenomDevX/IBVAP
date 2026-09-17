@@ -132,3 +132,34 @@ def test_identity_and_anpr_results_persist(repo):
     assert plt.plate_id.startswith("PLT_")
     assert repo.get_identity_results("cam1")[0].identity_label == "guard_1"
     assert repo.get_anpr_results("cam1")[0].plate_text == "MH12AB3456"
+
+
+def test_ocr_reader_is_never_entered_concurrently(monkeypatch):
+    import threading
+    import time
+
+    import src.anpr.ocr as ocr
+
+    state = {"active": 0, "peak": 0}
+    guard = threading.Lock()
+
+    def fake_read(_reader, _img):
+        with guard:
+            state["active"] += 1
+            state["peak"] = max(state["peak"], state["active"])
+        time.sleep(0.02)
+        with guard:
+            state["active"] -= 1
+        return "MH12AB3456", 0.9
+
+    monkeypatch.setattr(ocr, "_reader", None)
+    monkeypatch.setattr(ocr, "_engine_name", "uninitialised")
+    monkeypatch.setattr(ocr, "_ENGINES", [("fake", lambda: object(), fake_read)])
+    crop = np.full((40, 200, 3), 255, np.uint8)
+    threads = [threading.Thread(target=ocr.read_plate, args=(crop,)) for _ in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    # EasyOCR's shared reader is not thread-safe; the enrichment pool must queue.
+    assert state["peak"] == 1

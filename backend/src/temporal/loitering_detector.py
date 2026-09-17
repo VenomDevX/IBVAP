@@ -71,6 +71,9 @@ class LoiteringDetector:
             legacy_key = (track.track_id, zone_id)
             if key not in self._zone_occupancy and legacy_key in self._zone_occupancy:
                 self._zone_occupancy[key] = self._zone_occupancy.pop(legacy_key)
+                # Exit cleanup looks zones up via zone_entry_times, so a
+                # migrated entry must be recorded there too.
+                track.zone_entry_times.setdefault(zone_id, self._zone_occupancy[key])
                 if legacy_key in self._flagged:
                     self._flagged[key] = self._flagged.pop(legacy_key)
 
@@ -107,22 +110,20 @@ class LoiteringDetector:
 
                     logger.info(f"Loitering detected: Track {track.track_id} in zone {zone_id} for {duration:.1f}s")
 
-        # Clean up zones the track has left
-        keys_to_remove = []
-        for key in self._zone_occupancy:
-            tid, zid = key
-            if tid == track.track_uuid and zid not in current_zones:
-                keys_to_remove.append(key)
-
-        for key in keys_to_remove:
-            del self._zone_occupancy[key]
+        # Clean up zones the track has left. Look up only this track's own
+        # zones — scanning every (track, zone) entry per track made this
+        # O(tracks²) per frame on cameras with 80+ active tracks.
+        for zone_id in [z for z in track.zone_entry_times if z not in current_zones]:
+            key = (track.track_uuid, zone_id)
+            self._zone_occupancy.pop(key, None)
             self._flagged.pop(key, None)
-            track.zone_entry_times.pop(key[1], None)
-            track.zone_session_ids.pop(key[1], None)
+            track.zone_entry_times.pop(zone_id, None)
+            track.zone_session_ids.pop(zone_id, None)
 
         track.is_loitering = any(
-            tid == track.track_uuid and zid in current_zones and now - started >= self.threshold_seconds
-            for (tid, zid), started in self._zone_occupancy.items()
+            now - self._zone_occupancy[(track.track_uuid, zid)] >= self.threshold_seconds
+            for zid in current_zones
+            if (track.track_uuid, zid) in self._zone_occupancy
         )
 
         return events

@@ -22,6 +22,9 @@ _MIN_LEN = 4
 _MAX_LEN = 12
 
 _lock = threading.Lock()
+# EasyOCR/Paddle readers are not thread-safe; the enrichment pool calls
+# read_plate() from several threads, so inference is serialised separately.
+_infer_lock = threading.Lock()
 _reader = None
 _engine_name = "uninitialised"
 
@@ -130,7 +133,9 @@ def read_plate(crop: np.ndarray) -> tuple[str, float]:
 
     reader_fn = next(r for n, _b, r in _ENGINES if n == engine)
     try:
-        raw, conf = reader_fn(reader, _preprocess(crop))
+        img = _preprocess(crop)
+        with _infer_lock:
+            raw, conf = reader_fn(reader, img)
     except Exception as e:  # noqa: BLE001
         logger.debug(f"ANPR OCR error ({engine}): {e}")
         return "", 0.0

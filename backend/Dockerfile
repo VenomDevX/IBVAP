@@ -11,8 +11,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Runtime deps only (training/optional deps live in requirements-training.txt)
-COPY requirements.txt .
+COPY requirements.txt requirements-cuda.txt ./
 RUN pip install -r requirements.txt
+
+# GPU build: `docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build`.
+# The CUDA PyTorch/onnxruntime wheels bundle their own CUDA libraries, so the slim
+# base works as long as the host exposes the GPU (NVIDIA Container Toolkit).
+ARG INSTALL_CUDA=0
+RUN if [ "$INSTALL_CUDA" = "1" ]; then pip install -r requirements-cuda.txt; fi
 
 COPY . .
 

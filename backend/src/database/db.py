@@ -92,6 +92,7 @@ class Database:
             (4, self._migration_camera_runtime),
             (5, self._migration_incident_state),
             (6, self._migration_profile_description),
+            (7, self._migration_zone_trigger_classes),
         ]
         for version, migration in migrations:
             if version in applied:
@@ -216,6 +217,15 @@ class Database:
         if "description" not in existing:
             with self.engine.begin() as conn:
                 conn.execute(text("ALTER TABLE vehicle_profiles ADD COLUMN description VARCHAR(1000) DEFAULT ''"))
+
+    def _migration_zone_trigger_classes(self, insp, text):
+        if not insp.has_table("zones"):
+            return
+        existing = {column["name"] for column in insp.get_columns("zones")}
+        if "trigger_classes" not in existing:
+            ddl = "JSONB" if self.db_url.startswith("postgres") else "JSON"
+            with self.engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE zones ADD COLUMN trigger_classes {ddl}"))
 
     def get_session(self) -> Session:
         """Get a new database session."""

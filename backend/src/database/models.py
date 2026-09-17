@@ -227,6 +227,8 @@ class ZoneModel(Base):
     zone_type = Column(String(50), default="restricted")
     points = Column(JSON, default=list)
     color = Column(JSON, default=[255, 0, 0])
+    # Object classes that trigger this zone; NULL/empty = every class.
+    trigger_classes = Column(JSON, nullable=True)
     enabled = Column(Boolean, default=True)
     deleted = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -303,3 +305,20 @@ class EventEvidenceModel(Base):
     clip_path = Column(String(500), nullable=True)
     evidence_type = Column(String(30), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+class EvidenceCheckpointModel(Base):
+    """Where a retention purge cut a hash-chained table.
+
+    `anchor_hash` is the chain hash of the last purged row, i.e. the prev_hash
+    the first surviving row must carry. The verifier accepts a truncated chain
+    head only at a recorded (and itself HMAC-signed) checkpoint.
+    """
+
+    __tablename__ = "evidence_checkpoints"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    table_name = Column(String(50), nullable=False, index=True)
+    anchor_hash = Column(String(64), nullable=False)
+    rows_purged = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    mac = Column(String(64), nullable=False)
