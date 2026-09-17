@@ -142,7 +142,7 @@ alerts:
   # Minimum risk score to generate an alert
   min_alert_risk_score: 20
   max_snapshots_per_hour_per_camera: 60
-  max_snapshot_storage_mb: 2048
+  max_snapshot_storage_mb: 20000   # 20 GB; ~5.7 GB in use on 2026-09-17
   min_free_storage_mb: 1024
 
 evidence:

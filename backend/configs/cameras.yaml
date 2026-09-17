@@ -154,3 +154,16 @@ cameras:
       - "tracking"
       - "face"
       - "anpr"
+
+  - id: "CAM_PLATE_DEMO"
+    name: "Checkpoint ANPR Demo (synthetic Indian plates)"
+    # Real intersection footage with rendered Indian plates painted over the
+    # original ones: scripts/make_indian_plate_demo.py. Ground truth in the .json.
+    source: "./data/demo/indian_plates_synthetic.mp4"
+    fps: 15
+    resolution: [1920, 1080]
+    capabilities:
+      - "detection"
+      - "tracking"
+      - "anpr"
+    enabled: true

@@ -114,7 +114,10 @@ class AlertEngine:
         # --- Rate limiting ---
         camera_id = fused_event.camera_id
         self._rate_counter[camera_id] = [t for t in self._rate_counter[camera_id] if now - t < 60]
-        if not escalating and len(self._rate_counter[camera_id]) >= self.max_alerts_per_minute:
+        # A busy camera's routine alerts must never crowd out a critical one
+        # (e.g. a wanted vehicle): critical alerts bypass the limit but still count.
+        critical = level >= self._level("critical")
+        if not escalating and not critical and len(self._rate_counter[camera_id]) >= self.max_alerts_per_minute:
             logger.warning(f"Rate limit reached for camera {camera_id}")
             return None
 
