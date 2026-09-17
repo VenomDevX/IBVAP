@@ -156,11 +156,23 @@ async def update_zone(zone_id: str, update: ZoneUpdate, user: dict = Depends(req
             changes["points"] = [list(point) for point in changes["points"]]
         if "color" in changes and changes["color"] is not None:
             changes["color"] = list(changes["color"])
+        existing = next((z for z in repo.get_zones() if z.zone_id == zone_id), None)
+        field_map = {"camera_id": "camera_id", "name": "name", "type": "zone_type", "points": "points",
+                     "color": "color", "enabled": "enabled", "trigger_classes": "trigger_classes"}
+        before = {f: getattr(existing, field_map[f], None) for f in changes} if existing else {}
         row = repo.update_zone(zone_id, changes)
         if row is None:
             raise HTTPException(status_code=404, detail="Zone not found")
         actor = user.get("email") or user.get("user_id") or "unknown"
-        repo.create_audit_log("update_zone", actor, {"zone_id": zone_id, "fields": sorted(changes)})
+        diff = {
+            f: ({"from": "(shape)", "to": "(new shape)"} if f == "points" else {"from": before.get(f), "to": v})
+            for f, v in changes.items() if before.get(f) != v
+        }
+        if set(diff) == {"enabled"}:
+            action = "enable_zone" if changes["enabled"] else "disable_zone"
+            repo.create_audit_log(action, actor, {"zone_id": zone_id, "name": row.name})
+        elif diff:
+            repo.create_audit_log("update_zone", actor, {"zone_id": zone_id, "name": row.name, "changes": diff})
 
         from src.api.app import get_pipeline
         from src.spatial.zone_manager import Zone

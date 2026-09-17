@@ -180,7 +180,7 @@ cameras:
     name: "Mumbai Arterial Road"
     source: "./data/demo/india_mumbai_traffic_4k.mp4"
     fps: 10  # 4K decode is heavy; 10 fps keeps four 4K cameras responsive
-    resolution: [3840, 2160]
+    resolution: [1920, 1080]  # 4K source, downscaled on ingest (4x less frame memory)
     location: "Mumbai, Maharashtra"
     capabilities: ["detection", "tracking", "face", "anpr"]
     enabled: true
@@ -189,7 +189,7 @@ cameras:
     name: "Bhopal Signal Intersection"
     source: "./data/demo/india_bhopal_intersection_4k.mp4"
     fps: 10
-    resolution: [3840, 2160]
+    resolution: [1920, 1080]  # 4K source, downscaled on ingest (4x less frame memory)
     location: "Bhopal, Madhya Pradesh"
     capabilities: ["detection", "tracking", "face", "anpr"]
     enabled: true
@@ -198,7 +198,7 @@ cameras:
     name: "Kolkata Bus Street"
     source: "./data/demo/india_kolkata_street_buses_4k.mp4"
     fps: 10
-    resolution: [3840, 2160]
+    resolution: [1920, 1080]  # 4K source, downscaled on ingest (4x less frame memory)
     location: "Kolkata, West Bengal"
     capabilities: ["detection", "tracking", "face", "anpr"]
     enabled: true
@@ -207,7 +207,7 @@ cameras:
     name: "Flyover Signal (elevated view)"
     source: "./data/demo/india_flyover_signal_4k.mp4"
     fps: 10
-    resolution: [3840, 2160]
+    resolution: [1920, 1080]  # 4K source, downscaled on ingest (4x less frame memory)
     location: "India"
     capabilities: ["detection", "tracking", "anpr"]
     enabled: true

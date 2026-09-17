@@ -7,6 +7,8 @@ import { Button } from '@/src/components/ui/Button';
 import DataTable, { type Column } from '@/src/components/ui/DataTable';
 import { SearchInput } from '@/src/components/ui/Field';
 import { Toolbar } from '@/src/components/ui/Section';
+import SegmentedControl from '@/src/components/ui/SegmentedControl';
+import { describeAudit } from '@/src/lib/audit';
 import { EmptyState } from '@/src/components/ui/States';
 import type { AuditEntry } from '@/src/types';
 
@@ -21,11 +23,12 @@ export default function AuditPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [scope, setScope] = useState<'actions' | 'all'>('actions');
 
   const load = useCallback(async () => {
     setRefreshing(true);
     try {
-      setRows(await apiJson<AuditEntry[]>('/api/audit?limit=200'));
+      setRows(await apiJson<AuditEntry[]>(`/api/audit?limit=200${scope === 'actions' ? '&actions_only=true' : ''}`));
       setError(null);
     } catch (err) {
       setError(errorMessage(err));
@@ -33,7 +36,7 @@ export default function AuditPage() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [scope]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -44,7 +47,16 @@ export default function AuditPage() {
       render: row => <span className="num whitespace-nowrap text-muted">{formatTime(row.timestamp)}</span>,
     },
     { key: 'username', header: 'User', sortable: true, render: row => <span className="font-medium">{row.username}</span> },
-    { key: 'action', header: 'Action', sortable: true, accessor: row => row.action, render: row => formatStatus(row.action) },
+    {
+      key: 'action', header: 'Action', sortable: true,
+      accessor: row => `${describeAudit(row.action, row.details) ?? ''} ${row.action}`,
+      render: row => {
+        const summary = describeAudit(row.action, row.details);
+        return summary
+          ? <span title={formatStatus(row.action)}>{summary}</span>
+          : <span className="font-mono text-xs">{row.action.includes(' /') ? row.action : formatStatus(row.action)}</span>;
+      },
+    },
     {
       key: 'ip_address', header: 'IP address', hideBelow: 'md', accessor: row => row.ip_address ?? '',
       render: row => <span className="num font-mono text-xs text-muted" translate="no">{row.ip_address || 'Not recorded'}</span>,
@@ -63,6 +75,12 @@ export default function AuditPage() {
   return (
     <div>
       <Toolbar>
+        <SegmentedControl
+          ariaLabel="Audit entries to show"
+          value={scope}
+          onChange={value => { setScope(value); setLoading(true); }}
+          options={[{ value: 'actions', label: 'User actions' }, { value: 'all', label: 'All requests' }]}
+        />
         <SearchInput placeholder="Filter by user, action or IP…" aria-label="Filter audit log" value={query}
           onChange={e => setQuery(e.target.value)} wrapperClassName="w-full sm:w-80" />
         <span className="num text-sm text-muted">Latest {rows.length} entries</span>

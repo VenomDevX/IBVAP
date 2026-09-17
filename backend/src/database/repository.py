@@ -92,18 +92,28 @@ class Repository:
         camera.updated_at = datetime.utcnow()
         self.session.commit()
 
-    def update_camera(self, camera_id: str, changes: dict) -> CameraModel | None:
+    CAMERA_FIELDS = {
+        "name": "name", "source": "stream_url", "type": "camera_type",
+        "location": "location_label", "latitude": "latitude", "longitude": "longitude",
+        "enabled": "enabled", "fps_limit": "fps_limit", "resolution": "resolution",
+    }
+
+    def update_camera(self, camera_id: str, changes: dict, by_user: bool = False) -> CameraModel | None:
+        """by_user: the change came from a person (API), so remember those fields
+        and never let the cameras.yaml startup sync overwrite them."""
         camera = self.get_camera(camera_id)
         if camera is None:
             return None
-        mapping = {
-            "name": "name", "source": "stream_url", "type": "camera_type",
-            "location": "location_label", "latitude": "latitude", "longitude": "longitude",
-            "enabled": "enabled", "fps_limit": "fps_limit", "resolution": "resolution",
-        }
-        for source, target in mapping.items():
+        touched = []
+        for source, target in self.CAMERA_FIELDS.items():
             if source in changes:
+                if getattr(camera, target) != changes[source]:
+                    touched.append(source)
                 setattr(camera, target, changes[source])
+        if by_user and touched:
+            # Only fields whose value changed: re-saving a form unchanged must not
+            # freeze every field against future cameras.yaml updates.
+            camera.user_overrides = sorted(set(camera.user_overrides or []) | set(touched))
         camera.updated_at = datetime.utcnow()
         self.session.commit()
         return camera
@@ -114,6 +124,7 @@ class Repository:
             return None
         camera.enabled = False
         camera.status = "retired"
+        camera.user_overrides = sorted(set(camera.user_overrides or []) | {"enabled"})
         camera.updated_at = datetime.utcnow()
         self.session.commit()
         return camera
@@ -730,8 +741,12 @@ class Repository:
         self.session.add(log)
         self.session.commit()
 
-    def get_audit_logs(self, limit: int = 100) -> list[AuditLogModel]:
-        return self.session.query(AuditLogModel).order_by(desc(AuditLogModel.timestamp)).limit(limit).all()
+    def get_audit_logs(self, limit: int = 100, actions_only: bool = False) -> list[AuditLogModel]:
+        """actions_only: skip the raw per-request trail ("PATCH /api/..."), keep named actions."""
+        query = self.session.query(AuditLogModel)
+        if actions_only:
+            query = query.filter(~AuditLogModel.action.like("% /%"))
+        return query.order_by(desc(AuditLogModel.timestamp)).limit(limit).all()
 
     # ======================== IDENTITY / ANPR RESULTS ========================
 

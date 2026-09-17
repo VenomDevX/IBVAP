@@ -1016,42 +1016,9 @@ class IBVAPPipeline:
         else:
             self.model_registry.disabled("anpr_detector", reason="optional detector weights not installed")
 
-        # Initialize database
-        db = get_database()
-
         # Seed every configured camera, including disabled cameras, before zones
         # so foreign-key enforcement never depends on startup ordering.
-        with db.get_session() as session:
-            repo = Repository(session)
-            for cam_cfg in cameras_config.get("cameras", []):
-                existing = repo.get_camera(cam_cfg["id"])
-                if existing is None:
-                    repo.create_camera(
-                        camera_id=cam_cfg["id"],
-                        name=cam_cfg["name"],
-                        stream_url=cam_cfg["source"],
-                        camera_type=cam_cfg.get("type", "general"),
-                        location_label=cam_cfg.get("location", ""),
-                        latitude=cam_cfg.get("latitude"),
-                        longitude=cam_cfg.get("longitude"),
-                        enabled=cam_cfg.get("enabled", True),
-                        fps_limit=cam_cfg.get("fps", cam_cfg.get("fps_limit", 15)),
-                        resolution=cam_cfg.get("resolution"),
-                    )
-                else:
-                    # Keep renamed/replaced demo sources synchronized with the
-                    # persisted camera rows shown to administrators.
-                    repo.update_camera(cam_cfg["id"], {
-                        "name": cam_cfg["name"],
-                        "source": cam_cfg["source"],
-                        "type": cam_cfg.get("type", "general"),
-                        "location": cam_cfg.get("location", ""),
-                        "latitude": cam_cfg.get("latitude"),
-                        "longitude": cam_cfg.get("longitude"),
-                        "enabled": cam_cfg.get("enabled", True),
-                        "fps_limit": cam_cfg.get("fps", cam_cfg.get("fps_limit", 15)),
-                        "resolution": cam_cfg.get("resolution"),
-                    })
+        self._sync_cameras(cameras_config)
 
         # Import YAML zone defaults once; database rows, including soft
         # deletions, take precedence after their parent cameras exist.
@@ -1073,68 +1040,56 @@ class IBVAPPipeline:
         except Exception as exc:
             logger.error("Watchlist load failed error={}", type(exc).__name__)
 
-        # Initialize camera pipelines
-        for cam_cfg in cameras_config.get("cameras", []):
-            if not cam_cfg.get("enabled", True):
-                continue
-
-            # cameras.yaml uses `fps:` and `resolution: [w, h]`, but CameraInfo's
-            # fields are fps_limit/resolution(tuple). Neither was actually being
-            # read from config before this fix - fps_limit silently defaulted to
-            # 15 regardless of `fps:` in the file, and `resolution` was never
-            # passed at all, so a downscale-on-ingest entry in cameras.yaml (the
-            # intended way to run a 4K source without decoding it at full size)
-            # had zero effect. Confirmed by an OpenCV OutOfMemoryError on two 4K
-            # demo cameras that were configured to downscale to 1080p and still
-            # connected, and crashed, at their native 3840x2160.
-            res_cfg = cam_cfg.get("resolution")
-            camera_source = cam_cfg["source"]
-            if "://" not in camera_source and not os.path.isabs(camera_source):
-                camera_source = str((Path(__file__).resolve().parents[2] / camera_source).resolve())
-            camera_info = CameraInfo(
-                camera_id=cam_cfg["id"],
-                name=cam_cfg["name"],
-                source=camera_source,
-                camera_type=cam_cfg.get("type", "general"),
-                fps_limit=cam_cfg.get("fps", cam_cfg.get("fps_limit", 15)),
-                resolution=tuple(res_cfg) if res_cfg else None,
-            )
-
-            pipeline = CameraPipeline(
-                camera_info=camera_info,
-                detector=self.detector,
-                zone_manager=self.zone_manager,
-                fence_detector=self.fence_detector,
-                risk_config=self._risk_config,
-                alert_engine=self.alert_engine,
-                face_recognizer=self.face_recognizer,
-                fine_classifier=self.fine_classifier,
-                thresholds=thresholds_config,
-                batch_coordinator=self.batch_coordinator,
-                enrichment_worker=self.enrichment_worker,
-            )
-
-            self.camera_pipelines[camera_info.camera_id] = pipeline
-
-            # Store camera in DB
-            try:
-                session = db.get_session()
-                repo = Repository(session)
-                existing = repo.get_camera(camera_info.camera_id)
-                if not existing:
-                    repo.create_camera(
-                        camera_id=camera_info.camera_id,
-                        name=camera_info.name,
-                        stream_url=camera_info.source,
-                        camera_type=camera_info.camera_type,
-                        latitude=None,
-                        longitude=None,
-                    )
-                session.close()
-            except Exception as e:
-                logger.error(f"DB camera save error: {e}")
+        # Start cameras from the database, not cameras.yaml: it holds the user's
+        # enable/disable choices and cameras added in the UI.
+        with get_database().get_session() as session:
+            for camera in self._cameras_to_start(session):
+                self.configure_camera(camera)
 
         logger.success(f"IBVAP Pipeline initialized with {len(self.camera_pipelines)} cameras")
+
+    def _sync_cameras(self, cameras_config: dict) -> None:
+        """cameras.yaml seeds and refreshes camera rows, except for fields a user
+        changed (CameraModel.user_overrides) and cameras a user retired."""
+        with get_database().get_session() as session:
+            repo = Repository(session)
+            for cam_cfg in cameras_config.get("cameras", []):
+                values = {
+                    "name": cam_cfg["name"],
+                    "source": cam_cfg["source"],
+                    "type": cam_cfg.get("type", "general"),
+                    "location": cam_cfg.get("location", ""),
+                    "latitude": cam_cfg.get("latitude"),
+                    "longitude": cam_cfg.get("longitude"),
+                    "enabled": cam_cfg.get("enabled", True),
+                    "fps_limit": cam_cfg.get("fps", cam_cfg.get("fps_limit", 15)),
+                    "resolution": cam_cfg.get("resolution"),
+                }
+                existing = repo.get_camera(cam_cfg["id"])
+                if existing is None:
+                    repo.create_camera(
+                        camera_id=cam_cfg["id"], name=values["name"], stream_url=values["source"],
+                        camera_type=values["type"], location_label=values["location"],
+                        latitude=values["latitude"], longitude=values["longitude"],
+                        enabled=values["enabled"], fps_limit=values["fps_limit"],
+                        resolution=values["resolution"],
+                    )
+                    continue
+                if existing.status == "retired":
+                    continue
+                keep = set(existing.user_overrides or [])
+                repo.update_camera(cam_cfg["id"], {k: v for k, v in values.items() if k not in keep})
+
+    @staticmethod
+    def _cameras_to_start(session) -> list:
+        from src.database.models import CameraModel
+
+        return (
+            session.query(CameraModel)
+            .filter(CameraModel.enabled.is_(True), CameraModel.status != "retired")
+            .order_by(CameraModel.id)
+            .all()
+        )
 
     def start_all(self):
         """Start all camera pipelines."""

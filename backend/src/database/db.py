@@ -94,6 +94,7 @@ class Database:
             (6, self._migration_profile_description),
             (7, self._migration_zone_trigger_classes),
             (8, self._migration_chain_v2),
+            (9, self._migration_camera_user_overrides),
         ]
         for version, migration in migrations:
             if version in applied:
@@ -249,6 +250,15 @@ class Database:
                         text("INSERT INTO evidence_chain_heads(table_name, head_hash, updated_at) VALUES (:t, :h, :at)"),
                         {"t": table, "h": head, "at": datetime.utcnow()},
                     )
+
+    def _migration_camera_user_overrides(self, insp, text):
+        if not insp.has_table("cameras"):
+            return
+        existing = {column["name"] for column in insp.get_columns("cameras")}
+        if "user_overrides" not in existing:
+            ddl = "JSONB" if self.db_url.startswith("postgres") else "JSON"
+            with self.engine.begin() as conn:
+                conn.execute(text(f"ALTER TABLE cameras ADD COLUMN user_overrides {ddl}"))
 
     def get_session(self) -> Session:
         """Get a new database session."""

@@ -28,6 +28,9 @@ class CameraModel(Base):
     enabled = Column(Boolean, default=True)
     fps_limit = Column(Integer, default=15)
     resolution = Column(JSON, nullable=True)
+    # API field names a user changed (e.g. ["enabled"]). Startup's cameras.yaml
+    # sync never overwrites these, so a user's choice survives a restart.
+    user_overrides = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     last_heartbeat = Column(DateTime, nullable=True)
