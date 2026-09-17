@@ -59,7 +59,7 @@ def test_extract_plate_shape(monkeypatch):
     monkeypatch.setattr(anpr, "read_plate", lambda img: ("KA05MN9999", 0.8))
     monkeypatch.setattr(anpr, "_plate_detector", lambda: None)
     out = anpr.extract_plate(np.full((120, 240, 3), 255, np.uint8))
-    assert out == {"text": "KA05MN9999", "confidence": 0.8, "bbox": None}
+    assert out == {"text": "KA05MN9999", "confidence": 0.8, "bbox": None, "format": "standard"}
     assert anpr.extract_license_plate(np.full((120, 240, 3), 255, np.uint8)) == "KA05MN9999"
 
 

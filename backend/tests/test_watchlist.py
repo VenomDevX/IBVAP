@@ -223,7 +223,7 @@ def test_pipeline_applies_plate_hit(repo, tmp_path, monkeypatch):
     service = WatchlistService()
     service.load(repo.session)
     monkeypatch.setattr(pipeline_mod, "get_watchlist", lambda: service)
-    monkeypatch.setattr(pipeline_mod, "extract_plate", lambda crop: {"text": "MH12AB3456", "confidence": 0.9})
+    monkeypatch.setattr(pipeline_mod, "extract_plate", lambda crop, **_: {"text": "MH12AB3456", "confidence": 0.9})
 
     cam = CameraPipeline(CameraInfo("c", "C", "rtsp://x"), Mock(), ZoneManager(), FenceDetector(), {},
                          AlertEngine(snapshots_dir=str(tmp_path)))

@@ -153,6 +153,7 @@ class CameraPipeline:
             min_confidence=anpr_cfg.get("consensus_min_confidence", 0.55),
         )
         self._ANPR_RECHECK_S = float(anpr_cfg.get("recheck_seconds", 1.0))
+        self._ANPR_STRICT_FORMAT = bool(anpr_cfg.get("strict_format", True))
         evidence_cfg = thresholds.get("evidence", {})
         self.evidence_buffer = EvidenceClipBuffer(
             camera_info.camera_id,
@@ -400,7 +401,7 @@ class CameraPipeline:
         crop = track.best_frame
 
         def _work() -> None:
-            plate = extract_plate(crop)
+            plate = extract_plate(crop, strict_format=self._ANPR_STRICT_FORMAT)
             if plate is not None and plate["text"] != "Unknown" and plate["confidence"] > 0:
                 text, confidence = self.plate_consensus.add(track, plate["text"], plate["confidence"])
                 if text != "UNKNOWN":
