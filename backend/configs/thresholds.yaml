@@ -126,6 +126,12 @@ anpr:
   # Only keep reads that fit an Indian plate format (fixes O/0, I/1, B/8 by
   # position). Set false to also keep foreign / non-standard plates.
   strict_format: true
+  # Only read plates the detector found (license_plate class, val mAP50 0.95).
+  # false = also guess a plate region inside vehicles without one (slower, noisier).
+  require_detected_plate: true
+  # Run OCR in a separate process: PaddlePaddle holds the Python GIL while it
+  # reads, which otherwise stalls detection and the API.
+  ocr_subprocess: true
   consensus_min_confidence: 0.55
 
 alerts:
@@ -148,7 +154,7 @@ evidence:
   jpeg_quality: 65
   # Budgets (clips are ~1.5 MB each). Only alerting incidents are clipped.
   max_clips_per_hour: 60        # per camera
-  max_clip_storage_mb: 4096     # shared by all cameras (outputs/clips)
+  max_clip_storage_mb: 30000    # shared by all cameras (outputs/clips); ~20k clips
   min_free_storage_mb: 1024     # stop recording below this much free disk
 
 classifier:

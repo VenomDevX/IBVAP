@@ -93,3 +93,31 @@ def test_pipeline_ocrs_the_located_plate(tmp_path, monkeypatch):
     car.plate_crop = np.zeros((36, 96, 3), np.uint8)
     cam._run_anpr_check(car)
     assert seen == {"shape": (36, 96, 3), "located": True}
+
+
+def test_vehicle_without_detected_plate_is_not_ocrd_by_default(tmp_path, monkeypatch):
+    from unittest.mock import Mock
+
+    from src.alerts.alert_engine import AlertEngine
+    from src.ingestion.video_source import CameraInfo
+    from src.pipeline import pipeline as pipeline_mod
+    from src.pipeline.pipeline import CameraPipeline
+    from src.spatial.fence_detector import FenceDetector
+    from src.spatial.zone_manager import ZoneManager
+
+    calls = []
+    monkeypatch.setattr(pipeline_mod, "extract_plate", lambda crop, **kw: calls.append(kw) or {"text": "Unknown", "confidence": 0})
+    cam = CameraPipeline(CameraInfo("c", "C", "rtsp://x"), Mock(), ZoneManager(), FenceDetector(), {},
+                         AlertEngine(snapshots_dir=str(tmp_path)))
+    car = _vehicle()
+    car.best_frame = np.zeros((150, 200, 3), np.uint8)
+    assert not cam._anpr_due(car)
+    car.plate_crop = np.zeros((30, 90, 3), np.uint8)
+    assert cam._anpr_due(car)
+
+    loose = CameraPipeline(CameraInfo("d", "D", "rtsp://x"), Mock(), ZoneManager(), FenceDetector(), {},
+                           AlertEngine(snapshots_dir=str(tmp_path)),
+                           thresholds={"anpr": {"require_detected_plate": False}})
+    guess = _vehicle()
+    guess.best_frame_score = 0.5
+    assert loose._anpr_due(guess)

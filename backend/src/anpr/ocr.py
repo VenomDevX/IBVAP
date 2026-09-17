@@ -12,6 +12,10 @@ The engine is loaded lazily on first call (model download can be slow) and reuse
 import os
 import re
 import threading
+from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
+from concurrent.futures.process import BrokenProcessPool
+from multiprocessing import get_context
 
 import cv2
 import numpy as np
@@ -21,6 +25,7 @@ _PLATE_RE = re.compile(r"[^A-Z0-9]")
 _MIN_LEN = 4
 _MAX_LEN = 12
 UPSCALE_WIDTH = int(os.getenv("IBVAP_OCR_UPSCALE_WIDTH", "200"))
+OCR_THREADS = max(1, int(os.getenv("IBVAP_OCR_THREADS", "2")))
 
 _lock = threading.Lock()
 # EasyOCR/Paddle readers are not thread-safe; the enrichment pool calls
@@ -83,6 +88,9 @@ def _paddle_reader():
             use_doc_unwarping=False,
             use_textline_orientation=False,
             enable_mkldnn=False,
+            # Paddle defaults to 10 threads per call; with the detector, tracker
+            # and web server on the same CPU that starved the whole backend.
+            cpu_threads=OCR_THREADS,
         )
     except (TypeError, ValueError):
         return PaddleOCR(use_angle_cls=True, lang="en", show_log=False)  # 2.x
@@ -153,10 +161,65 @@ def _init() -> None:
     logger.warning("ANPR OCR unavailable: install/configure a supported OCR engine")
 
 
+# PaddlePaddle holds the GIL while it infers (~0.5 s per plate), which froze
+# detection and the web server. In subprocess mode the engine lives in one
+# worker process instead; calls queue up behind it.
+_use_pool = False
+_pool: ProcessPoolExecutor | None = None
+_pool_lock = threading.Lock()
+_POOL_TIMEOUT_S = 60.0
+
+
+def use_subprocess(enabled: bool) -> None:
+    global _use_pool, _pool
+    with _pool_lock:
+        _use_pool = bool(enabled)
+        if not enabled and _pool is not None:
+            _pool.shutdown(wait=False, cancel_futures=True)
+            _pool = None
+
+
+def _get_pool() -> ProcessPoolExecutor:
+    global _pool
+    with _pool_lock:
+        if _pool is None:
+            _pool = ProcessPoolExecutor(max_workers=1, mp_context=get_context("spawn"))
+        return _pool
+
+
+def _reset_pool(pool: ProcessPoolExecutor) -> None:
+    global _pool
+    with _pool_lock:
+        if _pool is pool:
+            _pool = None
+    pool.shutdown(wait=False, cancel_futures=True)
+
+
+def _in_pool(fn, *args, default):
+    pool = _get_pool()
+    try:
+        return pool.submit(fn, *args).result(timeout=_POOL_TIMEOUT_S)
+    except BrokenProcessPool:
+        logger.warning("ANPR OCR worker died; starting a new one")
+        _reset_pool(pool)
+    except FutureTimeout:
+        logger.warning("ANPR OCR worker timed out; restarting it")
+        _reset_pool(pool)
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"ANPR OCR worker error: {e}")
+    return default
+
+
 def read_plate(crop: np.ndarray) -> tuple[str, float]:
     """Return (plate_text, confidence 0-1). ('', 0.0) if nothing legible."""
     if crop is None or getattr(crop, "size", 0) == 0:
         return "", 0.0
+    if _use_pool:
+        return _in_pool(_read_local, np.ascontiguousarray(crop), default=("", 0.0))
+    return _read_local(crop)
+
+
+def _read_local(crop: np.ndarray) -> tuple[str, float]:
 
     with _lock:
         _init()
@@ -181,6 +244,12 @@ def read_plate(crop: np.ndarray) -> tuple[str, float]:
 
 
 def engine_name() -> str:
+    if _use_pool:
+        return _in_pool(_engine_name_local, default="unavailable")
+    return _engine_name_local()
+
+
+def _engine_name_local() -> str:
     with _lock:
         _init()
         return _engine_name

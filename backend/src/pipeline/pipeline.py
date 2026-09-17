@@ -15,6 +15,7 @@ from loguru import logger
 
 from src.alerts.alert_engine import AlertEngine
 from src.alerts.evidence_clip import EvidenceClipBuffer
+from src.anpr import ocr as plate_ocr
 from src.anpr.plate_assign import assign_plates, split_plates
 from src.behavior.behavior_engine import BehaviorEngine
 from src.classification.fine_classifier import FineClassifier
@@ -155,6 +156,7 @@ class CameraPipeline:
         )
         self._ANPR_RECHECK_S = float(anpr_cfg.get("recheck_seconds", 1.0))
         self._ANPR_STRICT_FORMAT = bool(anpr_cfg.get("strict_format", True))
+        self._ANPR_REQUIRE_DETECTED_PLATE = bool(anpr_cfg.get("require_detected_plate", True))
         evidence_cfg = thresholds.get("evidence", {})
         self.evidence_buffer = EvidenceClipBuffer(
             camera_info.camera_id,
@@ -328,11 +330,7 @@ class CameraPipeline:
                             )
                             if improved and vehicle:
                                 track.color = get_dominant_color(track.best_frame)
-                            if (
-                                vehicle
-                                and track.license_plate == "Unknown"
-                                and (track.plate_crop is not None or track.best_frame_score >= 0.35)
-                            ):
+                            if vehicle and self._anpr_due(track):
                                 last = self._anpr_check_times.get(track.track_uuid, 0.0)
                                 if time.time() - last >= self._ANPR_RECHECK_S:
                                     self._anpr_check_times[track.track_uuid] = time.time()
@@ -398,6 +396,14 @@ class CameraPipeline:
             except Exception as e:
                 logger.error(f"Pipeline error ({self.camera_info.camera_id}): {e}")
                 time.sleep(0.1)
+
+    def _anpr_due(self, track) -> bool:
+        """Only OCR a plate the detector found (unless configured to guess)."""
+        if track.license_plate != "Unknown":
+            return False
+        if track.plate_crop is not None:
+            return True
+        return not self._ANPR_REQUIRE_DETECTED_PLATE and track.best_frame_score >= 0.35
 
     def _run_anpr_check(self, track) -> None:
         """ANPR OCR is slow (easyocr/paddleocr/tesseract cascade). Run it off
@@ -1051,6 +1057,14 @@ class IBVAPPipeline:
         # deletions, take precedence after their parent cameras exist.
         self._restore_zones(zones_config)
 
+        if thresholds_config.get("anpr", {}).get("ocr_subprocess", True):
+            plate_ocr.use_subprocess(True)
+            # Loading PaddleOCR in the worker takes ~30 s; do it now, not on the first plate.
+            threading.Thread(
+                target=lambda: logger.info("ANPR OCR worker ready: {}", plate_ocr.engine_name()),
+                name="ocr-warmup", daemon=True,
+            ).start()
+
         watchlist = get_watchlist()
         watchlist.face_threshold = float(fc.get("watchlist_threshold", fc.get("similarity_threshold", 0.45)))
         try:
@@ -1163,6 +1177,7 @@ class IBVAPPipeline:
             self.batch_coordinator.stop()
         if self.enrichment_worker is not None:
             self.enrichment_worker.shutdown()
+        plate_ocr.use_subprocess(False)
 
     def get_pipeline(self, camera_id: str) -> CameraPipeline | None:
         return self.camera_pipelines.get(camera_id)
