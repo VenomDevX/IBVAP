@@ -59,7 +59,7 @@ def test_extract_plate_shape(monkeypatch):
     monkeypatch.setattr(anpr, "read_plate", lambda img: ("KA05MN9999", 0.8))
     monkeypatch.setattr(anpr, "_plate_detector", lambda: None)
     out = anpr.extract_plate(np.full((120, 240, 3), 255, np.uint8))
-    assert out == {"text": "KA05MN9999", "confidence": 0.8, "bbox": None}
+    assert out == {"text": "KA05MN9999", "confidence": 0.8, "bbox": None, "format": "standard"}
     assert anpr.extract_license_plate(np.full((120, 240, 3), 255, np.uint8)) == "KA05MN9999"
 
 
@@ -132,3 +132,70 @@ def test_identity_and_anpr_results_persist(repo):
     assert plt.plate_id.startswith("PLT_")
     assert repo.get_identity_results("cam1")[0].identity_label == "guard_1"
     assert repo.get_anpr_results("cam1")[0].plate_text == "MH12AB3456"
+
+
+def test_ocr_reader_is_never_entered_concurrently(monkeypatch):
+    import threading
+    import time
+
+    import src.anpr.ocr as ocr
+
+    state = {"active": 0, "peak": 0}
+    guard = threading.Lock()
+
+    def fake_read(_reader, _img):
+        with guard:
+            state["active"] += 1
+            state["peak"] = max(state["peak"], state["active"])
+        time.sleep(0.02)
+        with guard:
+            state["active"] -= 1
+        return "MH12AB3456", 0.9
+
+    monkeypatch.setattr(ocr, "_reader", None)
+    monkeypatch.setattr(ocr, "_engine_name", "uninitialised")
+    monkeypatch.setattr(ocr, "_ENGINES", [("fake", lambda: object(), fake_read)])
+    crop = np.full((40, 200, 3), 255, np.uint8)
+    threads = [threading.Thread(target=ocr.read_plate, args=(crop,)) for _ in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    # EasyOCR's shared reader is not thread-safe; the enrichment pool must queue.
+    assert state["peak"] == 1
+
+
+def test_face_gallery_loads_documented_and_legacy_formats(tmp_path):
+    import json
+
+    from src.face.face_matcher import FaceMatcher
+
+    documented = tmp_path / "gallery.json"
+    documented.write_text(json.dumps({
+        "_info": "comment",
+        "identities": [
+            {"name": "guard_1", "embedding": [1.0, 0.0]},
+            {"name": "guard_2", "embeddings": [[0.0, 1.0], [0.1, 0.9]]},
+        ],
+    }), encoding="utf-8")
+    matcher = FaceMatcher(gallery_path=str(documented))
+    assert {k: len(v) for k, v in matcher._gallery.items()} == {"guard_1": 1, "guard_2": 2}
+
+    # The shipped empty template must load cleanly (it used to raise on "_info").
+    empty = tmp_path / "empty.json"
+    empty.write_text(json.dumps({"_info": "x", "identities": []}), encoding="utf-8")
+    assert FaceMatcher(gallery_path=str(empty))._gallery == {}
+
+    legacy = tmp_path / "legacy.json"
+    legacy.write_text(json.dumps({"_note": "x", "guard_3": [[0.5, 0.5]]}), encoding="utf-8")
+    assert list(FaceMatcher(gallery_path=str(legacy))._gallery) == ["guard_3"]
+
+
+def test_face_gallery_save_round_trips(tmp_path):
+    from src.face.face_matcher import FaceMatcher
+
+    path = tmp_path / "face" / "gallery.json"
+    matcher = FaceMatcher(gallery_path=str(path))
+    matcher.add_to_gallery("guard_1", np.array([0.6, 0.8], np.float32))
+    reloaded = FaceMatcher(gallery_path=str(path))
+    assert np.allclose(reloaded._gallery["guard_1"][0], [0.6, 0.8])

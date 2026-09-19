@@ -5,7 +5,7 @@ SQLAlchemy ORM models matching TRD Section 17 schema.
 
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Integer, String
+from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
@@ -28,6 +28,9 @@ class CameraModel(Base):
     enabled = Column(Boolean, default=True)
     fps_limit = Column(Integer, default=15)
     resolution = Column(JSON, nullable=True)
+    # API field names a user changed (e.g. ["enabled"]). Startup's cameras.yaml
+    # sync never overwrites these, so a user's choice survives a restart.
+    user_overrides = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     last_heartbeat = Column(DateTime, nullable=True)
@@ -87,12 +90,21 @@ class EventModel(Base):
     opened_at = Column(DateTime, nullable=True, index=True)
     last_updated = Column(DateTime, nullable=True, index=True)
     closed_at = Column(DateTime, nullable=True)
+    # The risk assessment as first recorded. Escalation rewrites risk_score /
+    # risk_level in place, so these immutable copies are what the hash chain
+    # commits to.
+    original_risk_score = Column(Float, nullable=True)
+    original_risk_level = Column(String(20), nullable=True)
     score_breakdown = Column(JSON, default=dict)
     dedupe_key = Column(String(500), nullable=True, index=True)
     evidence_path = Column(String(500), nullable=True)
     evidence_hash = Column(String(64), nullable=True)
     prev_hash = Column(String(64), nullable=True)
     chain_hash = Column(String(64), nullable=True, index=True)
+    # NULL = v1 (hashed risk_score/risk_level, which escalation later changes);
+    # 2 = only fields that never change after insert (left the risk assessment
+    # uncovered); 3 = adds original_risk_*. See alerts/evidence_chain.py.
+    chain_version = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
@@ -130,9 +142,18 @@ class AlertModel(Base):
     resolved_at = Column(DateTime, nullable=True)
     acknowledged_by = Column(String(100), nullable=True)
     resolved_by = Column(String(100), nullable=True)
+    # The risk assessment as first recorded. Escalation rewrites risk_score /
+    # risk_level in place, so these immutable copies are what the hash chain
+    # commits to.
+    original_risk_score = Column(Float, nullable=True)
+    original_risk_level = Column(String(20), nullable=True)
     false_positive = Column(Boolean, default=False, nullable=False)
     prev_hash = Column(String(64), nullable=True)
     chain_hash = Column(String(64), nullable=True, index=True)
+    # NULL = v1 (hashed risk_score/risk_level, which escalation later changes);
+    # 2 = only fields that never change after insert (left the risk assessment
+    # uncovered); 3 = adds original_risk_*. See alerts/evidence_chain.py.
+    chain_version = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
@@ -227,6 +248,8 @@ class ZoneModel(Base):
     zone_type = Column(String(50), default="restricted")
     points = Column(JSON, default=list)
     color = Column(JSON, default=[255, 0, 0])
+    # Object classes that trigger this zone; NULL/empty = every class.
+    trigger_classes = Column(JSON, nullable=True)
     enabled = Column(Boolean, default=True)
     deleted = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -303,3 +326,58 @@ class EventEvidenceModel(Base):
     clip_path = Column(String(500), nullable=True)
     evidence_type = Column(String(30), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+class EvidenceCheckpointModel(Base):
+    """Where a retention purge cut a hash-chained table.
+
+    `anchor_hash` is the chain hash of the last purged row, i.e. the prev_hash
+    the first surviving row must carry. The verifier accepts a truncated chain
+    head only at a recorded (and itself HMAC-signed) checkpoint.
+    """
+
+    __tablename__ = "evidence_checkpoints"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    table_name = Column(String(50), nullable=False, index=True)
+    anchor_hash = Column(String(64), nullable=False)
+    rows_purged = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    mac = Column(String(64), nullable=False)
+
+
+class EvidenceChainHeadModel(Base):
+    """Latest chain hash per chained table.
+
+    Every append updates this row first, inside the same transaction, which
+    takes the database write lock (SQLite) / a row lock (Postgres). That
+    serialises chain appends across processes, so two backends sharing one
+    database can no longer fork the chain.
+    """
+
+    __tablename__ = "evidence_chain_heads"
+    table_name = Column(String(50), primary_key=True)
+    head_hash = Column(String(64), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class WatchlistEntryModel(Base):
+    """A face or number plate operators want flagged.
+
+    list_type: "wanted" (critical alert), "authorized" (known, lowers risk) or
+    "vip" (informational). Face embeddings are stored Fernet-encrypted.
+    """
+
+    __tablename__ = "watchlist_entries"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    entry_id = Column(String(50), unique=True, nullable=False, index=True)
+    kind = Column(String(10), nullable=False, index=True)  # face | plate
+    list_type = Column(String(20), nullable=False, index=True)
+    label = Column(String(200), nullable=False)
+    plate = Column(String(20), nullable=True, index=True)  # normalised; plates only
+    embedding_enc = Column(Text, nullable=True)  # faces only
+    notes = Column(String(1000), default="")
+    active = Column(Boolean, default=True, nullable=False, index=True)
+    created_by = Column(String(100), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    deactivated_by = Column(String(100), nullable=True)
+    deactivated_at = Column(DateTime, nullable=True)

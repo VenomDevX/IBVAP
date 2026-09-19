@@ -20,10 +20,19 @@ const server = createServer((request, response) => {
       hostname: backend.hostname, port: backend.port, method: request.method,
       path: request.url, headers: { ...request.headers, host: backend.host },
     }, upstreamResponse => {
+      upstreamResponse.on('error', () => response.destroy());
       response.writeHead(upstreamResponse.statusCode || 502, upstreamResponse.headers);
       upstreamResponse.pipe(response);
     });
-    upstream.on('error', () => response.writeHead(502, { 'Content-Type': 'application/json' }).end('{"detail":"Backend unavailable"}'));
+    upstream.on('error', () => {
+      if (response.headersSent) response.destroy();
+      else response.writeHead(502, { 'Content-Type': 'application/json' }).end('{"detail":"Backend unavailable"}');
+    });
+    // A browser leaving the page resets long-lived MJPEG sockets (ECONNRESET).
+    // Without these handlers that error is unhandled and kills the server.
+    request.on('error', () => upstream.destroy());
+    response.on('error', () => upstream.destroy());
+    response.on('close', () => upstream.destroy());
     request.pipe(upstream);
     return;
   }
@@ -33,12 +42,16 @@ const server = createServer((request, response) => {
   if (!existsSync(target)) target = join(root, 'index.html');
   response.setHeader('Content-Type', types[extname(target)] || 'application/octet-stream');
   response.setHeader('X-Content-Type-Options', 'nosniff');
-  createReadStream(target).pipe(response);
+  response.on('error', () => {});
+  createReadStream(target).on('error', () => response.destroy()).pipe(response);
 });
 
 server.on('upgrade', (request, socket, head) => {
+  socket.on('error', () => socket.destroy());
   const upstream = httpRequest({ hostname: backend.hostname, port: backend.port, method: 'GET', path: request.url, headers: { ...request.headers, host: backend.host } });
   upstream.on('upgrade', (response, upstreamSocket, upstreamHead) => {
+    upstreamSocket.on('error', () => socket.destroy());
+    socket.on('close', () => upstreamSocket.destroy());
     socket.write(`HTTP/1.1 101 Switching Protocols\r\n${Object.entries(response.headers).map(([key, value]) => `${key}: ${value}`).join('\r\n')}\r\n\r\n`);
     if (head.length) upstreamSocket.write(head);
     if (upstreamHead.length) socket.write(upstreamHead);
@@ -47,5 +60,7 @@ server.on('upgrade', (request, socket, head) => {
   upstream.on('error', () => socket.destroy());
   upstream.end();
 });
+
+server.on('clientError', (_error, socket) => socket.destroy());
 
 server.listen(port, '0.0.0.0', () => console.log(`IBVAP frontend listening on http://localhost:${port} (backend ${backend.origin})`));

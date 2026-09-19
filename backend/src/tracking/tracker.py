@@ -17,7 +17,7 @@ except ImportError:
 
 from src.detection.detection_result import FrameDetections
 from src.detection.detector import COCO_TARGET_CLASSES
-from src.tracking.track import Track
+from src.tracking.track import NIGHT_VISION_CATCHALL, Track
 
 
 def _bbox_iou(a: tuple, b: tuple) -> float:
@@ -131,7 +131,7 @@ class MultiObjectTracker:
 
                     if tid in self._tracks:
                         # Update existing track
-                        self._tracks[tid].update(bbox, conf, timestamp)
+                        self._tracks[tid].update(bbox, conf, timestamp, class_name=class_name)
                     else:
                         # Create new track
                         track = Track(
@@ -169,22 +169,49 @@ class MultiObjectTracker:
             # activation / min_hits - so it cannot produce a track ByteTrack
             # itself would not have produced; it only keeps an
             # already-confirmed track fresh when ByteTrack goes quiet on it.
-            for j in range(len(xyxy)):
-                box = tuple(int(v) for v in xyxy[j])
-                cid = int(class_id[j])
-                cls_name = id2name.get(cid, COCO_TARGET_CLASSES.get(cid, f"class_{cid}"))
-                best_tid, best_iou = None, self.iou_threshold
-                for tid, track in self._tracks.items():
-                    if tid in active_ids or not track.is_active:
+            quiet = [(tid, t) for tid, t in self._tracks.items() if tid not in active_ids and t.is_active]
+            if quiet and len(xyxy):
+                # The candidate tracks are the same for every detection, so
+                # score all pairs in one numpy IoU matrix (same formula as
+                # _bbox_iou) instead of a Python loop over every track per
+                # detection — that was O(detections x tracks) per frame.
+                det = xyxy.astype(int).astype(float)
+                trk = np.array([t.bbox for _, t in quiet], dtype=float)
+                ix1 = np.maximum(det[:, None, 0], trk[None, :, 0])
+                iy1 = np.maximum(det[:, None, 1], trk[None, :, 1])
+                ix2 = np.minimum(det[:, None, 2], trk[None, :, 2])
+                iy2 = np.minimum(det[:, None, 3], trk[None, :, 3])
+                inter = np.clip(ix2 - ix1, 0, None) * np.clip(iy2 - iy1, 0, None)
+                area_d = np.clip(det[:, 2] - det[:, 0], 0, None) * np.clip(det[:, 3] - det[:, 1], 0, None)
+                area_t = np.clip(trk[:, 2] - trk[:, 0], 0, None) * np.clip(trk[:, 3] - trk[:, 1], 0, None)
+                union = area_d[:, None] + area_t[None, :] - inter
+                ious = np.divide(inter, union, out=np.zeros_like(inter), where=(inter > 0) & (union > 0))
+                for j in range(len(xyxy)):
+                    overlapping = np.flatnonzero(ious[j] > self.iou_threshold)
+                    if overlapping.size == 0:
                         continue
-                    if track.object_type != cls_name:
-                        continue
-                    iou = _bbox_iou(box, track.bbox)
-                    if iou > best_iou:
-                        best_iou, best_tid = iou, tid
-                if best_tid is not None:
-                    self._tracks[best_tid].update(box, float(confidence[j]), timestamp)
-                    active_ids.add(best_tid)
+                    cid = int(class_id[j])
+                    cls_name = id2name.get(cid, COCO_TARGET_CLASSES.get(cid, f"class_{cid}"))
+                    best_col, best_iou = None, self.iou_threshold
+                    for col in overlapping:
+                        tid, track = quiet[col]
+                        if tid in active_ids:
+                            continue
+                        # Normally require the same class as the track already
+                        # has. Relaxed for night_vision_object tracks: that label
+                        # is a detector catch-all, and a later frame's clearer
+                        # car/truck/motorcycle read must reach Track.update() (and
+                        # its class-upgrade vote) even though the class differs —
+                        # the IoU check is still the real match gate.
+                        if track.object_type != cls_name and track.object_type != NIGHT_VISION_CATCHALL:
+                            continue
+                        if ious[j, col] > best_iou:
+                            best_iou, best_col = ious[j, col], col
+                    if best_col is not None:
+                        tid, track = quiet[best_col]
+                        box = tuple(int(v) for v in xyxy[j])
+                        track.update(box, float(confidence[j]), timestamp, class_name=cls_name)
+                        active_ids.add(tid)
 
             # Mark tracks not in current frame
             for tid, track in self._tracks.items():
@@ -274,7 +301,7 @@ class MultiObjectTracker:
             cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
 
             # Track ID label
-            label = f"ID:{tid} {track.object_type}"
+            label = f"ID:{tid} {track.effective_label()}"
             (lw, lh), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
             cv2.rectangle(annotated, (x1, y1 - lh - 8), (x1 + lw, y1), color, -1)
             cv2.putText(annotated, label, (x1, y1 - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
@@ -282,10 +309,13 @@ class MultiObjectTracker:
             # Trajectory trail
             if show_trajectory and len(track.trajectory) > 1:
                 recent = track.get_recent_trajectory(trail_length)
-                pts = [(p[0], p[1]) for p in recent]
-                for i in range(1, len(pts)):
-                    thickness = max(1, int(2 * i / len(pts)))
-                    cv2.line(annotated, pts[i - 1], pts[i], color, thickness)
+                pts = np.array([(p[0], p[1]) for p in recent], dtype=np.int32)
+                # Older half thin, newer half thick: the same tapered trail in
+                # two draw calls instead of one cv2.line per segment per track.
+                half = len(pts) // 2
+                if half >= 1:
+                    cv2.polylines(annotated, [pts[: half + 1]], False, color, 1)
+                cv2.polylines(annotated, [pts[half:]], False, color, 2)
 
             # Centroid dot
             cv2.circle(annotated, (cx, cy), 4, color, -1)

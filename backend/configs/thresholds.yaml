@@ -9,6 +9,15 @@ detection:
   nms_threshold: 0.50            # Relaxed from 0.45 to reduce duplicate suppression
   half_precision: true           # CUDA FP16: substantially faster with negligible detector drift
   device: "auto"
+  # Suppress overlapping boxes ACROSS classes, not just within a class. Without this,
+  # one physical object can survive NMS as two boxes (e.g. car + night_vision_object)
+  # because per-class NMS never compares them against each other.
+  agnostic_nms: true
+  # Test-time augmentation (multi-scale/flip). Only honored when the primary model
+  # is running as a plain .pt (the TensorRT engine has a static input shape and
+  # cannot use it) — detector.py forces this off when the engine is loaded.
+  augment: false
+  max_det: 300
   class_thresholds:
     person: 0.30
     car: 0.30
@@ -32,7 +41,10 @@ detection:
   # If set and the file exists, the detector loads this instead of the .pt for
   # drastically faster inference. If absent, the detector auto-discovers an
   # .engine file next to weights_path before falling back to .pt.
-  engine_path: "models/ibvap_coarse.engine"
+  # Dynamic batch 1..8 at 640x640 (built from the dynamic ONNX via the
+  # TensorRT API). Lets the batch coordinator run all cameras' frames in one
+  # forward pass. Roll back by pointing this at models/ibvap_coarse.engine.
+  engine_path: "models/ibvap_coarse_dynbatch.engine"
   # Local COCO model runs only when the custom detector returns no objects.
   # It improves domain-shifted road/crowd recall at bounded cost.
   fallback_weights_path: "models/detection/yolov8n.pt"
@@ -41,16 +53,24 @@ detection:
   target_classes: [0, 2, 3, 5, 7]
   # Stock model variant if weights_path is empty: yolov8n / yolov8s / yolo11s
   model_variant: "yolo11s"
-  # Input size — must match TensorRT engine (compiled at 640).\n  # To use larger, re-export the engine with scripts/export_tensorrt.py.\n  imgsz: 640
+  # Input size — must match TensorRT engine (compiled at 640).
+  # To use larger, re-export the engine with scripts/export_tensorrt.py.
+  imgsz: 640
 
 tracking:
   tracker: "bytetrack"
   # Track is considered lost after N frames without detection
   max_age: 30
-  # Minimum consecutive detections to confirm a track
-  min_hits: 1
+  # Minimum consecutive detections to confirm a track. 2 (not 1) so a single
+  # transient/duplicate-class frame can't instantly become a drawn ghost track.
+  min_hits: 2
   # IoU threshold for matching
   iou_threshold: 0.3
+  # A track's object_type can be upgraded away from the "night_vision_object"
+  # catch-all (or to a more confident vehicle class) when a later detection
+  # clears these bars. See Track._maybe_upgrade_object_type.
+  type_upgrade_confidence: 0.45
+  type_upgrade_margin: 0.10
 
 behavior:
   # Loitering: seconds before flagging
@@ -103,6 +123,15 @@ anpr:
   ocr_engine: "auto"
   recheck_seconds: 1.0
   consensus_min_observations: 3
+  # Only keep reads that fit an Indian plate format (fixes O/0, I/1, B/8 by
+  # position). Set false to also keep foreign / non-standard plates.
+  strict_format: true
+  # Only read plates the detector found (license_plate class, val mAP50 0.95).
+  # false = also guess a plate region inside vehicles without one (slower, noisier).
+  require_detected_plate: true
+  # Run OCR in a separate process: PaddlePaddle holds the Python GIL while it
+  # reads, which otherwise stalls detection and the API.
+  ocr_subprocess: true
   consensus_min_confidence: 0.55
 
 alerts:
@@ -113,7 +142,7 @@ alerts:
   # Minimum risk score to generate an alert
   min_alert_risk_score: 20
   max_snapshots_per_hour_per_camera: 60
-  max_snapshot_storage_mb: 2048
+  max_snapshot_storage_mb: 20000   # 20 GB; ~5.7 GB in use on 2026-09-17
   min_free_storage_mb: 1024
 
 evidence:
@@ -123,6 +152,10 @@ evidence:
   capture_fps: 5
   max_width: 960
   jpeg_quality: 65
+  # Budgets (clips are ~1.5 MB each). Only alerting incidents are clipped.
+  max_clips_per_hour: 60        # per camera
+  max_clip_storage_mb: 30000    # shared by all cameras (outputs/clips); ~20k clips
+  min_free_storage_mb: 1024     # stop recording below this much free disk
 
 classifier:
   # Stage 2: names the specific type of a military detection (F16 rather than
@@ -133,7 +166,7 @@ classifier:
   # If the file is absent the classifier disables itself and the pipeline runs
   # single-stage exactly as before.
   enabled: true
-  device: "cuda:0"
+  device: "auto"
   weights: "./models/classifier/ibvap_fine.pt"
   min_confidence: 0.55   # below this, keep the coarse label rather than guess
   recheck_seconds: 2.0   # a track's airframe does not change; do not run per frame

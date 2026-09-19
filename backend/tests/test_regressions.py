@@ -209,6 +209,19 @@ def test_alert_dedup_is_camera_scoped_and_escalates(tmp_path):
     assert engine.generate_alert(event("a", risk_score=80, risk_level="critical"))
 
 
+def test_rate_limit_never_drops_a_critical_alert(tmp_path):
+    engine = AlertEngine(snapshots_dir=str(tmp_path), max_alerts_per_minute=2)
+    engine.notification_manager.notify_critical = Mock()
+    for i in range(2):
+        assert engine.generate_alert(event(event_id=f"m{i}", track_uuid=f"t{i}", risk_score=40, risk_level="medium"))
+    # Busy camera: further routine alerts are rate limited...
+    assert engine.generate_alert(event(event_id="m9", track_uuid="t9", risk_score=40, risk_level="medium")) is None
+    # ...but a critical one (e.g. a wanted vehicle) still gets through, and counts.
+    critical = event(event_id="w1", track_uuid="w1", event_type="watchlist_match", risk_score=90, risk_level="critical")
+    assert engine.generate_alert(critical)
+    assert len(engine._rate_counter["a"]) == 3
+
+
 def test_alert_dedup_survives_tracker_id_churn(tmp_path):
     engine = AlertEngine(snapshots_dir=str(tmp_path))
     assert engine.generate_alert(event("a", track_id=1, risk_score=40, risk_level="medium"))
@@ -262,11 +275,28 @@ def test_event_persists_when_alert_is_suppressed(tmp_db, tmp_path, suppression):
     )
     with tmp_db.get_session() as session:
         Repository(session).create_camera("a", "A", "test")
+    pipeline.evidence_buffer = Mock()
     track = Track(1, "person", "a", bbox=(20, 20, 40, 40))
     pipeline._process_track(track, np.full((100, 100, 3), 255, dtype=np.uint8))
     with tmp_db.get_session() as session:
         assert session.query(EventModel).count() == 1
         assert session.query(AlertModel).count() == 0
+    # No alert -> no evidence clip (clips used to be cut for every event and filled the disk).
+    pipeline.evidence_buffer.trigger.assert_not_called()
+
+
+def test_alerting_incident_gets_an_evidence_clip(tmp_db, tmp_path):
+    from src.database.repository import Repository
+
+    pipeline = camera_pipeline(tmp_path)
+    pipeline.evidence_buffer = Mock()
+    pipeline.night_detector.get_night_context = Mock(
+        return_value={"is_night": False, "is_night_time": False, "brightness": 255}
+    )
+    with tmp_db.get_session() as session:
+        Repository(session).create_camera("a", "A", "test")
+    pipeline._process_track(Track(1, "person", "a", bbox=(20, 20, 40, 40)), np.full((100, 100, 3), 255, np.uint8))
+    pipeline.evidence_buffer.trigger.assert_called_once()
 
 
 def test_publish_after_commit_and_rollback_on_failure(tmp_db, tmp_path, monkeypatch):

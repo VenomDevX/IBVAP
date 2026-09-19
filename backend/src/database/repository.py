@@ -8,7 +8,7 @@ from datetime import datetime
 from sqlalchemy import asc, case, desc, or_
 from sqlalchemy.orm import Session
 
-from src.alerts import evidence
+from src.alerts import evidence_chain
 from src.database.models import (
     AlertModel,
     ANPRResultModel,
@@ -23,6 +23,7 @@ from src.database.models import (
     TrackModel,
     UserModel,
     VehicleProfileModel,
+    WatchlistEntryModel,
     ZoneModel,
 )
 
@@ -91,18 +92,28 @@ class Repository:
         camera.updated_at = datetime.utcnow()
         self.session.commit()
 
-    def update_camera(self, camera_id: str, changes: dict) -> CameraModel | None:
+    CAMERA_FIELDS = {
+        "name": "name", "source": "stream_url", "type": "camera_type",
+        "location": "location_label", "latitude": "latitude", "longitude": "longitude",
+        "enabled": "enabled", "fps_limit": "fps_limit", "resolution": "resolution",
+    }
+
+    def update_camera(self, camera_id: str, changes: dict, by_user: bool = False) -> CameraModel | None:
+        """by_user: the change came from a person (API), so remember those fields
+        and never let the cameras.yaml startup sync overwrite them."""
         camera = self.get_camera(camera_id)
         if camera is None:
             return None
-        mapping = {
-            "name": "name", "source": "stream_url", "type": "camera_type",
-            "location": "location_label", "latitude": "latitude", "longitude": "longitude",
-            "enabled": "enabled", "fps_limit": "fps_limit", "resolution": "resolution",
-        }
-        for source, target in mapping.items():
+        touched = []
+        for source, target in self.CAMERA_FIELDS.items():
             if source in changes:
+                if getattr(camera, target) != changes[source]:
+                    touched.append(source)
                 setattr(camera, target, changes[source])
+        if by_user and touched:
+            # Only fields whose value changed: re-saving a form unchanged must not
+            # freeze every field against future cameras.yaml updates.
+            camera.user_overrides = sorted(set(camera.user_overrides or []) | set(touched))
         camera.updated_at = datetime.utcnow()
         self.session.commit()
         return camera
@@ -113,6 +124,7 @@ class Repository:
             return None
         camera.enabled = False
         camera.status = "retired"
+        camera.user_overrides = sorted(set(camera.user_overrides or []) | {"enabled"})
         camera.updated_at = datetime.utcnow()
         self.session.commit()
         return camera
@@ -166,21 +178,7 @@ class Repository:
             evidence_path=event_data.get("evidence_path"),
             evidence_hash=event_data.get("evidence_hash"),
         )
-        self._chain(
-            event,
-            EventModel,
-            [
-                "event_id",
-                "camera_id",
-                "track_id",
-                "event_type",
-                "timestamp",
-                "object_type",
-                "risk_score",
-                "risk_level",
-                "evidence_hash",
-            ],
-        )
+        evidence_chain.append(self.session, event, "events")
         self.session.add(event)
         self.session.flush()
         if commit:
@@ -229,16 +227,6 @@ class Repository:
 
     def get_event_evidence(self, event_id: str) -> list[EventEvidenceModel]:
         return self.session.query(EventEvidenceModel).filter_by(event_id=event_id).order_by(EventEvidenceModel.created_at).all()
-
-    def _chain(self, row, model, fields):
-        """Attach prev_hash / chain_hash linking this row to the previous one."""
-        last = (
-            self.session.query(model.chain_hash).filter(model.chain_hash.isnot(None)).order_by(desc(model.id)).first()
-        )
-        prev = last[0] if last else None
-        record = {f: getattr(row, f) for f in fields}
-        row.prev_hash = prev or evidence.GENESIS
-        row.chain_hash = evidence.compute_hash(record, prev)
 
     def get_event(self, event_id: str) -> EventModel | None:
         return self.session.query(EventModel).filter_by(event_id=event_id).first()
@@ -343,22 +331,7 @@ class Repository:
             plate_result=alert_data.get("plate_result"),
             identity_result=alert_data.get("identity_result"),
         )
-        self._chain(
-            alert,
-            AlertModel,
-            [
-                "alert_id",
-                "camera_id",
-                "event_id",
-                "track_id",
-                "event_type",
-                "timestamp",
-                "risk_score",
-                "risk_level",
-                "object_type",
-                "snapshot_hash",
-            ],
-        )
+        evidence_chain.append(self.session, alert, "alerts")
         self.session.add(alert)
         self.session.flush()
         if commit:
@@ -540,16 +513,17 @@ class Repository:
             self.session.flush()
         return alert
 
-    def upsert_track(self, track, commit: bool = True) -> TrackModel:
-        row = self.session.query(TrackModel).filter_by(track_uuid=track.track_uuid).first()
-        if row is None:
-            row = TrackModel(
-                track_id=track.track_id, track_uuid=track.track_uuid, session_id=track.session_id,
-                camera_id=track.camera_id, object_type=track.object_type,
-                start_time=datetime.utcfromtimestamp(track.first_seen),
-                last_seen=datetime.utcfromtimestamp(track.last_seen), status=track.status,
-            )
-            self.session.add(row)
+    @staticmethod
+    def _new_track_row(track) -> TrackModel:
+        return TrackModel(
+            track_id=track.track_id, track_uuid=track.track_uuid, session_id=track.session_id,
+            camera_id=track.camera_id, object_type=track.object_type,
+            start_time=datetime.utcfromtimestamp(track.first_seen),
+            last_seen=datetime.utcfromtimestamp(track.last_seen), status=track.status,
+        )
+
+    @staticmethod
+    def _apply_track_fields(row: TrackModel, track) -> None:
         row.last_seen = datetime.utcfromtimestamp(track.last_seen)
         row.end_time = datetime.utcfromtimestamp(track.last_seen) if track.status == "CLOSED" else None
         row.status = track.status
@@ -558,24 +532,66 @@ class Repository:
         row.average_speed = track.average_speed
         row.best_snapshot = track.best_snapshot_path
         row.best_confidence = track.confidence
+
+    def upsert_track(self, track, commit: bool = True) -> TrackModel:
+        row = self.session.query(TrackModel).filter_by(track_uuid=track.track_uuid).first()
+        if row is None:
+            row = self._new_track_row(track)
+            self.session.add(row)
+        self._apply_track_fields(row, track)
         if commit:
             self.session.commit()
         else:
             self.session.flush()
         return row
 
-    def upsert_vehicle_profile(self, track, commit: bool = True) -> VehicleProfileModel:
+    def upsert_track_profiles(self, tracks, vehicle_types: set[str]) -> None:
+        """Upsert many tracks (plus vehicle profiles) with one SELECT per table
+        instead of one per track; flushes, caller commits. Per-track lookups
+        were a large share of per-frame GIL time on cameras with 80+ tracks."""
+        tracks = list(tracks)
+        if not tracks:
+            return
+        existing_tracks = {
+            row.track_uuid: row
+            for row in self.session.query(TrackModel).filter(
+                TrackModel.track_uuid.in_([t.track_uuid for t in tracks])
+            )
+        }
+        vehicles = [t for t in tracks if t.object_type in vehicle_types]
+        existing_vehicles = {
+            row.track_uuid: row
+            for row in self.session.query(VehicleProfileModel).filter(
+                VehicleProfileModel.track_uuid.in_([t.track_uuid for t in vehicles])
+            )
+        } if vehicles else {}
+        for track in tracks:
+            row = existing_tracks.get(track.track_uuid)
+            if row is None:
+                row = self._new_track_row(track)
+                self.session.add(row)
+            self._apply_track_fields(row, track)
+        for track in vehicles:
+            row = existing_vehicles.get(track.track_uuid)
+            if row is None:
+                row = self._new_vehicle_row(track)
+                self.session.add(row)
+            self._apply_vehicle_fields(row, track)
+        self.session.flush()
+
+    @staticmethod
+    def _new_vehicle_row(track) -> VehicleProfileModel:
+        return VehicleProfileModel(
+            track_uuid=track.track_uuid, camera_id=track.camera_id,
+            vehicle_class=track.object_type,
+            first_seen=datetime.utcfromtimestamp(track.first_seen),
+            last_seen=datetime.utcfromtimestamp(track.last_seen),
+        )
+
+    @staticmethod
+    def _apply_vehicle_fields(row: VehicleProfileModel, track) -> None:
         from src.features.vehicle_description import describe_vehicle
 
-        row = self.session.query(VehicleProfileModel).filter_by(track_uuid=track.track_uuid).first()
-        if row is None:
-            row = VehicleProfileModel(
-                track_uuid=track.track_uuid, camera_id=track.camera_id,
-                vehicle_class=track.object_type,
-                first_seen=datetime.utcfromtimestamp(track.first_seen),
-                last_seen=datetime.utcfromtimestamp(track.last_seen),
-            )
-            self.session.add(row)
         row.last_seen = datetime.utcfromtimestamp(track.last_seen)
         row.track_duration = track.duration
         row.direction = track.movement_direction
@@ -585,11 +601,19 @@ class Repository:
         row.plate = track.license_plate.upper() if track.license_plate else "UNKNOWN"
         row.plate_confidence = track.plate_confidence
         row.threat_score = track.risk_score
+        row.watchlist_status = str(getattr(track, "watchlist_status", "none")).upper()
         row.description = describe_vehicle(track)
         row.zone_history = [
             {"zone_id": zone_id, "session_id": session_id, "entered_at": track.zone_entry_times.get(zone_id)}
             for zone_id, session_id in track.zone_session_ids.items()
         ]
+
+    def upsert_vehicle_profile(self, track, commit: bool = True) -> VehicleProfileModel:
+        row = self.session.query(VehicleProfileModel).filter_by(track_uuid=track.track_uuid).first()
+        if row is None:
+            row = self._new_vehicle_row(track)
+            self.session.add(row)
+        self._apply_vehicle_fields(row, track)
         if commit:
             self.session.commit()
         else:
@@ -654,13 +678,75 @@ class Repository:
 
     # ======================== AUDIT LOGS ========================
 
+    # ======================== WATCHLISTS ========================
+
+    def create_watchlist_entry(
+        self,
+        kind: str,
+        list_type: str,
+        label: str,
+        created_by: str,
+        plate: str | None = None,
+        embedding=None,
+        notes: str = "",
+    ) -> WatchlistEntryModel:
+        import uuid
+
+        from src.watchlist import crypto
+        from src.watchlist.service import LIST_TYPES, normalize_plate
+
+        if list_type not in LIST_TYPES:
+            raise ValueError(f"list_type must be one of {LIST_TYPES}")
+        row = WatchlistEntryModel(
+            entry_id=f"WL_{uuid.uuid4().hex[:16]}", kind=kind, list_type=list_type,
+            label=label, notes=notes or "", created_by=created_by, active=True,
+        )
+        if kind == "plate":
+            row.plate = normalize_plate(plate)
+            if not 4 <= len(row.plate) <= 20:
+                raise ValueError("plate must have 4-20 letters/digits")
+            clash = self.session.query(WatchlistEntryModel).filter_by(kind="plate", plate=row.plate, active=True)
+            if clash.first() is not None:
+                raise ValueError("this plate is already on an active watchlist")
+        elif kind == "face":
+            if embedding is None:
+                raise ValueError("a face entry needs an embedding")
+            row.embedding_enc = crypto.encrypt_embedding(embedding)
+        else:
+            raise ValueError("kind must be 'face' or 'plate'")
+        self.session.add(row)
+        self.session.commit()
+        return row
+
+    def list_watchlist_entries(self, kind: str | None = None, include_inactive: bool = False):
+        query = self.session.query(WatchlistEntryModel)
+        if kind:
+            query = query.filter_by(kind=kind)
+        if not include_inactive:
+            query = query.filter_by(active=True)
+        return query.order_by(desc(WatchlistEntryModel.created_at)).all()
+
+    def deactivate_watchlist_entry(self, entry_id: str, actor: str) -> bool:
+        row = self.session.query(WatchlistEntryModel).filter_by(entry_id=entry_id, active=True).first()
+        if row is None:
+            return False
+        row.active = False
+        row.deactivated_by = actor
+        row.deactivated_at = datetime.utcnow()
+        self.session.commit()
+        return True
+
     def create_audit_log(self, action: str, username: str, details: dict = None, ip_address: str = None):
         log = AuditLogModel(action=action, username=username, details=details or {}, ip_address=ip_address)
         self.session.add(log)
         self.session.commit()
 
-    def get_audit_logs(self, limit: int = 100) -> list[AuditLogModel]:
-        return self.session.query(AuditLogModel).order_by(desc(AuditLogModel.timestamp)).limit(limit).all()
+    def get_audit_logs(self, limit: int = 100, actions_only: bool = False) -> list[AuditLogModel]:
+        """actions_only: skip the raw per-request trail ("PATCH /api/..."), keep named actions."""
+        query = self.session.query(AuditLogModel)
+        if actions_only:
+            query = query.filter(~AuditLogModel.action.like("% /%"))
+        return query.order_by(desc(AuditLogModel.timestamp)).limit(limit).all()
 
     # ======================== IDENTITY / ANPR RESULTS ========================
 
@@ -727,6 +813,7 @@ class Repository:
             points=zone_data.get("points", []),
             color=zone_data.get("color", [255, 0, 0]),
             enabled=zone_data.get("enabled", True),
+            trigger_classes=zone_data.get("trigger_classes") or None,
         )
         self.session.add(zone)
         self.session.commit()
@@ -744,7 +831,8 @@ class Repository:
         zone = self.session.query(ZoneModel).filter_by(zone_id=zone_id, deleted=False).first()
         if zone is None:
             return None
-        mapping = {"camera_id": "camera_id", "name": "name", "type": "zone_type", "points": "points", "color": "color", "enabled": "enabled"}
+        mapping = {"camera_id": "camera_id", "name": "name", "type": "zone_type", "points": "points", "color": "color", "enabled": "enabled",
+                   "trigger_classes": "trigger_classes"}
         for source, target in mapping.items():
             if source in changes:
                 setattr(zone, target, changes[source])

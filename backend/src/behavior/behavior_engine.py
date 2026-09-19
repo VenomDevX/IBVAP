@@ -22,6 +22,7 @@ class BehaviorType(Enum):
     NIGHT_MOVEMENT = "night_movement"
     APPROACHING_BOUNDARY = "approaching_boundary"
     SUSPICIOUS_VEHICLE = "suspicious_vehicle"
+    WATCHLIST_MATCH = "watchlist_match"
     COMBINED_SUSPICIOUS = "combined_suspicious"
 
 
@@ -89,6 +90,18 @@ class BehaviorEngine:
         """
         events = []
         self._apply_cooldown = apply_cooldown
+
+        # --- Check: Wanted watchlist match (face or plate) ---
+        hit = getattr(track, "watchlist", None)
+        if hit and hit.get("list_type") == "wanted" and hit.get("exact", True):
+            event = self._create_event(
+                track,
+                BehaviorType.WATCHLIST_MATCH,
+                details=dict(hit),
+                factors=[f"Wanted {hit.get('kind', '')} watchlist match: {hit.get('label', '')}"],
+            )
+            if event:
+                events.append(event)
 
         # --- Check: Restricted Zone Entry ---
         if zone_context.get("in_restricted", False):

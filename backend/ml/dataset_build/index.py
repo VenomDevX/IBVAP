@@ -136,7 +136,7 @@ def _record_for(args: tuple[str, str, str]) -> ImageRecord | None:
         # twice and decoded it twice, managing only 63 img/s.
         with open(path, "rb") as fh:
             blob = fh.read()
-        digest = hashlib.md5(blob).hexdigest()
+        digest = hashlib.md5(blob, usedforsecurity=False).hexdigest()  # content fingerprint for de-duplication
         with Image.open(io.BytesIO(blob)) as im:
             w, h = im.size  # true size, before draft() rescales it
             im.draft("L", (9, 8))  # JPEG: decode at 1/8 scale
@@ -155,9 +155,7 @@ def _record_for(args: tuple[str, str, str]) -> ImageRecord | None:
     )
 
 
-def scan_tree(
-    root: Path, source: str, workers: int | None = None, progress: int = 0
-) -> Iterator[ImageRecord]:
+def scan_tree(root: Path, source: str, workers: int | None = None, progress: int = 0) -> Iterator[ImageRecord]:
     """Yield an ImageRecord for every readable image under root.
 
     Hashing ~677k images is CPU-bound on JPEG decode, so it runs across a
@@ -171,14 +169,10 @@ def scan_tree(
 
     paths = walk_images(root)
     if workers == 1:
-        results: Iterator[ImageRecord | None] = (
-            _record_for((p, str(root), source)) for p in paths
-        )
+        results: Iterator[ImageRecord | None] = (_record_for((p, str(root), source)) for p in paths)
     else:
         pool = ProcessPoolExecutor(max_workers=workers)
-        results = pool.map(
-            _record_for, ((p, str(root), source) for p in paths), chunksize=64
-        )
+        results = pool.map(_record_for, ((p, str(root), source) for p in paths), chunksize=64)
 
     n = 0
     try:

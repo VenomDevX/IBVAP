@@ -9,6 +9,7 @@ cameras:
       - "tracking"
       - "face"
       - "anpr"
+    enabled: false
 
   - id: "CAM_PEOPLE"
     name: "City Street Pedestrian Surveillance"
@@ -19,6 +20,7 @@ cameras:
       - "detection"
       - "tracking"
       - "face"
+    enabled: false
 
   - id: "CAM_HIGHWAY"
     name: "Highway Border Crossing"
@@ -29,6 +31,7 @@ cameras:
       - "detection"
       - "tracking"
       - "anpr"
+    enabled: false
 
   - id: "CAM_CHECKPOINT"
     name: "Indoor Checkpoint"
@@ -39,6 +42,7 @@ cameras:
       - "detection"
       - "tracking"
       - "face"
+    enabled: false
 
   - id: "CAM_VIRAT_PARKING"
     name: "VIRAT Parking Lot"
@@ -49,6 +53,7 @@ cameras:
       - "detection"
       - "tracking"
       - "anpr"
+    enabled: false
 
   - id: "CAM_VIRAT_STREET"
     name: "Tram Crosswalk Pedestrians"
@@ -60,6 +65,7 @@ cameras:
       - "tracking"
       - "face"
       - "anpr"
+    enabled: false
 
   - id: "CAM_VIRAT_VEHICLE"
     name: "Overhead Highway Traffic"
@@ -70,6 +76,7 @@ cameras:
       - "detection"
       - "tracking"
       - "anpr"
+    enabled: false
 
   - id: "CAM_HIGHWAY_4K"
     name: "Highway Traffic Flow (Pixabay)"
@@ -81,7 +88,7 @@ cameras:
     # re-encoded every frame at full 4K for nothing - the resize path
     # already existed, it was just configured to resize to the same size.
     resolution: [1920, 1080]
-    enabled: false  # disabled: 10 concurrent CUDA pipelines hard-crashes this 6GB GPU
+    enabled: false
     capabilities:
       - "detection"
       - "tracking"
@@ -92,7 +99,7 @@ cameras:
     source: "./data/demo/crosswalk_crowd.mp4"
     fps: 30  # halved from the 60fps source - static scene, halves inference load
     resolution: [1920, 1080]  # downscaled on ingest - see CAM_HIGHWAY_4K
-    enabled: false  # disabled: 10 concurrent CUDA pipelines hard-crashes this 6GB GPU
+    enabled: false
     capabilities:
       - "detection"
       - "tracking"
@@ -154,3 +161,53 @@ cameras:
       - "tracking"
       - "face"
       - "anpr"
+
+  - id: "CAM_PLATE_DEMO"
+    name: "Checkpoint ANPR Demo (synthetic Indian plates)"
+    # Real intersection footage with rendered Indian plates painted over the
+    # original ones: scripts/make_indian_plate_demo.py. Ground truth in the .json.
+    source: "./data/demo/indian_plates_synthetic.mp4"
+    fps: 15
+    resolution: [1920, 1080]
+    capabilities:
+      - "detection"
+      - "tracking"
+      - "anpr"
+    enabled: false
+
+  # --- Indian roads (4K, Pexels License: free to use) — see data/demo/SOURCES.md ---
+  - id: "CAM_IN_MUMBAI"
+    name: "Mumbai Arterial Road"
+    source: "./data/demo/india_mumbai_traffic_4k.mp4"
+    fps: 10  # 4K decode is heavy; 10 fps keeps four 4K cameras responsive
+    resolution: [1920, 1080]  # 4K source, downscaled on ingest (4x less frame memory)
+    location: "Mumbai, Maharashtra"
+    capabilities: ["detection", "tracking", "face", "anpr"]
+    enabled: true
+
+  - id: "CAM_IN_BHOPAL"
+    name: "Bhopal Signal Intersection"
+    source: "./data/demo/india_bhopal_intersection_4k.mp4"
+    fps: 10
+    resolution: [1920, 1080]  # 4K source, downscaled on ingest (4x less frame memory)
+    location: "Bhopal, Madhya Pradesh"
+    capabilities: ["detection", "tracking", "face", "anpr"]
+    enabled: true
+
+  - id: "CAM_IN_KOLKATA"
+    name: "Kolkata Bus Street"
+    source: "./data/demo/india_kolkata_street_buses_4k.mp4"
+    fps: 10
+    resolution: [1920, 1080]  # 4K source, downscaled on ingest (4x less frame memory)
+    location: "Kolkata, West Bengal"
+    capabilities: ["detection", "tracking", "face", "anpr"]
+    enabled: true
+
+  - id: "CAM_IN_FLYOVER"
+    name: "Flyover Signal (elevated view)"
+    source: "./data/demo/india_flyover_signal_4k.mp4"
+    fps: 10
+    resolution: [1920, 1080]  # 4K source, downscaled on ingest (4x less frame memory)
+    location: "India"
+    capabilities: ["detection", "tracking", "anpr"]
+    enabled: true

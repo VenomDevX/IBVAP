@@ -11,9 +11,13 @@ def score_crop(crop: np.ndarray, confidence: float, frame_shape: tuple | None = 
     if height < 12 or width < 12:
         return 0.0
     gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if crop.ndim == 3 else crop
-    sharpness = min(float(cv2.Laplacian(gray, cv2.CV_64F).var()) / 500.0, 1.0)
+    # cv2 statistics instead of numpy .var()/.mean(): same values (population
+    # variance == std**2), but computed without holding the GIL — this runs
+    # for every tracked object.
+    laplacian_std = cv2.meanStdDev(cv2.Laplacian(gray, cv2.CV_64F))[1][0][0]
+    sharpness = min(float(laplacian_std) ** 2 / 500.0, 1.0)
     size_score = min((height * width) / (320.0 * 320.0), 1.0)
-    brightness = float(np.mean(gray))
+    brightness = float(cv2.mean(gray)[0])
     visibility = 1.0 if 25 <= brightness <= 235 else 0.35
     edge_score = 1.0
     if frame_shape is not None and bbox is not None:

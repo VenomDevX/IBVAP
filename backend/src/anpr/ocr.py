@@ -12,6 +12,10 @@ The engine is loaded lazily on first call (model download can be slow) and reuse
 import os
 import re
 import threading
+from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
+from concurrent.futures.process import BrokenProcessPool
+from multiprocessing import get_context
 
 import cv2
 import numpy as np
@@ -20,8 +24,13 @@ from loguru import logger
 _PLATE_RE = re.compile(r"[^A-Z0-9]")
 _MIN_LEN = 4
 _MAX_LEN = 12
+UPSCALE_WIDTH = int(os.getenv("IBVAP_OCR_UPSCALE_WIDTH", "200"))
+OCR_THREADS = max(1, int(os.getenv("IBVAP_OCR_THREADS", "2")))
 
 _lock = threading.Lock()
+# EasyOCR/Paddle readers are not thread-safe; the enrichment pool calls
+# read_plate() from several threads, so inference is serialised separately.
+_infer_lock = threading.Lock()
 _reader = None
 _engine_name = "uninitialised"
 
@@ -30,13 +39,18 @@ def _normalise(text: str) -> str:
     return _PLATE_RE.sub("", (text or "").upper())
 
 
-def _preprocess(img: np.ndarray) -> np.ndarray:
+def _preprocess(img: np.ndarray, enhance: bool = False) -> np.ndarray:
     if img is None or img.size == 0:
         return img
     h, w = img.shape[:2]
-    if w < 160:
-        scale = 200 / max(w, 1)
+    # Recognition models do much better on small CCTV plates once upscaled.
+    if w < UPSCALE_WIDTH:
+        scale = UPSCALE_WIDTH / max(w, 1)
         img = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+    # Grayscale + CLAHE helps tesseract; PaddleOCR reads the colour crop better
+    # (78% -> 81% exact on the synthetic Indian plate set, scripts/eval_anpr.py).
+    if not enhance:
+        return img
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
     gray = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)).apply(gray)
     return gray
@@ -65,15 +79,46 @@ def _read_easyocr(reader, img):
 def _paddle_reader():
     from paddleocr import PaddleOCR
 
-    return PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
+    try:
+        # PaddleOCR 3.x. oneDNN is off: paddlepaddle 3.3 on Windows CPU fails with
+        # "ConvertPirAttribute2RuntimeAttribute not support" when it is on.
+        return PaddleOCR(
+            lang="en",
+            use_doc_orientation_classify=False,
+            use_doc_unwarping=False,
+            use_textline_orientation=False,
+            enable_mkldnn=False,
+            # Paddle defaults to 10 threads per call; with the detector, tracker
+            # and web server on the same CPU that starved the whole backend.
+            cpu_threads=OCR_THREADS,
+        )
+    except (TypeError, ValueError):
+        return PaddleOCR(use_angle_cls=True, lang="en", show_log=False)  # 2.x
 
 
 def _read_paddle(reader, img):
-    res = reader.ocr(img, cls=True)
-    if not res or not res[0]:
+    if img.ndim == 2:
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    if hasattr(reader, "predict"):  # 3.x
+        results = reader.predict(img)
+        if not results:
+            return "", 0.0
+        result = results[0]
+        lines = list(zip(result["rec_texts"], result["rec_scores"], result["rec_polys"]))
+    else:  # 2.x
+        raw = reader.ocr(img, cls=True)
+        if not raw or not raw[0]:
+            return "", 0.0
+        lines = [(line[1][0], line[1][1], line[0]) for line in raw[0]]
+    lines = [(text, float(score), poly) for text, score, poly in lines if text and score > 0.3]
+    if not lines:
         return "", 0.0
-    best = max(res[0], key=lambda line: line[1][1])
-    return best[1][0], float(best[1][1])
+    # Two-row plates (common on Indian two-wheelers): read top row first.
+    lines.sort(key=lambda item: (round(float(np.mean(np.asarray(item[2])[:, 1])) / 12), np.min(np.asarray(item[2])[:, 0])))
+    text = "".join(item[0] for item in lines)
+    weight = sum(len(item[0]) for item in lines)
+    confidence = sum(item[1] * len(item[0]) for item in lines) / max(weight, 1)
+    return text, confidence
 
 
 def _tesseract_reader():
@@ -116,10 +161,65 @@ def _init() -> None:
     logger.warning("ANPR OCR unavailable: install/configure a supported OCR engine")
 
 
+# PaddlePaddle holds the GIL while it infers (~0.5 s per plate), which froze
+# detection and the web server. In subprocess mode the engine lives in one
+# worker process instead; calls queue up behind it.
+_use_pool = False
+_pool: ProcessPoolExecutor | None = None
+_pool_lock = threading.Lock()
+_POOL_TIMEOUT_S = 60.0
+
+
+def use_subprocess(enabled: bool) -> None:
+    global _use_pool, _pool
+    with _pool_lock:
+        _use_pool = bool(enabled)
+        if not enabled and _pool is not None:
+            _pool.shutdown(wait=False, cancel_futures=True)
+            _pool = None
+
+
+def _get_pool() -> ProcessPoolExecutor:
+    global _pool
+    with _pool_lock:
+        if _pool is None:
+            _pool = ProcessPoolExecutor(max_workers=1, mp_context=get_context("spawn"))
+        return _pool
+
+
+def _reset_pool(pool: ProcessPoolExecutor) -> None:
+    global _pool
+    with _pool_lock:
+        if _pool is pool:
+            _pool = None
+    pool.shutdown(wait=False, cancel_futures=True)
+
+
+def _in_pool(fn, *args, default):
+    pool = _get_pool()
+    try:
+        return pool.submit(fn, *args).result(timeout=_POOL_TIMEOUT_S)
+    except BrokenProcessPool:
+        logger.warning("ANPR OCR worker died; starting a new one")
+        _reset_pool(pool)
+    except FutureTimeout:
+        logger.warning("ANPR OCR worker timed out; restarting it")
+        _reset_pool(pool)
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"ANPR OCR worker error: {e}")
+    return default
+
+
 def read_plate(crop: np.ndarray) -> tuple[str, float]:
     """Return (plate_text, confidence 0-1). ('', 0.0) if nothing legible."""
     if crop is None or getattr(crop, "size", 0) == 0:
         return "", 0.0
+    if _use_pool:
+        return _in_pool(_read_local, np.ascontiguousarray(crop), default=("", 0.0))
+    return _read_local(crop)
+
+
+def _read_local(crop: np.ndarray) -> tuple[str, float]:
 
     with _lock:
         _init()
@@ -130,7 +230,9 @@ def read_plate(crop: np.ndarray) -> tuple[str, float]:
 
     reader_fn = next(r for n, _b, r in _ENGINES if n == engine)
     try:
-        raw, conf = reader_fn(reader, _preprocess(crop))
+        img = _preprocess(crop, enhance=engine in ("pytesseract", "easyocr"))
+        with _infer_lock:
+            raw, conf = reader_fn(reader, img)
     except Exception as e:  # noqa: BLE001
         logger.debug(f"ANPR OCR error ({engine}): {e}")
         return "", 0.0
@@ -142,6 +244,12 @@ def read_plate(crop: np.ndarray) -> tuple[str, float]:
 
 
 def engine_name() -> str:
+    if _use_pool:
+        return _in_pool(_engine_name_local, default="unavailable")
+    return _engine_name_local()
+
+
+def _engine_name_local() -> str:
     with _lock:
         _init()
         return _engine_name

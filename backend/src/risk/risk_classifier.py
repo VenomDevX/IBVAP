@@ -84,7 +84,9 @@ class RiskClassifier:
 
         return {
             "person_detected": 1 if fused_event.object_type == "person" else 0,
-            "vehicle_detected": 1 if fused_event.object_type in ("car", "truck", "bus", "motorcycle") else 0,
+            "vehicle_detected": 1 if fused_event.object_type in (
+                "car", "truck", "bus", "motorcycle", "night_vision_object",
+            ) else 0,
             "night": 1 if temporal.get("is_night", False) else 0,
             "restricted_zone": 1 if spatial.get("in_restricted", False) else 0,
             "fence_crossing": 1 if spatial.get("fence_crossed", False) else 0,

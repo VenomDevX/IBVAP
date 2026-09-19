@@ -1,128 +1,158 @@
 'use client';
 
-import { useCallback, useDeferredValue, useEffect, useState } from 'react';
-import { apiFetch, formatEventType, formatTime } from '@/src/api/client';
-import DataTable, { type Column } from '@/src/components/ui/DataTable';
-import RiskBadge from '@/src/components/ui/RiskBadge';
-import { Button, ButtonLink } from '@/src/components/ui/Button';
+import Link from 'next/link';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { ArrowClockwise } from '@phosphor-icons/react';
+import { apiJson, errorMessage, formatEventType, formatTime, RISK_LEVELS, riskMeta } from '@/src/api/client';
+import { useCameras } from '@/src/hooks/useCameras';
+import { useDebouncedValue, useUrlState } from '@/src/hooks/useUrlState';
+import { Button } from '@/src/components/ui/Button';
+import DataTable, { type Column, type SortState } from '@/src/components/ui/DataTable';
 import { Input, SearchInput, Select } from '@/src/components/ui/Field';
-import { Toolbar } from '@/src/components/ui/Toolbar';
-import { Loading } from '@/src/components/ui/States';
-import type { Camera, Event } from '@/src/types';
+import Pagination from '@/src/components/ui/Pagination';
+import { Toolbar } from '@/src/components/ui/Section';
+import { InlineError, Loading } from '@/src/components/ui/States';
+import { RiskLabel } from '@/src/components/ui/Indicators';
+import type { Event, Paged } from '@/src/types';
 
-const TYPES = [
-  ['restricted_zone_entry', 'Zone Entry'],
-  ['fence_crossing', 'Fence Crossing'],
+const PAGE_SIZE = 25;
+
+const EVENT_TYPES = [
+  ['restricted_zone_entry', 'Restricted zone entry'],
+  ['fence_crossing', 'Fence crossing'],
   ['loitering', 'Loitering'],
-  ['night_movement', 'Night Movement'],
-  ['combined_suspicious_activity', 'Combined Suspicious'],
+  ['night_movement', 'Night movement'],
+  ['combined_suspicious_activity', 'Combined suspicious activity'],
 ];
 
-export default function EventsPage() {
-  const [events, setEvents] = useState<Event[]>([]);
-  const [cameras, setCameras] = useState<Camera[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [query, setQuery] = useState('');
-  const [type, setType] = useState('');
-  const [risk, setRisk] = useState('');
-  const [camera, setCamera] = useState('');
-  const [startTime, setStartTime] = useState('');
-  const [endTime, setEndTime] = useState('');
-  const [page, setPage] = useState(1);
+const DEFAULTS = { q: '', type: '', risk: '', camera: '', from: '', to: '', page: '1', sort: '', dir: '' };
+
+function EventsInner() {
+  const [url, setUrl] = useUrlState(DEFAULTS);
+  const cameras = useCameras();
+  const [search, setSearch] = useState(url.q);
+  const debouncedSearch = useDebouncedValue(search);
+  const [rows, setRows] = useState<Event[]>([]);
   const [total, setTotal] = useState(0);
-  const deferredQuery = useDeferredValue(query);
-  const pageSize = 25;
+  const [loading, setLoading] = useState(true);
+  const [fetching, setFetching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const requestId = useRef(0);
 
   useEffect(() => {
-    apiFetch('/api/cameras').then(r => r.json()).then(setCameras).catch(() => setCameras([]));
-  }, []);
+    if (debouncedSearch !== url.q) setUrl({ q: debouncedSearch, page: null });
+  }, [debouncedSearch]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const page = Math.max(1, Number(url.page) || 1);
+  const sort: SortState = url.sort ? { key: url.sort, dir: url.dir === 'asc' ? 'asc' : 'desc' } : null;
 
   const load = useCallback(async () => {
-    const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
-    if (type) params.set('event_type', type);
-    if (risk) params.set('risk_level', risk);
-    if (camera) params.set('camera_id', camera);
-    if (deferredQuery.trim()) params.set('search', deferredQuery.trim());
-    if (startTime) params.set('start_time', new Date(startTime).toISOString());
-    if (endTime) params.set('end_time', new Date(endTime).toISOString());
+    const id = ++requestId.current;
+    setFetching(true);
+    const params = new URLSearchParams({ page: String(page), page_size: String(PAGE_SIZE) });
+    if (url.type) params.set('event_type', url.type);
+    if (url.risk) params.set('risk_level', url.risk);
+    if (url.camera) params.set('camera_id', url.camera);
+    if (url.q.trim()) params.set('search', url.q.trim());
+    if (url.from) params.set('start_time', new Date(url.from).toISOString());
+    if (url.to) params.set('end_time', new Date(url.to).toISOString());
+    if (url.sort) { params.set('sort_by', url.sort); params.set('sort_order', url.dir === 'asc' ? 'asc' : 'desc'); }
     try {
-      const res = await apiFetch(`/api/events/query?${params}`);
-      if (!res.ok) throw new Error(`Events request returned ${res.status}`);
-      const data = await res.json();
-      setEvents(data.items);
+      const data = await apiJson<Paged<Event>>(`/api/events/query?${params}`);
+      if (id !== requestId.current) return;
+      setRows(data.items);
       setTotal(data.total);
+      setError(null);
     } catch (err) {
-      console.error('Failed to load events:', err);
+      if (id === requestId.current) setError(errorMessage(err));
     } finally {
-      setLoading(false);
+      if (id === requestId.current) { setLoading(false); setFetching(false); }
     }
-  }, [page, type, risk, camera, deferredQuery, startTime, endTime]);
+  }, [page, url.type, url.risk, url.camera, url.q, url.from, url.to, url.sort, url.dir]);
 
-  useEffect(() => { load(); }, [load]);
-  useEffect(() => { setPage(1); }, [type, risk, camera, deferredQuery, startTime, endTime]);
+  useEffect(() => { void load(); }, [load]);
+
+  const filtersActive = !!(url.q || url.type || url.risk || url.camera || url.from || url.to);
 
   const columns: Column<Event>[] = [
-    { key: 'risk_level', header: 'Risk', sortable: true, render: e => <RiskBadge level={e.risk_level} /> },
-    { key: 'event_id', header: 'Event ID', sortable: true, className: 'font-mono text-[0.78rem]' },
-    { key: 'event_type', header: 'Type', sortable: true, accessor: e => formatEventType(e.event_type), render: e => formatEventType(e.event_type) },
+    { key: 'risk_level', header: 'Risk', render: event => <RiskLabel level={event.risk_level} /> },
+    { key: 'event_type', header: 'Type', sortable: true, render: event => formatEventType(event.event_type) },
     { key: 'camera_id', header: 'Camera', sortable: true },
-    { key: 'object_type', header: 'Object', sortable: true, className: 'capitalize' },
-    { key: 'timestamp', header: 'Time', sortable: true, accessor: e => e.timestamp, render: e => formatTime(e.timestamp) },
-    { key: 'risk_score', header: 'Score', sortable: true, align: 'right', accessor: e => e.risk_score ?? 0, render: e => (e.risk_score?.toFixed(0) ?? 0) },
+    { key: 'object_type', header: 'Object', hideBelow: 'md', render: event => <span className="capitalize">{event.object_type}</span> },
+    { key: 'timestamp', header: 'Time', sortable: true, render: event => <span className="num whitespace-nowrap">{formatTime(event.timestamp)}</span> },
+    { key: 'risk_score', header: 'Score', sortable: true, align: 'right', render: event => <span className="num">{Math.round(event.risk_score ?? 0)}</span> },
     {
-      key: 'contributing_factors', header: 'Factors',
-
-
-      accessor: e => (e.contributing_factors ?? []).join(' '),
-      render: e => <span className="text-fg-muted">{(e.contributing_factors ?? []).slice(0, 2).join(', ') || '—'}</span>,
+      key: 'contributing_factors', header: 'Factors', hideBelow: 'xl',
+      render: event => (
+        <span className="block max-w-xs truncate text-muted" title={(event.contributing_factors ?? []).join(', ')}>
+          {(event.contributing_factors ?? []).join(', ') || 'None'}
+        </span>
+      ),
     },
-    { key: 'details', header: '', align: 'right', render: e => <ButtonLink href={`/event?id=${e.event_id}`} size="xs" variant="outline">View</ButtonLink> },
+    {
+      key: 'view', header: '', align: 'right',
+      render: event => (
+        <Link href={`/event?id=${encodeURIComponent(event.event_id)}`} className="text-sm font-medium text-accent hover:text-accent-hover">View</Link>
+      ),
+    },
   ];
 
   return (
     <div>
       <Toolbar>
-          <SearchInput placeholder="Search events…" value={query} onChange={e => setQuery(e.target.value)} />
-          <Select value={type} onChange={e => setType(e.target.value)} className="w-auto">
-            <option value="">All types</option>
-            {TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-          </Select>
-          <Select value={risk} onChange={e => setRisk(e.target.value)} className="w-auto">
-            <option value="">All risk levels</option>
-            <option value="critical">Critical</option>
-            <option value="high">High</option>
-            <option value="medium">Medium</option>
-            <option value="low">Low</option>
-          </Select>
-          <Select value={camera} onChange={e => setCamera(e.target.value)} className="w-auto">
-            <option value="">All cameras</option>
-            {cameras.map(c => <option key={c.camera_id} value={c.camera_id}>{c.name}</option>)}
-          </Select>
-          <Input type="datetime-local" aria-label="From time" value={startTime} onChange={e => setStartTime(e.target.value)} className="w-auto" />
-          <Input type="datetime-local" aria-label="To time" value={endTime} onChange={e => setEndTime(e.target.value)} className="w-auto" />
-          <Button icon="rotate-right" onClick={load}>Refresh</Button>
-        </Toolbar>
+        <SearchInput placeholder="Search events…" aria-label="Search events" value={search}
+          onChange={e => setSearch(e.target.value)} wrapperClassName="w-full sm:w-64" />
+        <Select aria-label="Event type" value={url.type} onChange={e => setUrl({ type: e.target.value, page: null })} wrapperClassName="w-52">
+          <option value="">All event types</option>
+          {EVENT_TYPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </Select>
+        <Select aria-label="Risk level" value={url.risk} onChange={e => setUrl({ risk: e.target.value, page: null })} wrapperClassName="w-36">
+          <option value="">Any risk</option>
+          {RISK_LEVELS.map(level => <option key={level} value={level}>{riskMeta(level).label}</option>)}
+        </Select>
+        <Select aria-label="Camera" value={url.camera} onChange={e => setUrl({ camera: e.target.value, page: null })} wrapperClassName="w-44">
+          <option value="">All cameras</option>
+          {cameras.map(camera => <option key={camera.camera_id} value={camera.camera_id}>{camera.name}</option>)}
+        </Select>
+        <div className="w-[13.5rem]">
+          <Input type="datetime-local" aria-label="From" title="From" value={url.from} onChange={e => setUrl({ from: e.target.value, page: null })} />
+        </div>
+        <div className="w-[13.5rem]">
+          <Input type="datetime-local" aria-label="To" title="To" value={url.to} onChange={e => setUrl({ to: e.target.value, page: null })} />
+        </div>
+        {filtersActive && (
+          <Button variant="ghost" onClick={() => { setSearch(''); setUrl({ q: null, type: null, risk: null, camera: null, from: null, to: null, page: null }); }}>
+            Clear filters
+          </Button>
+        )}
+        <Button variant="ghost" className="ml-auto" icon={<ArrowClockwise size={14} />} loading={fetching && !loading} onClick={() => void load()}>
+          Refresh
+        </Button>
+      </Toolbar>
 
-        {loading ? (
-          <Loading label="Loading events…" />
-        ) : (
-          <DataTable
-            columns={columns}
-            rows={events}
-            rowKey={e => e.event_id}
-            pageSize={pageSize}
-            emptyMessage="No events match these filters"
-          />
-        )}
-        {!loading && total > 0 && (
-          <div className="mt-3 flex items-center justify-between text-sm text-fg-muted">
-            <span>{(page - 1) * pageSize + 1}–{Math.min(page * pageSize, total)} of {total}</span>
-            <span className="flex gap-2">
-              <Button size="xs" variant="outline" disabled={page === 1} onClick={() => setPage(p => p - 1)}>Previous</Button>
-              <Button size="xs" variant="outline" disabled={page * pageSize >= total} onClick={() => setPage(p => p + 1)}>Next</Button>
-            </span>
-          </div>
-        )}
+      {error && <div className="mb-4"><InlineError>Events could not be loaded: {error}</InlineError></div>}
+
+      <DataTable
+        label="Events"
+        columns={columns}
+        rows={rows}
+        rowKey={event => event.event_id}
+        sort={sort}
+        onSortChange={next => setUrl({ sort: next?.key ?? null, dir: next?.dir ?? null, page: null })}
+        loading={loading}
+        emptyTitle={filtersActive ? 'No events match these filters' : 'No events recorded yet'}
+        emptyDescription={filtersActive ? 'Widen the time range or clear a filter.' : 'Events appear here as the pipeline detects activity.'}
+        rowAccent={event => (event.risk_level === 'critical' ? riskMeta('critical').color : undefined)}
+      />
+      <Pagination page={page} pageSize={PAGE_SIZE} total={total} onPageChange={next => setUrl({ page: String(next) })} />
     </div>
+  );
+}
+
+export default function EventsPage() {
+  return (
+    <Suspense fallback={<Loading label="Loading events…" />}>
+      <EventsInner />
+    </Suspense>
   );
 }

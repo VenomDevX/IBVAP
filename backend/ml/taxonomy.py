@@ -238,9 +238,11 @@ NORMALIZE: dict[str, str] = {n: n for n in COARSE_NAMES}
 NORMALIZE.update(_ALIASES)
 
 # convenience groups
-VEHICLE_TYPES = {"car", "bus", "truck", "motorcycle", "bicycle"}
+VEHICLE_TYPES = {"car", "bus", "truck", "motorcycle", "bicycle", "night_vision_object"}
 MILITARY_TYPES = {"military_ground_vehicle", "aircraft", "helicopter", "drone_uav"}
-ANPR_TYPES = {"car", "bus", "truck", "motorcycle"}  # crops worth OCR-ing
+# night_vision_object included: a car/truck seen at night is often stuck on
+# this catch-all class, but a plate is still worth attempting on the crop.
+ANPR_TYPES = {"car", "bus", "truck", "motorcycle", "night_vision_object"}  # crops worth OCR-ing
 
 
 def write_yaml(path: str, dataset_path: str, train: str, val: str) -> None:

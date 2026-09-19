@@ -17,16 +17,17 @@ import yaml
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from src.alerts.clip_retention import purge_clips
+from src.alerts.evidence_chain import CHAINED, purge_chained_prefix
 from src.database.db import get_database
 from src.database.models import (
     AlertModel,
     ANPRResultModel,
     AuditLogModel,
-    EventModel,
     IdentityResultModel,
     TrackModel,
 )
-from src.paths import snapshots_dir
+from src.paths import output_dir, snapshots_dir
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BACKEND = os.path.dirname(HERE)
@@ -34,12 +35,13 @@ CFG = os.path.join(BACKEND, "configs", "retention.yaml")
 
 MODELS = {
     # Child rows must be removed before their parents now that SQLite foreign
-    # keys are enforced on every connection.
-    "alerts": (AlertModel, "timestamp"),
+    # keys are enforced on every connection. "alerts" and "events" are
+    # hash-chained: purge_chained_prefix trims them without breaking the chain.
+    "alerts": None,
     "identity_results": (IdentityResultModel, "timestamp"),
     "anpr_results": (ANPRResultModel, "timestamp"),
     "tracks": (TrackModel, "start_time"),
-    "events": (EventModel, "timestamp"),
+    "events": None,
     "audit_logs": (AuditLogModel, "timestamp"),
 }
 
@@ -55,11 +57,16 @@ def main():
     session = get_database().get_session()
 
     try:
-        for name, (model, field) in MODELS.items():
+        for name, spec in MODELS.items():
             d = days.get(name)
             if not d:
                 continue
             cutoff = now - timedelta(days=d)
+            if name in CHAINED:
+                n = purge_chained_prefix(session, name, cutoff, dry_run=args.dry_run)
+                print(f"{name:18s} older than {d}d ({cutoff:%Y-%m-%d}): {n} rows (chain-safe prefix)")
+                continue
+            model, field = spec
             q = session.query(model).filter(getattr(model, field) < cutoff)
             n = q.count()
             print(f"{name:18s} older than {d}d ({cutoff:%Y-%m-%d}): {n} rows")
@@ -93,6 +100,16 @@ def main():
         if not args.dry_run:
             for f in removable:
                 os.remove(os.path.join(snap_dir, f))
+            # The alert keeps its snapshot_hash (it is part of the chain); only the
+            # dangling path is cleared so verification doesn't report a missing file.
+            removed = set(removable)
+            for alert in session.query(AlertModel).filter(AlertModel.snapshot_path.isnot(None)).all():
+                if os.path.basename(alert.snapshot_path) in removed:
+                    alert.snapshot_path = None
+            session.commit()
+
+        clips = purge_clips(session, str(output_dir() / "clips"), days.get("clips"), now, args.dry_run)
+        print(f"clip files to remove: {clips['files']} ({clips['bytes'] / 1024**3:.1f} GB, expired or unreferenced)")
     finally:
         session.close()
 

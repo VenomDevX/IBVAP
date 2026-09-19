@@ -7,9 +7,7 @@ psycopg2-binary>=2.9.9      # only if DATABASE_URL points at Postgres
 # --- Optional feature modules (guarded imports in src/; disabled if absent) ---
 insightface>=0.7.3         # src/face/*  — face recognition
 # Install onnxruntime-gpu from requirements-cuda.txt for CUDA face inference.
-easyocr>=1.7.1            # src/anpr/ocr.py — ANPR OCR (preferred; reuses torch)
-# paddlepaddle>=2.5.0     # alternative OCR backend (heavier; Windows-fragile)
-# paddleocr>=2.7.0
+easyocr>=1.7.1            # optional alternative ANPR OCR; PaddleOCR (requirements.txt) is the default
 pytesseract>=0.3.10        # src/anpr/ocr.py — last-resort OCR fallback
 
 # --- Phase 2 fine-grained classifier ---

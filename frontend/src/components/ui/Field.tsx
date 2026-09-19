@@ -1,64 +1,69 @@
-import type { InputHTMLAttributes, SelectHTMLAttributes, ReactNode } from 'react';
+import type { InputHTMLAttributes, LabelHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from 'react';
+import { CaretDown, MagnifyingGlass } from '@phosphor-icons/react';
 import { cn } from '../../lib/cn';
-import Icon from './Icon';
 
-const control =
-  'rounded-lg border border-default bg-surface px-3 py-2.5 text-[0.85rem] text-fg ' +
-  'outline-none transition-all duration-200 focus:border-accent focus:ring-1 focus:ring-accent/30 ' +
-  'placeholder:text-fg-subtle hover:border-fg-muted/40 shadow-sm';
+const CONTROL =
+  'w-full rounded-md border border-line bg-surface px-2.5 text-sm text-fg placeholder:text-muted ' +
+  'transition-[border-color] duration-150 hover:border-line-strong ' +
+  'disabled:cursor-not-allowed disabled:opacity-60 aria-[invalid=true]:border-bad';
 
 export function Input({ className, ...rest }: InputHTMLAttributes<HTMLInputElement>) {
-  const hasWidth = typeof className === 'string' && className.includes('w-');
-  return <input className={cn(control, !hasWidth && 'w-full', className)} {...rest} />;
+  return <input className={cn(CONTROL, 'h-8', className)} {...rest} />;
 }
 
-export function Select({ className, children, ...rest }: SelectHTMLAttributes<HTMLSelectElement>) {
+export function Textarea({ className, ...rest }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  return <textarea className={cn(CONTROL, 'min-h-20 py-2 leading-relaxed', className)} {...rest} />;
+}
+
+interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
+  wrapperClassName?: string;
+}
+
+export function Select({ className, wrapperClassName, children, ...rest }: SelectProps) {
   return (
-    <div className={cn('relative inline-flex', className)}>
-      <select
-        className={cn(
-          control,
-          'w-full cursor-pointer appearance-none pr-10',
-        )}
-        {...rest}
-      >
+    <div className={cn('relative', wrapperClassName)}>
+      <select className={cn(CONTROL, 'h-8 appearance-none pr-8', className)} {...rest}>
         {children}
       </select>
-      <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3 text-fg-muted">
-        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-        </svg>
-      </div>
+      <CaretDown size={13} aria-hidden className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-muted" />
     </div>
   );
 }
 
-export function SearchInput({
-  className, ...rest
-}: InputHTMLAttributes<HTMLInputElement> & { className?: string }) {
+interface SearchInputProps extends InputHTMLAttributes<HTMLInputElement> {
+  wrapperClassName?: string;
+}
+
+export function SearchInput({ className, wrapperClassName, ...rest }: SearchInputProps) {
   return (
-    <div
-      className={cn(
-        'flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-default bg-surface px-3 shadow-sm',
-        'focus-within:border-accent focus-within:ring-1 focus-within:ring-accent/30 sm:max-w-xs',
-        'transition-all duration-200 hover:border-fg-muted/40',
-        className,
-      )}
-    >
-      <Icon name="magnifying-glass" className="text-[0.75rem] text-fg-subtle" />
-      <input
-        className="w-full border-0 bg-transparent py-2.5 text-[0.82rem] text-fg outline-none placeholder:text-fg-subtle"
-        {...rest}
-      />
+    <div className={cn('relative', wrapperClassName)}>
+      <MagnifyingGlass size={14} aria-hidden className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
+      <Input type="search" className={cn('pl-8', className)} {...rest} />
     </div>
   );
 }
 
-export function FieldLabel({ icon, children }: { icon?: string; children: ReactNode }) {
+export function Label({ className, ...rest }: LabelHTMLAttributes<HTMLLabelElement>) {
+  return <label className={cn('mb-1.5 block text-sm font-medium text-fg', className)} {...rest} />;
+}
+
+export function Field({ label, htmlFor, hint, error, children, className }: {
+  label: string;
+  htmlFor: string;
+  hint?: ReactNode;
+  error?: string | null;
+  children: ReactNode;
+  className?: string;
+}) {
   return (
-    <label className="mb-1.5 flex items-center gap-2 text-[0.82rem] font-medium text-fg-muted">
-      {icon && <Icon name={icon} className="text-[0.72rem] text-fg-subtle" />}
+    <div className={className}>
+      <Label htmlFor={htmlFor}>{label}</Label>
       {children}
-    </label>
+      {error ? (
+        <p id={`${htmlFor}-error`} className="mt-1.5 text-sm text-bad">{error}</p>
+      ) : hint ? (
+        <p className="mt-1.5 text-sm text-muted">{hint}</p>
+      ) : null}
+    </div>
   );
 }

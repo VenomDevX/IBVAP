@@ -14,6 +14,7 @@ router = APIRouter()
 @router.get("")
 async def get_audit_logs(
     limit: int = Query(default=100, le=500),
+    actions_only: bool = Query(default=False, description="Only named user actions, not raw requests"),
     user: dict = Depends(require_role("auditor", "commander")),
 ):
     """Get recent audit logs."""
@@ -21,7 +22,7 @@ async def get_audit_logs(
     session = db.get_session()
     repo = Repository(session)
 
-    logs = repo.get_audit_logs(limit=limit)
+    logs = repo.get_audit_logs(limit=limit, actions_only=actions_only)
 
     result = [
         {
@@ -30,7 +31,8 @@ async def get_audit_logs(
             "action": log.action,
             "details": log.details,
             "ip_address": log.ip_address,
-            "timestamp": log.timestamp.isoformat() if log.timestamp else None,
+            # Stored in UTC; the "Z" stops browsers reading it as local time.
+            "timestamp": log.timestamp.isoformat() + "Z" if log.timestamp else None,
         }
         for log in logs
     ]

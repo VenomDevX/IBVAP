@@ -60,7 +60,6 @@ def test_risk_is_deterministic():
 
 
 def test_evidence_chain_detects_tampering(repo):
-    from src.alerts import evidence
     from src.database.models import AlertModel
 
     repo.create_camera(camera_id="c1", name="C1", stream_url="x")
@@ -86,34 +85,16 @@ def test_evidence_chain_detects_tampering(repo):
             }
         )
 
-    fields = [
-        "alert_id",
-        "camera_id",
-        "event_id",
-        "track_id",
-        "event_type",
-        "timestamp",
-        "risk_score",
-        "risk_level",
-        "object_type",
-        "snapshot_hash",
-    ]
-    rows = repo.session.query(AlertModel).order_by(AlertModel.id).all()
-    prev = None
-    for row in rows:
-        rec = {f: getattr(row, f) for f in fields}
-        assert evidence.verify(rec, prev, row.chain_hash)
-        prev = row.chain_hash
+    from src.alerts.evidence_chain import verify_table
 
-    rows[2].risk_score = 9999.0
+    assert verify_table(repo.session, "alerts").ok
+    rows = repo.session.query(AlertModel).order_by(AlertModel.id).all()
+    # Risk is escalated legitimately after insert, so v2 does not hash it...
+    rows[1].risk_score = 9999.0
+    # ...but the facts of the alert are immutable and covered.
+    rows[2].event_type = "tampered"
     repo.session.commit()
-    prev, broke = None, None
-    for row in repo.session.query(AlertModel).order_by(AlertModel.id).all():
-        rec = {f: getattr(row, f) for f in fields}
-        if not evidence.verify(rec, prev, row.chain_hash) and broke is None:
-            broke = row.alert_id
-        prev = row.chain_hash
-    assert broke == "A2"
+    assert verify_table(repo.session, "alerts").breaks == ["A2"]
 
 
 def test_collections_stay_bounded():

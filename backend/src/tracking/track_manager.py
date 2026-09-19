@@ -19,7 +19,9 @@ class TrackManager:
         self.expiry_seconds = expiry_seconds
         self._tracks: dict[int, Track] = {}
         self._expired_tracks = deque(maxlen=1000)
-        self._expired_ids: set = set()
+        # Keyed by track_uuid: numeric ByteTrack ids restart after a tracker
+        # reset, so they would wrongly mark a brand-new track as already expired.
+        self._expired_ids: set[str] = set()
 
     def update_tracks(self, active_tracks: dict[int, Track]):
         """Sync internal state with tracker output."""
@@ -34,11 +36,14 @@ class TrackManager:
             if not track.is_active or (now - track.last_seen) > self.expiry_seconds:
                 track.is_active = False
                 track.status = "CLOSED" if (now - track.last_seen) > self.expiry_seconds else "LOST"
-                if tid not in self._expired_ids:
-                    self._expired_ids.add(tid)
+                if track.track_uuid not in self._expired_ids:
+                    self._expired_ids.add(track.track_uuid)
                     self._expired_tracks.append(track)
+                if track.status == "CLOSED" and tid not in active_tracks:
+                    # Closed tracks live on only in the bounded expired deque.
+                    del self._tracks[tid]
         if len(self._expired_ids) > 5000:
-            self._expired_ids = {t.track_id for t in self._expired_tracks}
+            self._expired_ids = {t.track_uuid for t in self._expired_tracks}
 
     def get_active_tracks(self) -> dict[int, Track]:
         """Get all currently active tracks."""
@@ -59,7 +64,7 @@ class TrackManager:
         return {tid: t for tid, t in self._tracks.items() if t.is_active and t.object_type == "person"}
 
     def get_vehicle_tracks(self) -> dict[int, Track]:
-        vehicle_types = {"car", "motorcycle", "bus", "truck"}
+        vehicle_types = {"car", "motorcycle", "bus", "truck", "night_vision_object"}
         return {tid: t for tid, t in self._tracks.items() if t.is_active and t.object_type in vehicle_types}
 
     def get_loitering_tracks(self) -> list[Track]:

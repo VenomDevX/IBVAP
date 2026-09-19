@@ -32,6 +32,13 @@ class FusedEvent:
     track_uuid: str = ""
     risk_score: float = 0.0
     risk_level: str = "low"
+    # Audit trail from the track: the very first detector label (raw_class)
+    # and, if object_type is still the "night_vision_object" catch-all, a
+    # recovered sub-type guess from a later, clearer frame (suspected_type).
+    # object_type/event_type stay the machine-readable values used for
+    # filtering/analytics — these two are purely for a richer description.
+    raw_class: str = ""
+    suspected_type: str | None = None
 
     # Contributing factors (for explainability)
     contributing_factors: list[str] = field(default_factory=list)
@@ -64,6 +71,8 @@ class FusedEvent:
             "track_uuid": self.track_uuid,
             "timestamp": self.timestamp,
             "object_type": self.object_type,
+            "raw_class": self.raw_class,
+            "suspected_type": self.suspected_type,
             "event_type": self.event_type,
             "risk_score": round(self.risk_score, 1),
             "risk_level": self.risk_level,
@@ -136,6 +145,8 @@ class ContextFusion:
         identity_context: dict | None = None,
         vehicle_context: dict | None = None,
         track_duration: float = 0.0,
+        raw_class: str = "",
+        suspected_type: str | None = None,
     ) -> FusedEvent | None:
         """
         Fuse multiple behavior events and context signals for a single track.
@@ -182,7 +193,10 @@ class ContextFusion:
             all_factors.append(f"Prolonged presence ({track_duration:.0f}s)")
 
         # Semantic Description (Task 3)
-        desc = f"A {color + ' ' if color else ''}{object_type}"
+        display_type = object_type
+        if object_type == "night_vision_object" and suspected_type:
+            display_type = f"night_vision_object (suspected {suspected_type})"
+        desc = f"A {color + ' ' if color else ''}{display_type}"
         if plate and plate != "unknown":
             desc += f" (Plate: {plate})"
         desc += " was detected"
@@ -210,6 +224,8 @@ class ContextFusion:
             track_uuid=track_uuid,
             timestamp=now,
             object_type=object_type,
+            raw_class=raw_class or object_type,
+            suspected_type=suspected_type,
             event_type=event_type,
             contributing_factors=all_factors,
             behavior_events=behavior_ids,
@@ -308,7 +324,11 @@ class ContextFusion:
         is_night = temporal_context.get("is_night", False)
         in_restricted = spatial_context.get("in_restricted", False)
 
-        # Combined suspicious — highest priority
+        # A wanted person/vehicle outranks every behavioural pattern.
+        if BehaviorType.WATCHLIST_MATCH in behavior_types:
+            return "watchlist_match"
+
+        # Combined suspicious
         if BehaviorType.COMBINED_SUSPICIOUS in behavior_types:
             if in_restricted and is_night:
                 return "critical_intrusion"

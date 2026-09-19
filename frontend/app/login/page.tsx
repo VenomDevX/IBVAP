@@ -6,8 +6,9 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/src/api/supabase';
 import { useAuth } from '@/src/context/AuthContext';
 import AuthShell from '@/src/components/auth/AuthShell';
-import { Input, FieldLabel } from '@/src/components/ui/Field';
+import { Field, Input } from '@/src/components/ui/Field';
 import { Button } from '@/src/components/ui/Button';
+import { InlineError } from '@/src/components/ui/States';
 
 function LoginForm() {
   const router = useRouter();
@@ -16,7 +17,7 @@ function LoginForm() {
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     if (isAuthenticated) router.replace('/');
@@ -24,78 +25,55 @@ function LoginForm() {
 
   const timedOut = params.get('timeout') === '1';
 
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!identifier || !password) {
-      setError('Please enter both email and password.');
-      return;
-    }
-    
-    setLoading(true);
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setSubmitting(true);
     setError('');
-    
     try {
-      const email = identifier.includes('@') ? identifier : `${identifier}@ibvap.local`;
+      const email = identifier.includes('@') ? identifier.trim() : `${identifier.trim()}@ibvap.local`;
       const { data, error: authError } = await supabase.auth.signInWithPassword({ email, password });
-      
       if (authError) {
-        throw new Error(authError.message === 'Invalid login credentials' ? 'Incorrect email or password.' : authError.message);
+        throw new Error(authError.message === 'Invalid login credentials'
+          ? 'Incorrect email or password. Check both and try again.'
+          : authError.message);
       }
-      if (!data.user) {
-        throw new Error('Authentication failed. Server unreachable.');
-      }
-      
-      // Successfully authenticated. The AuthContext onAuthStateChange will pick it up.
-      // We don't unset loading here so the button stays spinning until the page redirects.
+      if (!data.user) throw new Error('The sign-in service did not respond. Try again in a moment.');
       router.replace('/');
     } catch (err) {
-      setLoading(false);
-      setError(err instanceof Error ? err.message : 'An unexpected error occurred during login.');
+      setSubmitting(false);
+      setError(err instanceof Error ? err.message : 'Sign-in failed. Try again.');
     }
   };
 
   return (
     <AuthShell
-      subtitle="Intelligent Border Video Analytics Platform"
-      footer={
-        <>
-          <p>Authorized personnel only</p>
-          {process.env.NODE_ENV !== 'production' && (
-            <p className="mt-2"><Link href="/signup" className="text-accent hover:text-accent-hover">Create an account</Link></p>
-          )}
-        </>
-      }
+      title="Sign in"
+      description="Border video analytics console for authorised personnel."
+      footer={process.env.NODE_ENV !== 'production' && (
+        <>No account yet? <Link href="/signup" className="font-medium text-accent hover:text-accent-hover">Create one</Link></>
+      )}
     >
       {timedOut && (
-        <p className="mb-4 rounded-sm border border-warning/40 px-3 py-2 text-[0.8rem] text-warning">
-          Your session timed out. Sign in again to continue.
+        <p className="mb-5 rounded-md bg-warn/10 px-3 py-2 text-sm text-fg">
+          You were signed out after 30 minutes of inactivity. Sign in again to continue.
         </p>
       )}
-      <form onSubmit={submit} className="space-y-4">
-        <div>
-          <FieldLabel icon="user">Username or email</FieldLabel>
+      <form onSubmit={submit} className="space-y-4" noValidate={false}>
+        <Field label="Username or email" htmlFor="identifier">
           <Input
-            type="text" value={identifier} onChange={e => setIdentifier(e.target.value)}
-            required autoComplete="username" placeholder="operator@ibvap.gov"
+            id="identifier" name="username" type="text" value={identifier} onChange={e => setIdentifier(e.target.value)}
+            required autoComplete="username" spellCheck={false} autoCapitalize="none" placeholder="operator@ibvap.gov"
           />
-        </div>
-        <div>
-          <FieldLabel icon="lock">Password</FieldLabel>
+        </Field>
+        <Field label="Password" htmlFor="password">
           <Input
-            type="password" value={password} onChange={e => setPassword(e.target.value)}
+            id="password" name="password" type="password" value={password} onChange={e => setPassword(e.target.value)}
             required autoComplete="current-password" placeholder="Enter password"
           />
-        </div>
-        {error && (
-          <div className="rounded-lg border border-danger/40 bg-danger/5 px-4 py-3 flex items-center gap-3 text-[0.85rem] text-danger shadow-sm">
-            <svg className="w-5 h-5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-              <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-            </svg>
-            <p className="font-medium">{error}</p>
-          </div>
-        )}
-        <Button type="submit" variant="primary" size="md" block icon={loading ? 'spinner' : 'right-to-bracket'} disabled={loading}>
-          {loading ? 'Signing in…' : 'Sign in'}
+        </Field>
+        {error && <InlineError>{error}</InlineError>}
+        <Button type="submit" variant="primary" className="h-9 w-full" loading={submitting}>
+          {submitting ? 'Signing in…' : 'Sign in'}
         </Button>
       </form>
     </AuthShell>

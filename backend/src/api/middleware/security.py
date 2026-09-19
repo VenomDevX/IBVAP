@@ -81,6 +81,8 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
     SKIP_PATHS = {"/api/health", "/favicon.ico"}
 
     _AUDIT_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+    # Issued automatically whenever a video/image loads; not a user action.
+    AUDIT_SKIP = {"/api/auth/media-ticket"}
 
     @staticmethod
     def _actor(request) -> str:
@@ -98,6 +100,8 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         is_mutation = request.method in self._AUDIT_METHODS and path.startswith("/api/")
         is_evidence = request.method == "GET" and path.startswith("/snapshots/")
         if not (is_mutation or is_evidence) or status_code >= 400:
+            return
+        if path in self.AUDIT_SKIP:
             return
         try:
             from src.database.db import get_database

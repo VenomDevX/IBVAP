@@ -74,6 +74,9 @@ class ObjectDetector:
         half_precision: bool = True,
         fallback_model_path: str | None = None,
         engine_path: str | None = None,
+        agnostic_nms: bool = False,
+        augment: bool = False,
+        max_det: int = 300,
     ):
         self.confidence_threshold = confidence_threshold
         self.nms_threshold = nms_threshold
@@ -88,6 +91,9 @@ class ObjectDetector:
             [self.confidence_threshold, *self.class_thresholds.values()]
         )
         self.half_precision = bool(half_precision)
+        self._agnostic_nms = bool(agnostic_nms)
+        self._augment = bool(augment)
+        self._max_det = int(max_det)
         self._fallback_model_path = fallback_model_path
         self._fallback_model = None
         self._fallback_id2name: dict[int, str] = {}
@@ -95,6 +101,16 @@ class ObjectDetector:
         self._device = device
         self._model_path = model_path
         self._engine_path = engine_path
+        # Set True in _load_model when the primary model is a compiled TensorRT
+        # engine (static input shape — cannot run test-time augmentation/TTA).
+        self._engine_loaded = False
+        self._batch_unsupported_warned = False
+        # The COCO fallback is a PyTorch model (not TensorRT) and used to run
+        # on EVERY empty frame — a second GPU-lock hold per frame for every
+        # camera with nothing in view. Once per camera per second keeps its
+        # recall benefit without starving the cameras that do have objects.
+        self._fallback_interval_s = 1.0
+        self._fallback_last_run: dict[str, float] = {}
         # A single detector is shared by all camera threads. Serial inference
         # avoids overlapping CUDA/CPU allocations and predictor races.
         self._inference_lock = threading.Lock()
@@ -149,6 +165,13 @@ class ObjectDetector:
             # Resolve best available model format
             resolved_path = self._resolve_engine_path(self._model_path, self._engine_path)
             is_engine = resolved_path.endswith(".engine")
+            self._engine_loaded = is_engine
+            if is_engine and self._augment:
+                logger.warning(
+                    "augment=True (TTA) is not supported by a compiled TensorRT "
+                    "engine (static input shape) — forcing augment=False."
+                )
+                self._augment = False
 
             if is_engine:
                 logger.info(f"Loading TensorRT engine: {resolved_path}")
@@ -213,6 +236,58 @@ class ObjectDetector:
             logger.error(f"Failed to load detection model: {e}")
             self._model = None
 
+    def _postprocess(self, result, id2name: dict[int, str]) -> list[DetectionResult]:
+        """Turn one Ultralytics `Results` object into filtered `DetectionResult`s.
+
+        Shared by detect() and detect_batch() (single/primary model path) and
+        also usable for the fallback model by passing its own id2name map —
+        this is the ONLY place per-class threshold filtering happens.
+        """
+        detections: list[DetectionResult] = []
+        boxes = getattr(result, "boxes", None)
+        if boxes is None or len(boxes) == 0:
+            return detections
+
+        # One GPU->CPU copy per tensor, not three synchronizing copies per box.
+        xyxy = boxes.xyxy.cpu().numpy().astype(int)
+        confs = boxes.conf.cpu().numpy().tolist()
+        cls_ids = boxes.cls.cpu().numpy().astype(int).tolist()
+        for (x1, y1, x2, y2), conf, cls_id in zip(xyxy, confs, cls_ids):
+
+            class_name = id2name.get(cls_id, f"class_{cls_id}")
+            class_floor = self.class_thresholds.get(class_name, self.confidence_threshold)
+            if conf < class_floor:
+                continue
+
+            detections.append(
+                DetectionResult(
+                    bbox=(int(x1), int(y1), int(x2), int(y2)),
+                    class_id=cls_id,
+                    class_name=class_name,
+                    confidence=conf,
+                )
+            )
+        return detections
+
+    def _model_call_kwargs(self) -> dict:
+        """Shared inference kwargs for both the primary and fallback models."""
+        return dict(
+            conf=self.inference_confidence,
+            iou=self.nms_threshold,
+            imgsz=self.imgsz,
+            device=self._device,
+            half=self.half_precision and str(self._device).startswith("cuda"),
+            agnostic_nms=self._agnostic_nms,
+            augment=self._augment,
+            max_det=self._max_det,
+            # predict() defaults rect=True, which a dynamic-shape engine obeys
+            # by letterboxing to e.g. 640x384 — outside the engine's 640x640
+            # profile (CUDA illegal memory access). Square letterbox matches
+            # what the static engine always did, so detections are unchanged.
+            rect=False,
+            verbose=False,
+        )
+
     def detect(self, frame: np.ndarray, frame_id: int = 0, camera_id: str = "") -> FrameDetections:
         """
         Run object detection on a single frame.
@@ -240,77 +315,33 @@ class ObjectDetector:
                 inference_started = time.perf_counter()
                 results = self._model(
                     frame,
-                    conf=self.inference_confidence,
-                    iou=self.nms_threshold,
-                    imgsz=self.imgsz,
-                    device=self._device,
-                    half=self.half_precision and str(self._device).startswith("cuda"),
                     classes=None if self.detect_all else self.target_classes,
-                    verbose=False,
+                    **self._model_call_kwargs(),
                 )
                 inference_seconds = time.perf_counter() - inference_started
             self._queue_wait_times.append(inference_started - queue_started)
 
             # Parse results
             if results and len(results) > 0:
-                result = results[0]
-                boxes = result.boxes
-
-                if boxes is not None and len(boxes) > 0:
-                    for box in boxes:
-                        x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
-                        conf = float(box.conf[0].cpu().numpy())
-                        cls_id = int(box.cls[0].cpu().numpy())
-
-                        class_name = self._id2name.get(cls_id, f"class_{cls_id}")
-                        class_floor = self.class_thresholds.get(class_name, self.confidence_threshold)
-                        if conf < class_floor:
-                            continue
-
-                        detection = DetectionResult(
-                            bbox=(int(x1), int(y1), int(x2), int(y2)),
-                            class_id=cls_id,
-                            class_name=class_name,
-                            confidence=conf,
-                        )
-                        detections.append(detection)
+                detections.extend(self._postprocess(results[0], self._id2name))
 
             # The custom border model owns the primary taxonomy. A lightweight
             # COCO fallback is invoked only when it returns nothing, improving
             # recall on domain-shifted traffic/crowd clips without doubling the
             # cost of every frame.
-            if not detections and self._fallback_model is not None:
+            if not detections and self._fallback_model is not None and self._fallback_due(camera_id):
                 queue_started = time.perf_counter()
                 with self._inference_lock:
                     fallback_started = time.perf_counter()
                     fallback_results = self._fallback_model(
                         frame,
-                        conf=self.inference_confidence,
-                        iou=self.nms_threshold,
-                        imgsz=self.imgsz,
-                        device=self._device,
-                        half=self.half_precision and str(self._device).startswith("cuda"),
                         classes=self.target_classes,
-                        verbose=False,
+                        **self._model_call_kwargs(),
                     )
                     inference_seconds += time.perf_counter() - fallback_started
                 self._queue_wait_times.append(fallback_started - queue_started)
                 if fallback_results:
-                    fallback_boxes = fallback_results[0].boxes
-                    if fallback_boxes is not None:
-                        for box in fallback_boxes:
-                            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().astype(int)
-                            conf = float(box.conf[0].cpu().numpy())
-                            cls_id = int(box.cls[0].cpu().numpy())
-                            class_name = self._fallback_id2name.get(cls_id, f"class_{cls_id}")
-                            if conf < self.class_thresholds.get(class_name, self.confidence_threshold):
-                                continue
-                            detections.append(DetectionResult(
-                                bbox=(int(x1), int(y1), int(x2), int(y2)),
-                                class_id=cls_id,
-                                class_name=class_name,
-                                confidence=conf,
-                            ))
+                    detections.extend(self._postprocess(fallback_results[0], self._fallback_id2name))
 
             self._inference_times.append(inference_seconds)
             self._service_times.append(time.perf_counter() - service_started)
@@ -320,6 +351,95 @@ class ObjectDetector:
             logger.error(f"Detection error on frame {frame_id}: {e}")
 
         return FrameDetections(frame_id=frame_id, camera_id=camera_id, timestamp=timestamp, detections=detections)
+
+    # Must not exceed the max batch of the engine's optimization profile
+    # (models/ibvap_coarse_dynbatch.engine is built for batch 1..8).
+    MAX_BATCH = 8
+
+    def _fallback_due(self, camera_id: str) -> bool:
+        now = time.monotonic()
+        if now - self._fallback_last_run.get(camera_id, 0.0) < self._fallback_interval_s:
+            return False
+        self._fallback_last_run[camera_id] = now
+        return True
+
+    def detect_batch(
+        self, frames: list[np.ndarray], camera_ids: list[str] | None = None
+    ) -> list[list[DetectionResult]]:
+        """
+        Run the primary model over a LIST of frames as batched forward passes
+        (chunks of MAX_BATCH) instead of one call per frame. Used by
+        BatchDetectionCoordinator so multi-camera GPU inference isn't
+        serialized into N tiny single-image calls.
+
+        Returns one list[DetectionResult] per input frame, same order as
+        `frames`. Frames that come back empty get the same throttled COCO
+        fallback as detect() when their camera_ids are given.
+        """
+        per_frame: list[list[DetectionResult]] = []
+        for start in range(0, len(frames), self.MAX_BATCH):
+            per_frame.extend(self._detect_batch_chunk(frames[start:start + self.MAX_BATCH]))
+
+        if self._fallback_model is not None and camera_ids is not None:
+            for i, (frame, camera_id) in enumerate(zip(frames, camera_ids)):
+                if per_frame[i] or not self._fallback_due(camera_id):
+                    continue
+                try:
+                    with self._inference_lock:
+                        fallback_results = self._fallback_model(
+                            frame, classes=self.target_classes, **self._model_call_kwargs()
+                        )
+                    if fallback_results:
+                        per_frame[i] = self._postprocess(fallback_results[0], self._fallback_id2name)
+                except Exception as e:
+                    logger.error(f"Fallback detection error camera={camera_id}: {e}")
+        return per_frame
+
+    def _detect_batch_chunk(self, frames: list[np.ndarray]) -> list[list[DetectionResult]]:
+        """One batched forward pass over at most MAX_BATCH frames."""
+        if self._model is None or not frames:
+            return [[] for _ in frames]
+
+        try:
+            service_started = time.perf_counter()
+            with self._inference_lock:
+                inference_started = time.perf_counter()
+                try:
+                    results = self._model(
+                        frames,
+                        classes=None if self.detect_all else self.target_classes,
+                        **self._model_call_kwargs(),
+                    )
+                except Exception as batch_err:
+                    if len(frames) <= 1:
+                        raise
+                    # A TensorRT engine compiled with a fixed (usually 1)
+                    # batch dimension rejects a multi-frame call outright.
+                    # Never drop detections over this — fall back to one
+                    # call per frame, still under the same lock acquisition.
+                    # Real batched throughput for such an engine requires
+                    # re-exporting it with a dynamic/larger max batch size.
+                    if not self._batch_unsupported_warned:
+                        logger.warning(
+                            f"Model rejected a {len(frames)}-frame batch ({batch_err}) — "
+                            "falling back to per-frame calls. Re-export the TensorRT "
+                            "engine with a larger max batch size for real batched throughput."
+                        )
+                        self._batch_unsupported_warned = True
+                    results = [self._model(f, classes=None if self.detect_all else self.target_classes, **self._model_call_kwargs())[0] for f in frames]
+                inference_seconds = time.perf_counter() - inference_started
+            # Per-frame share of the batched call, for get_average_inference_time()
+            # to keep meaning "cost per frame" whether batched or not.
+            per_frame_seconds = inference_seconds / len(frames)
+            for _ in frames:
+                self._inference_times.append(per_frame_seconds)
+            per_frame = [self._postprocess(r, self._id2name) for r in results]
+            self._total_detections += sum(len(d) for d in per_frame)
+            self._service_times.append(time.perf_counter() - service_started)
+            return per_frame
+        except Exception as e:
+            logger.error(f"Batched detection error ({len(frames)} frames): {e}")
+            return [[] for _ in frames]
 
     def get_average_inference_time(self) -> float:
         """Get average inference time in milliseconds."""

@@ -1,57 +1,84 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react';
 import Link from 'next/link';
+import type { ButtonHTMLAttributes, ComponentProps, ReactNode } from 'react';
+import { CircleNotch } from '@phosphor-icons/react';
 import { cn } from '../../lib/cn';
-import Icon from './Icon';
 
-type Variant = 'default' | 'primary' | 'outline' | 'ghost' | 'danger' | 'success';
-type Size = 'xs' | 'sm' | 'md';
+export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
+export type ButtonSize = 'sm' | 'md';
 
-const VARIANTS: Record<Variant, string> = {
-  default: 'border-default bg-card text-fg hover:bg-elevated hover:border-strong',
-  primary: 'border-transparent bg-accent text-white hover:bg-accent-hover',
-  outline: 'border-default bg-transparent text-fg-muted hover:bg-elevated hover:text-fg',
-  ghost: 'border-transparent bg-transparent text-fg-muted hover:bg-elevated hover:text-fg',
-  danger: 'border-transparent bg-danger text-white hover:opacity-90',
-  success: 'border-transparent bg-success text-white hover:opacity-90',
+const BASE =
+  'inline-flex shrink-0 select-none items-center justify-center gap-1.5 whitespace-nowrap rounded-md font-medium ' +
+  'transition-[background-color,border-color,color,opacity] duration-150 ' +
+  'disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50';
+
+const VARIANTS: Record<ButtonVariant, string> = {
+  primary: 'bg-accent text-accent-fg hover:bg-accent-hover',
+  secondary: 'border border-line-strong bg-surface text-fg hover:bg-subtle',
+  ghost: 'text-muted hover:bg-subtle hover:text-fg',
+  danger: 'border border-line-strong bg-surface text-bad hover:border-bad/40 hover:bg-bad/5',
 };
 
-const SIZES: Record<Size, string> = {
-  xs: 'px-2 py-1 text-[0.7rem] gap-1.5',
-  sm: 'px-3 py-1.5 text-[0.78rem] gap-1.5',
-  md: 'px-4 py-2 text-[0.82rem] gap-2',
+const SIZES: Record<ButtonSize, string> = {
+  sm: 'h-7 px-2.5 text-sm',
+  md: 'h-8 px-3 text-sm',
 };
 
-const base =
-  'inline-flex items-center justify-center rounded-sm border font-medium ' +
-  'transition-colors disabled:opacity-50 disabled:pointer-events-none whitespace-nowrap';
-
-interface CommonProps {
-  variant?: Variant;
-  size?: Size;
-  icon?: string;
-  block?: boolean;
-  children?: ReactNode;
-  className?: string;
+export function buttonClass(variant: ButtonVariant = 'secondary', size: ButtonSize = 'md', className?: string) {
+  return cn(BASE, VARIANTS[variant], SIZES[size], className);
 }
 
-export function Button({
-  variant = 'default', size = 'sm', icon, block, className, children, ...rest
-}: CommonProps & ButtonHTMLAttributes<HTMLButtonElement>) {
+interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+  variant?: ButtonVariant;
+  size?: ButtonSize;
+  icon?: ReactNode;
+  loading?: boolean;
+}
+
+export function Button({ variant, size, icon, loading, className, children, type = 'button', disabled, ...rest }: ButtonProps) {
   return (
-    <button className={cn(base, VARIANTS[variant], SIZES[size], block && 'w-full', className)} {...rest}>
-      {icon && <Icon name={icon} />}
+    <button type={type} className={buttonClass(variant, size, className)} disabled={disabled || loading} {...rest}>
+      {loading ? <CircleNotch size={14} className="animate-spin" aria-hidden /> : icon}
       {children}
     </button>
   );
 }
 
-export function ButtonLink({
-  variant = 'default', size = 'sm', icon, block, className, children, href,
-}: CommonProps & { href: string }) {
+type ButtonLinkProps = ComponentProps<typeof Link> & {
+  variant?: ButtonVariant;
+  size?: ButtonSize;
+  icon?: ReactNode;
+};
+
+export function ButtonLink({ variant, size, icon, className, children, ...rest }: ButtonLinkProps) {
   return (
-    <Link href={href} className={cn(base, VARIANTS[variant], SIZES[size], block && 'w-full', className)}>
-      {icon && <Icon name={icon} />}
+    <Link className={buttonClass(variant, size, className)} {...rest}>
+      {icon}
       {children}
     </Link>
+  );
+}
+
+interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+  /** accessible name, also shown as a native tooltip */
+  label: string;
+  size?: 'sm' | 'md';
+}
+
+export function IconButton({ label, size = 'md', className, children, type = 'button', ...rest }: IconButtonProps) {
+  return (
+    <button
+      type={type}
+      aria-label={label}
+      title={label}
+      className={cn(
+        'inline-flex shrink-0 items-center justify-center rounded-md text-muted transition-[background-color,color] duration-150',
+        'hover:bg-subtle hover:text-fg disabled:pointer-events-none disabled:opacity-50',
+        size === 'sm' ? 'size-7' : 'size-8',
+        className,
+      )}
+      {...rest}
+    >
+      {children}
+    </button>
   );
 }

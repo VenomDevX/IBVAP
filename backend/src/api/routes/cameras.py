@@ -3,7 +3,7 @@ IBVAP — Camera API Routes
 Camera management and status endpoints.
 """
 
-
+import re
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -71,6 +71,16 @@ class CameraUpdate(BaseModel):
         if resolution and not (160 <= resolution[0] <= 7680 and 120 <= resolution[1] <= 4320):
             raise ValueError("Resolution is outside the supported range")
         return resolution
+
+
+_CREDENTIALS = re.compile(r"(?<=://)[^/@\s]+@")
+
+
+def _audit_value(field: str, value):
+    """Values as stored in the audit log: stream credentials are never recorded."""
+    if field == "source" and isinstance(value, str):
+        return _CREDENTIALS.sub("***@", value)
+    return value
 
 
 def _serialize_camera(camera, include_source: bool = False) -> dict:
@@ -156,7 +166,10 @@ async def create_camera(camera: CameraCreate, user: dict = Depends(require_admin
             list(camera.resolution) if camera.resolution else None,
         )
         actor = user.get("email") or user.get("user_id") or "unknown"
-        repo.create_audit_log("create_camera", actor, {"camera_id": camera.camera_id})
+        repo.create_audit_log("create_camera", actor, {
+            "camera_id": camera.camera_id, "name": camera.name, "enabled": camera.enabled,
+            "source": _audit_value("source", camera.source),
+        })
         from src.api.app import get_pipeline
         pipeline = get_pipeline()
         if pipeline:
@@ -188,11 +201,21 @@ async def update_camera(camera_id: str, update: CameraUpdate, user: dict = Depen
         changes = update.model_dump(exclude_unset=True)
         if "resolution" in changes and changes["resolution"] is not None:
             changes["resolution"] = list(changes["resolution"])
-        row = repo.update_camera(camera_id, changes)
-        if row is None:
+        current = repo.get_camera(camera_id)
+        if current is None:
             raise HTTPException(status_code=404, detail="Camera not found")
+        before = {f: getattr(current, col) for f, col in Repository.CAMERA_FIELDS.items() if f in changes}
+        row = repo.update_camera(camera_id, changes, by_user=True)
         actor = user.get("email") or user.get("user_id") or "unknown"
-        repo.create_audit_log("update_camera", actor, {"camera_id": camera_id, "fields": sorted(changes)})
+        diff = {
+            f: {"from": _audit_value(f, before[f]), "to": _audit_value(f, changes[f])}
+            for f in changes if before.get(f) != changes[f]
+        }
+        if set(diff) == {"enabled"}:
+            action = "enable_camera" if changes["enabled"] else "disable_camera"
+            repo.create_audit_log(action, actor, {"camera_id": camera_id, "name": row.name})
+        elif diff:
+            repo.create_audit_log("update_camera", actor, {"camera_id": camera_id, "name": row.name, "changes": diff})
         from src.api.app import get_pipeline
         pipeline = get_pipeline()
         if pipeline:

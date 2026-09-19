@@ -1,68 +1,110 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { apiFetch, formatTime } from '@/src/api/client';
-import DataTable, { type Column } from '@/src/components/ui/DataTable';
+import { useCallback, useEffect, useState } from 'react';
+import { ArrowClockwise } from '@phosphor-icons/react';
+import { apiJson, errorMessage, formatStatus, formatTime, toDate } from '@/src/api/client';
 import { Button } from '@/src/components/ui/Button';
+import DataTable, { type Column } from '@/src/components/ui/DataTable';
 import { SearchInput } from '@/src/components/ui/Field';
-import { Toolbar } from '@/src/components/ui/Toolbar';
-import { Loading } from '@/src/components/ui/States';
+import { Toolbar } from '@/src/components/ui/Section';
+import SegmentedControl from '@/src/components/ui/SegmentedControl';
+import { describeAudit } from '@/src/lib/audit';
+import { EmptyState } from '@/src/components/ui/States';
+import type { AuditEntry } from '@/src/types';
 
-interface AuditEntry {
-  id: number;
-  timestamp: string | number;
-  username: string;
-  action: string;
-  ip_address?: string;
-  details?: unknown;
+function detailsText(details: unknown): string {
+  if (details == null || details === '') return '';
+  return typeof details === 'string' ? details : JSON.stringify(details);
 }
 
 export default function AuditPage() {
   const [rows, setRows] = useState<AuditEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [scope, setScope] = useState<'actions' | 'all'>('actions');
 
-  const load = async () => {
+  const load = useCallback(async () => {
+    setRefreshing(true);
     try {
-      const res = await apiFetch('/api/audit?limit=200');
-      setRows(await res.json());
+      setRows(await apiJson<AuditEntry[]>(`/api/audit?limit=200${scope === 'actions' ? '&actions_only=true' : ''}`));
+      setError(null);
     } catch (err) {
-      console.error('Failed to load audit logs:', err);
+      setError(errorMessage(err));
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  };
+  }, [scope]);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { void load(); }, [load]);
 
   const columns: Column<AuditEntry>[] = [
-    { key: 'id', header: 'ID', sortable: true, align: 'right', accessor: r => r.id },
-    { key: 'timestamp', header: 'Timestamp', sortable: true, accessor: r => r.timestamp, render: r => formatTime(r.timestamp) },
-    { key: 'username', header: 'User', sortable: true, render: r => <span className="font-medium text-fg">{r.username}</span> },
-    { key: 'action', header: 'Action', sortable: true },
-    { key: 'ip_address', header: 'IP Address', accessor: r => r.ip_address ?? '', render: r => r.ip_address || '—' },
     {
-      key: 'details', header: 'Details',
-      accessor: r => JSON.stringify(r.details ?? ''),
-      render: r => (
-        <pre className="max-w-md overflow-x-auto whitespace-pre-wrap font-mono text-[0.72rem] text-fg-muted">
-          {JSON.stringify(r.details, null, 2)}
-        </pre>
-      ),
+      key: 'timestamp', header: 'Time', sortable: true,
+      accessor: row => toDate(row.timestamp)?.getTime() ?? 0,
+      render: row => <span className="num whitespace-nowrap text-muted">{formatTime(row.timestamp)}</span>,
+    },
+    { key: 'username', header: 'User', sortable: true, render: row => <span className="font-medium">{row.username}</span> },
+    {
+      key: 'action', header: 'Action', sortable: true,
+      accessor: row => `${describeAudit(row.action, row.details) ?? ''} ${row.action}`,
+      render: row => {
+        const summary = describeAudit(row.action, row.details);
+        return summary
+          ? <span title={formatStatus(row.action)}>{summary}</span>
+          : <span className="font-mono text-xs">{row.action.includes(' /') ? row.action : formatStatus(row.action)}</span>;
+      },
+    },
+    {
+      key: 'ip_address', header: 'IP address', hideBelow: 'md', accessor: row => row.ip_address ?? '',
+      render: row => <span className="num font-mono text-xs text-muted" translate="no">{row.ip_address || 'Not recorded'}</span>,
+    },
+    {
+      key: 'details', header: 'Details', hideBelow: 'lg', accessor: row => detailsText(row.details),
+      render: row => {
+        const text = detailsText(row.details);
+        return text
+          ? <span className="block max-w-md truncate font-mono text-xs text-muted" title={text}>{text}</span>
+          : <span className="text-muted">None</span>;
+      },
     },
   ];
 
   return (
     <div>
       <Toolbar>
-        <SearchInput placeholder="Search by user, action, IP…" value={query} onChange={e => setQuery(e.target.value)} />
-        <Button icon="rotate-right" onClick={load}>Refresh</Button>
+        <SegmentedControl
+          ariaLabel="Audit entries to show"
+          value={scope}
+          onChange={value => { setScope(value); setLoading(true); }}
+          options={[{ value: 'actions', label: 'User actions' }, { value: 'all', label: 'All requests' }]}
+        />
+        <SearchInput placeholder="Filter by user, action or IP…" aria-label="Filter audit log" value={query}
+          onChange={e => setQuery(e.target.value)} wrapperClassName="w-full sm:w-80" />
+        <span className="num text-sm text-muted">Latest {rows.length} entries</span>
+        <Button variant="ghost" className="ml-auto" icon={<ArrowClockwise size={14} />} loading={refreshing && !loading} onClick={() => void load()}>
+          Refresh
+        </Button>
       </Toolbar>
 
-      {loading ? (
-        <Loading label="Loading audit log…" />
+      {error && rows.length === 0 && !loading ? (
+        <EmptyState
+          title="The audit log could not be loaded"
+          description={error.includes('403') || /forbidden|permission/i.test(error) ? 'Only administrators, commanders and auditors can view the audit log.' : error}
+          action={<Button onClick={() => void load()}>Try again</Button>}
+        />
       ) : (
-        <DataTable columns={columns} rows={rows} rowKey={r => String(r.id)} search={query} emptyMessage="No audit entries" />
+        <DataTable
+          label="Audit log"
+          columns={columns}
+          rows={rows}
+          rowKey={row => String(row.id)}
+          search={query}
+          loading={loading}
+          emptyTitle={query ? 'No entries match this filter' : 'No audit entries yet'}
+        />
       )}
     </div>
   );

@@ -23,6 +23,10 @@ next-env.d.ts
 *.tsbuildinfo
 .vercel
 
+# Playwright
+/playwright-report/
+/test-results/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

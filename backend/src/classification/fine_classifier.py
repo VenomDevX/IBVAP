@@ -78,7 +78,10 @@ class FineClassifier:
             import torch
 
             self._torch = torch
-            self._device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+            if not device or device == "auto":
+                self._device = "cuda" if torch.cuda.is_available() else "cpu"
+            else:
+                self._device = device
 
             # weights_only=True: this checkpoint holds tensors, str and float
             # only. Never unpickle arbitrary objects in the serving path.

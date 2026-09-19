@@ -29,11 +29,16 @@ class Zone:
     points: list[tuple[int, int]]
     enabled: bool = True
     color: tuple[int, int, int] = (255, 0, 0)
+    # Object classes this zone reacts to; empty = every class.
+    trigger_classes: list[str] = field(default_factory=list)
     _polygon: Any = field(default=None, repr=False)
 
     def __post_init__(self):
         if Polygon is not None and len(self.points) >= 3:
             self._polygon = Polygon(self.points)
+
+    def applies_to(self, object_type: str | None) -> bool:
+        return not self.trigger_classes or object_type is None or object_type in self.trigger_classes
 
     def contains_point(self, x: int, y: int) -> bool:
         """Check if a point is inside this zone."""
@@ -71,6 +76,7 @@ class Zone:
             "points": self.points,
             "enabled": self.enabled,
             "color": list(self.color),
+            "trigger_classes": list(self.trigger_classes),
         }
 
 
@@ -98,6 +104,7 @@ class ZoneManager:
                     points=[tuple(p) for p in zone_cfg["points"]],
                     enabled=zone_cfg.get("enabled", True),
                     color=tuple(zone_cfg.get("color", [255, 0, 0])),
+                    trigger_classes=list(zone_cfg.get("trigger_classes") or []),
                 )
                 self.add_zone(zone)
                 logger.info(f"Loaded zone: {zone.name} ({zone.zone_type}) for {camera_id}")
@@ -126,30 +133,37 @@ class ZoneManager:
         zone_ids = self._camera_zones.get(camera_id, [])
         return [self._zones[zid] for zid in zone_ids if zid in self._zones]
 
-    def check_point(self, camera_id: str, x: int, y: int) -> list[Zone]:
+    def check_point(self, camera_id: str, x: int, y: int, object_type: str | None = None) -> list[Zone]:
         """
         Check which zones a point falls inside for a given camera.
-        Returns list of zones the point is in.
+        Returns the zones the point is in, limited to zones that apply to object_type.
         """
         containing_zones = []
         for zone in self.get_camera_zones(camera_id):
-            if zone.enabled and zone.contains_point(x, y):
+            if zone.enabled and zone.applies_to(object_type) and zone.contains_point(x, y):
                 containing_zones.append(zone)
         return containing_zones
 
-    def check_track_zones(self, camera_id: str, centroid: tuple[int, int]) -> list[str]:
+    def check_track_zones(
+        self, camera_id: str, centroid: tuple[int, int], object_type: str | None = None
+    ) -> list[str]:
         """
         Check which zone IDs a tracked object's centroid falls inside.
         Returns list of zone IDs.
         """
         x, y = centroid
-        zones = self.check_point(camera_id, x, y)
+        zones = self.check_point(camera_id, x, y, object_type)
         return [z.zone_id for z in zones]
 
-    def is_in_restricted_zone(self, camera_id: str, x: int, y: int) -> bool:
-        """Quick check if a point is in any restricted zone."""
+    def is_in_restricted_zone(self, camera_id: str, x: int, y: int, object_type: str | None = None) -> bool:
+        """Quick check if a point is in any restricted zone that applies to object_type."""
         for zone in self.get_camera_zones(camera_id):
-            if zone.enabled and zone.zone_type == "restricted" and zone.contains_point(x, y):
+            if (
+                zone.enabled
+                and zone.zone_type == "restricted"
+                and zone.applies_to(object_type)
+                and zone.contains_point(x, y)
+            ):
                 return True
         return False
 

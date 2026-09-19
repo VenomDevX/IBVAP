@@ -12,7 +12,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ibvap
-      POSTGRES_PASSWORD: ibvap_password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in a .env next to docker-compose.yml}
       POSTGRES_DB: ibvap
     volumes:
       - ibvap_db:/var/lib/postgresql/data
@@ -33,7 +33,7 @@ services:
     environment:
       - IBVAP_ENV=production
       - IBVAP_CONFIG_DIR=/app/configs
-      - DATABASE_URL=postgresql://ibvap:ibvap_password@db:5432/ibvap
+      - DATABASE_URL=postgresql://ibvap:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@db:5432/ibvap
     volumes:
       - ./outputs:/app/outputs
       - ./backend/configs:/app/configs

@@ -3,7 +3,7 @@ import type { RiskLevel } from '../types';
 
 /**
  * Dev: the browser calls the backend cross-origin (backend CORS allows :3001).
- * Prod: empty — nginx serves the static app and proxies /api on the same origin.
+ * Prod: empty, so requests go to the same origin and nginx proxies /api.
  */
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? '';
 
@@ -25,15 +25,14 @@ async function doFetch(url: string, options: RequestInit, token?: string): Promi
 }
 
 export async function apiFetch(url: string, options: RequestInit = {}): Promise<Response> {
-  let { data: { session } } = await supabase.auth.getSession();
+  const { data: { session } } = await supabase.auth.getSession();
   let res = await doFetch(url, options, session?.access_token);
 
   if (res.status === 401) {
-    // one refresh + retry before giving up (handles a just-expired token / clock skew)
+    // One refresh + retry before giving up (just-expired token or clock skew).
     const { data } = await supabase.auth.refreshSession();
     if (data.session?.access_token) {
-      session = data.session;
-      res = await doFetch(url, options, session.access_token);
+      res = await doFetch(url, options, data.session.access_token);
     }
   }
 
@@ -46,13 +45,52 @@ export async function apiFetch(url: string, options: RequestInit = {}): Promise<
   return res;
 }
 
+export class ApiError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+async function readError(res: Response): Promise<string> {
+  const text = await res.text().catch(() => '');
+  try {
+    const body = JSON.parse(text);
+    if (typeof body?.detail === 'string') return body.detail;
+    if (Array.isArray(body?.detail) && body.detail[0]?.msg) return String(body.detail[0].msg);
+  } catch {
+    /* not JSON */
+  }
+  return text || `Request failed with status ${res.status}`;
+}
+
+/** Fetch JSON and throw on non-2xx, so an error body is never used as data. */
+export async function apiJson<T>(url: string, options: RequestInit = {}): Promise<T> {
+  const res = await apiFetch(url, options);
+  if (!res.ok) throw new ApiError(res.status, await readError(res));
+  return res.json() as Promise<T>;
+}
+
+/** POST/PATCH/DELETE with an optional JSON body. */
+export function apiSend<T = unknown>(url: string, method: 'POST' | 'PATCH' | 'PUT' | 'DELETE', body?: unknown): Promise<T> {
+  return apiJson<T>(url, {
+    method,
+    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
+export function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'Something went wrong';
+}
+
 // ======================== Risk coding ========================
 
 export interface RiskMeta {
-  /** stable key, also the Tailwind colour suffix: text-risk-<key> / bg-risk-<key> */
   key: RiskLevel | 'unknown';
   label: string;
-  /** resolved CSS colour, for inline dots / chart series */
+  /** CSS colour, works for dots, rules and chart series */
   color: string;
 }
 
@@ -68,33 +106,72 @@ export function riskMeta(level: string | null | undefined): RiskMeta {
   return RISK_META[(level ?? '') as RiskMeta['key']] ?? RISK_META.unknown;
 }
 
+export const RISK_LEVELS: RiskLevel[] = ['critical', 'high', 'medium', 'low'];
+
 // ======================== Formatting ========================
 
-export function formatEventType(type: string): string {
+export function formatEventType(type: string | null | undefined): string {
   if (!type) return 'Unknown';
-  return type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+  const words = type.replace(/_/g, ' ').trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
-export function formatTime(timestamp: string | number): string {
-  if (!timestamp && timestamp !== 0) return '—';
-  try {
-    let ms: number;
-    if (typeof timestamp === 'number') {
-      ms = timestamp < 1e12 ? timestamp * 1000 : timestamp;
-    } else if (/^\d+(\.\d+)?$/.test(timestamp.trim())) {
-      const n = parseFloat(timestamp);
-      ms = n < 1e12 ? n * 1000 : n;
-    } else {
-      ms = new Date(timestamp).getTime();
-    }
-    const date = new Date(ms);
-    if (isNaN(date.getTime())) return String(timestamp);
-    return date.toLocaleString('en-IN', {
-      hour: '2-digit', minute: '2-digit', second: '2-digit',
-      day: '2-digit', month: 'short',
-      hour12: false,
-    });
-  } catch {
-    return String(timestamp);
+/** snake_case status to sentence case: "false_positive" -> "False positive". */
+export function formatStatus(status: string | null | undefined): string {
+  return formatEventType(status);
+}
+
+export function toDate(value: string | number | null | undefined): Date | null {
+  if (value == null || value === '') return null;
+  let ms: number;
+  if (typeof value === 'number') {
+    ms = value < 1e12 ? value * 1000 : value;
+  } else if (/^\d+(\.\d+)?$/.test(value.trim())) {
+    const n = parseFloat(value);
+    ms = n < 1e12 ? n * 1000 : n;
+  } else {
+    ms = new Date(value).getTime();
   }
+  const date = new Date(ms);
+  return isNaN(date.getTime()) ? null : date;
+}
+
+const DATE_TIME = new Intl.DateTimeFormat('en-IN', {
+  day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+});
+const TIME_ONLY = new Intl.DateTimeFormat('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
+const RELATIVE = new Intl.RelativeTimeFormat('en', { numeric: 'auto', style: 'short' });
+const NUMBER = new Intl.NumberFormat('en-IN');
+
+export function formatTime(value: string | number | null | undefined): string {
+  const date = toDate(value);
+  return date ? DATE_TIME.format(date) : 'Unknown';
+}
+
+export function formatClock(date: Date): string {
+  return TIME_ONLY.format(date);
+}
+
+export function formatRelative(value: string | number | null | undefined, now = Date.now()): string {
+  const date = toDate(value);
+  if (!date) return 'Unknown';
+  const seconds = Math.round((date.getTime() - now) / 1000);
+  const abs = Math.abs(seconds);
+  if (abs < 45) return 'just now';
+  if (abs < 3600) return RELATIVE.format(Math.round(seconds / 60), 'minute');
+  if (abs < 86400) return RELATIVE.format(Math.round(seconds / 3600), 'hour');
+  return RELATIVE.format(Math.round(seconds / 86400), 'day');
+}
+
+export function formatDuration(seconds: number | null | undefined): string {
+  if (seconds == null || isNaN(seconds)) return 'Unknown';
+  if (seconds < 60) return `${seconds.toFixed(seconds < 10 ? 1 : 0)}s`;
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  if (m < 60) return s ? `${m}m ${s}s` : `${m}m`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
+export function formatNumber(value: number | null | undefined): string {
+  return NUMBER.format(value ?? 0);
 }

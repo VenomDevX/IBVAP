@@ -24,7 +24,20 @@ from src.api.auth import issue_media_ticket, require_auth
 from src.api.middleware.input_validator import InputValidationMiddleware
 from src.api.middleware.security import RequestLoggingMiddleware, SecurityHeadersMiddleware
 from src.api.ratelimit import limiter
-from src.api.routes import alerts, audit, cameras, events, reports, snapshots, statistics, stream, tracks, zones
+from src.api.routes import (
+    alerts,
+    audit,
+    cameras,
+    events,
+    reports,
+    snapshots,
+    statistics,
+    storage,
+    stream,
+    tracks,
+    watchlists,
+    zones,
+)
 from src.api.routes import evidence as evidence_routes
 from src.api.token_revocation import revoke_token
 from src.api.websocket import authenticate_ws, ws_manager
@@ -60,6 +73,10 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down IBVAP...")
+    watchdog = getattr(app.state, "camera_watchdog", None)
+    if watchdog is not None:
+        # Stop first so it cannot restart cameras that are shutting down.
+        await asyncio.to_thread(watchdog.stop)
     if pipeline:
         await asyncio.to_thread(pipeline.stop_all)
     if startup_task is not None and not startup_task.done():
@@ -86,6 +103,13 @@ def _initialize_pipeline(app: FastAPI) -> None:
         pipeline = candidate
         app.state.pipeline_status = "ready"
         logger.success("IBVAP video pipeline is ready")
+
+        from src.pipeline.watchdog import CameraWatchdog
+
+        if CameraWatchdog.enabled_from_env():
+            watchdog = CameraWatchdog.from_env(candidate)
+            watchdog.start()
+            app.state.camera_watchdog = watchdog
     except BaseException as exc:
         # MemoryError during ML import/initialisation is recoverable: database
         # APIs and the dashboard should stay available in degraded mode.
@@ -187,6 +211,8 @@ def create_app() -> FastAPI:
     app.include_router(stream.router, prefix="/api/stream", tags=["Video Stream"])
     app.include_router(reports.router, prefix="/api/reports", tags=["Reports"])
     app.include_router(audit.router, prefix="/api/audit", tags=["Audit Logs"])
+    app.include_router(watchlists.router, prefix="/api/watchlists", tags=["Watchlists"])
+    app.include_router(storage.router, prefix="/api/storage", tags=["Storage"])
     app.include_router(snapshots.router, prefix="/snapshots", tags=["Snapshots"])
 
     # Stable integration aliases. Existing unversioned routes remain intact for

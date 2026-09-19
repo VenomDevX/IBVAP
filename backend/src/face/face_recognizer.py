@@ -48,18 +48,28 @@ class FaceRecognizer:
     def active(self) -> bool:
         return bool(self.enabled and self._detector is not None and self._matcher is not None)
 
+    def faces(self, image: np.ndarray) -> list[dict]:
+        """All usable faces (confidence-gated, with an embedding), best first."""
+        if not self.active or image is None or getattr(image, "size", 0) == 0:
+            return []
+        try:
+            faces = self._detector.detect_faces(image)
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"face detect error: {e}")
+            return []
+        faces = [f for f in faces if f.get("confidence", 0) >= self.min_face_confidence and f.get("embedding")]
+        return sorted(faces, key=lambda f: f["confidence"], reverse=True)
+
+    def best_face(self, person_crop: np.ndarray) -> dict | None:
+        faces = self.faces(person_crop)
+        return faces[0] if faces else None
+
+    def match(self, face: dict) -> dict:
+        """Gallery match for one face from faces()/best_face()."""
+        return self._matcher.match(face)
+
     def identify(self, person_crop: np.ndarray) -> dict | None:
         """Return {"identity", "similarity", "status"} for the most confident face,
         or None if no usable face is found."""
-        if not self.active or person_crop is None or getattr(person_crop, "size", 0) == 0:
-            return None
-        try:
-            faces = self._detector.detect_faces(person_crop)
-        except Exception as e:  # noqa: BLE001
-            logger.debug(f"face detect error: {e}")
-            return None
-        faces = [f for f in faces if f.get("confidence", 0) >= self.min_face_confidence and f.get("embedding")]
-        if not faces:
-            return None
-        best = max(faces, key=lambda f: f["confidence"])
-        return self._matcher.match(best)
+        best = self.best_face(person_crop)
+        return self.match(best) if best is not None else None

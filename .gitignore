@@ -117,3 +117,8 @@ supabase/.branches/
 *.7z
 *.rar
 *_backup*
+
+# --- Model conversion backups (too large for GitHub) ---
+*.bak
+
+# --- Launcher logs ---

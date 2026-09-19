@@ -3,7 +3,7 @@ IBVAP — Zones API Routes
 Virtual zone management endpoints.
 """
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
@@ -15,6 +15,8 @@ from src.database.repository import Repository
 
 router = APIRouter()
 
+TriggerClass = Annotated[str, Field(min_length=1, max_length=50, pattern=r"^[a-z0-9_]+$")]
+
 
 class ZoneCreate(BaseModel):
     zone_id: str = Field(min_length=1, max_length=50, pattern=r"^[A-Za-z0-9_-]+$")
@@ -24,6 +26,7 @@ class ZoneCreate(BaseModel):
     points: list[tuple[int, int]] = Field(min_length=3, max_length=256)
     color: tuple[int, int, int] = (255, 0, 0)
     enabled: bool = True
+    trigger_classes: list[TriggerClass] = Field(default_factory=list, max_length=32)
 
     @field_validator("points")
     @classmethod
@@ -48,6 +51,7 @@ class ZoneUpdate(BaseModel):
     points: list[tuple[int, int]] | None = Field(default=None, min_length=3, max_length=256)
     color: tuple[int, int, int] | None = None
     enabled: bool | None = None
+    trigger_classes: list[TriggerClass] | None = Field(default=None, max_length=32)
 
     @field_validator("points")
     @classmethod
@@ -83,6 +87,7 @@ async def list_zones(camera_id: str | None = None, user: dict = Depends(require_
             "points": z.points,
             "color": z.color,
             "enabled": z.enabled,
+            "trigger_classes": list(z.trigger_classes or []),
         }
         for z in zones if can_access_camera(user, z.camera_id)
     ]
@@ -133,6 +138,7 @@ async def create_zone(zone: ZoneCreate, user: dict = Depends(require_admin)):
             points=[tuple(p) for p in zone.points],
             enabled=zone.enabled,
             color=tuple(zone.color),
+            trigger_classes=list(zone.trigger_classes),
         )
         pipeline.zone_manager.add_zone(new_zone)
 
@@ -150,11 +156,23 @@ async def update_zone(zone_id: str, update: ZoneUpdate, user: dict = Depends(req
             changes["points"] = [list(point) for point in changes["points"]]
         if "color" in changes and changes["color"] is not None:
             changes["color"] = list(changes["color"])
+        existing = next((z for z in repo.get_zones() if z.zone_id == zone_id), None)
+        field_map = {"camera_id": "camera_id", "name": "name", "type": "zone_type", "points": "points",
+                     "color": "color", "enabled": "enabled", "trigger_classes": "trigger_classes"}
+        before = {f: getattr(existing, field_map[f], None) for f in changes} if existing else {}
         row = repo.update_zone(zone_id, changes)
         if row is None:
             raise HTTPException(status_code=404, detail="Zone not found")
         actor = user.get("email") or user.get("user_id") or "unknown"
-        repo.create_audit_log("update_zone", actor, {"zone_id": zone_id, "fields": sorted(changes)})
+        diff = {
+            f: ({"from": "(shape)", "to": "(new shape)"} if f == "points" else {"from": before.get(f), "to": v})
+            for f, v in changes.items() if before.get(f) != v
+        }
+        if set(diff) == {"enabled"}:
+            action = "enable_zone" if changes["enabled"] else "disable_zone"
+            repo.create_audit_log(action, actor, {"zone_id": zone_id, "name": row.name})
+        elif diff:
+            repo.create_audit_log("update_zone", actor, {"zone_id": zone_id, "name": row.name, "changes": diff})
 
         from src.api.app import get_pipeline
         from src.spatial.zone_manager import Zone
@@ -165,6 +183,7 @@ async def update_zone(zone_id: str, update: ZoneUpdate, user: dict = Depends(req
                 zone_id=row.zone_id, name=row.name, zone_type=row.zone_type,
                 camera_id=row.camera_id, points=[tuple(point) for point in row.points],
                 enabled=row.enabled, color=tuple(row.color),
+                trigger_classes=list(row.trigger_classes or []),
             ))
         return {"message": "Zone updated", "zone_id": zone_id}
     finally:
