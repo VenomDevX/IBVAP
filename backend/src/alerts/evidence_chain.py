@@ -25,23 +25,32 @@ from src.database.models import (
     OperatorFeedbackModel,
 )
 
-CURRENT_VERSION = 2
+CURRENT_VERSION = 3
 
-# Hashed fields per chain version. v1 also hashed risk_score/risk_level, which
-# incident escalation rewrites, so escalated v1 rows can no longer verify.
-# v2 hashes only what never changes after insert; escalations are recorded in
-# the audit trail / score_breakdown instead.
+# Hashed fields per chain version.
+# v1 hashed risk_score/risk_level, which incident escalation rewrites, so
+#    escalated v1 rows can no longer verify.
+# v2 dropped them, which left the risk assessment — the part of a record that
+#    decides how an incident is triaged — covered by nothing.
+# v3 hashes immutable copies taken at insert (original_risk_*) instead, so the
+#    assessment is tamper-evident again while escalation stays free to rewrite
+#    the mutable risk_score / risk_level.
 EVENT_FIELDS = {
     1: ["event_id", "camera_id", "track_id", "event_type", "timestamp",
         "object_type", "risk_score", "risk_level", "evidence_hash"],
     2: ["event_id", "camera_id", "track_id", "event_type", "timestamp",
         "object_type", "evidence_hash"],
+    3: ["event_id", "camera_id", "track_id", "event_type", "timestamp",
+        "object_type", "original_risk_score", "original_risk_level", "evidence_hash"],
 }
 ALERT_FIELDS = {
     1: ["alert_id", "camera_id", "event_id", "track_id", "event_type",
         "timestamp", "risk_score", "risk_level", "object_type", "snapshot_hash"],
     2: ["alert_id", "camera_id", "event_id", "track_id", "event_type",
         "timestamp", "object_type", "snapshot_hash"],
+    3: ["alert_id", "camera_id", "event_id", "track_id", "event_type",
+        "timestamp", "original_risk_score", "original_risk_level",
+        "object_type", "snapshot_hash"],
 }
 
 CHAINED = {
@@ -76,6 +85,12 @@ def append(session, row, table: str) -> None:
     # code appends without updating it.
     last = session.query(model.chain_hash).filter(model.chain_hash.isnot(None)).order_by(model.id.desc()).first()
     prev = last[0] if last else None
+    # Freeze the assessment as inserted; escalation may later change risk_score
+    # / risk_level, but these copies are what the chain commits to.
+    if row.original_risk_score is None:
+        row.original_risk_score = row.risk_score
+    if row.original_risk_level is None:
+        row.original_risk_level = row.risk_level
     record = {f: getattr(row, f) for f in fields_for(table, CURRENT_VERSION)}
     row.chain_version = CURRENT_VERSION
     row.prev_hash = prev or evidence.GENESIS

@@ -95,6 +95,7 @@ class Database:
             (7, self._migration_zone_trigger_classes),
             (8, self._migration_chain_v2),
             (9, self._migration_camera_user_overrides),
+            (10, self._migration_chain_v3_original_risk),
         ]
         for version, migration in migrations:
             if version in applied:
@@ -259,6 +260,22 @@ class Database:
             ddl = "JSONB" if self.db_url.startswith("postgres") else "JSON"
             with self.engine.begin() as conn:
                 conn.execute(text(f"ALTER TABLE cameras ADD COLUMN user_overrides {ddl}"))
+
+    def _migration_chain_v3_original_risk(self, insp, text):
+        """Chain v3 hashes the risk assessment as first recorded.
+
+        Existing rows keep their own chain_version, so they are left NULL and
+        still verify under v1/v2 field lists; only new rows are v3.
+        """
+        with self.engine.begin() as conn:
+            for table in ("events", "alerts"):
+                if not insp.has_table(table):
+                    continue
+                existing = {column["name"] for column in insp.get_columns(table)}
+                if "original_risk_score" not in existing:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN original_risk_score FLOAT"))
+                if "original_risk_level" not in existing:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN original_risk_level VARCHAR(20)"))
 
     def get_session(self) -> Session:
         """Get a new database session."""

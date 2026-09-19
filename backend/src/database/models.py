@@ -90,6 +90,11 @@ class EventModel(Base):
     opened_at = Column(DateTime, nullable=True, index=True)
     last_updated = Column(DateTime, nullable=True, index=True)
     closed_at = Column(DateTime, nullable=True)
+    # The risk assessment as first recorded. Escalation rewrites risk_score /
+    # risk_level in place, so these immutable copies are what the hash chain
+    # commits to.
+    original_risk_score = Column(Float, nullable=True)
+    original_risk_level = Column(String(20), nullable=True)
     score_breakdown = Column(JSON, default=dict)
     dedupe_key = Column(String(500), nullable=True, index=True)
     evidence_path = Column(String(500), nullable=True)
@@ -97,7 +102,8 @@ class EventModel(Base):
     prev_hash = Column(String(64), nullable=True)
     chain_hash = Column(String(64), nullable=True, index=True)
     # NULL = v1 (hashed risk_score/risk_level, which escalation later changes);
-    # 2 = only fields that never change after insert. See alerts/evidence_chain.py.
+    # 2 = only fields that never change after insert (left the risk assessment
+    # uncovered); 3 = adds original_risk_*. See alerts/evidence_chain.py.
     chain_version = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -136,11 +142,17 @@ class AlertModel(Base):
     resolved_at = Column(DateTime, nullable=True)
     acknowledged_by = Column(String(100), nullable=True)
     resolved_by = Column(String(100), nullable=True)
+    # The risk assessment as first recorded. Escalation rewrites risk_score /
+    # risk_level in place, so these immutable copies are what the hash chain
+    # commits to.
+    original_risk_score = Column(Float, nullable=True)
+    original_risk_level = Column(String(20), nullable=True)
     false_positive = Column(Boolean, default=False, nullable=False)
     prev_hash = Column(String(64), nullable=True)
     chain_hash = Column(String(64), nullable=True, index=True)
     # NULL = v1 (hashed risk_score/risk_level, which escalation later changes);
-    # 2 = only fields that never change after insert. See alerts/evidence_chain.py.
+    # 2 = only fields that never change after insert (left the risk assessment
+    # uncovered); 3 = adds original_risk_*. See alerts/evidence_chain.py.
     chain_version = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 

@@ -239,7 +239,9 @@ class RiskEngine:
     def _wanted_hit(fused_event: FusedEvent) -> dict | None:
         for ctx in (fused_event.identity_context, fused_event.vehicle_context):
             hit = (ctx or {}).get("watchlist")
-            if hit and hit.get("list_type") == "wanted":
+            # Only a confirmed (exact) read forces critical: a confusable fold
+            # can merge two distinct valid registrations.
+            if hit and hit.get("list_type") == "wanted" and hit.get("exact", True):
                 return hit
         return None
 
@@ -249,6 +251,9 @@ class RiskEngine:
             return None
         label = hit.get("label", "")
         if hit.get("list_type") == "wanted":
+            if not hit.get("exact", True):
+                return (float(self.watchlist_scores.get("wanted_possible", 60)),
+                        [f"Possible wanted watchlist match (unconfirmed read): {label}"])
             return float(self.watchlist_scores.get("wanted", 100)), [f"Wanted watchlist match: {label}"]
         if hit.get("list_type") == "authorized":
             return float(self.watchlist_scores.get("authorized", 0)), [f"Authorized: {label}"]

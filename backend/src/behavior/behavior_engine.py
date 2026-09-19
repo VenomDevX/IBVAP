@@ -93,7 +93,7 @@ class BehaviorEngine:
 
         # --- Check: Wanted watchlist match (face or plate) ---
         hit = getattr(track, "watchlist", None)
-        if hit and hit.get("list_type") == "wanted":
+        if hit and hit.get("list_type") == "wanted" and hit.get("exact", True):
             event = self._create_event(
                 track,
                 BehaviorType.WATCHLIST_MATCH,

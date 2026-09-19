@@ -220,3 +220,27 @@ def test_rows_appended_during_verification_are_not_reported(repo, monkeypatch):
     monkeypatch.setattr(Query, "__iter__", iter_then_append)
     assert ec.verify_table(repo.session, "events").ok
     assert state["appended"]
+
+
+def test_chain_covers_the_risk_assessment_at_insert(repo):
+    """v3 hashes original_risk_*, so a direct risk edit is still detectable."""
+    _seed(repo, [1], with_alerts=True)
+    for table, model in (("events", EventModel), ("alerts", AlertModel)):
+        assert verify_table(repo.session, table).ok, table
+        row = repo.session.query(model).one()
+        assert row.chain_version == 3
+        assert row.original_risk_score == row.risk_score
+        assert row.original_risk_level == row.risk_level
+
+    # Escalation rewrites the mutable fields; the chain still verifies.
+    repo.update_event_lifecycle({"event_id": "E0", "risk_score": 90.0, "risk_level": "critical", "state": "CLOSED"})
+    repo.update_alert_from_event({"event_id": "E0", "risk_score": 90.0, "risk_level": "critical"})
+    for table in ("events", "alerts"):
+        assert verify_table(repo.session, table).ok, table
+
+    # Tampering with the recorded original assessment breaks the chain.
+    alert = repo.session.query(AlertModel).one()
+    alert.original_risk_level = "low"
+    alert.original_risk_score = 5.0
+    repo.session.commit()
+    assert not verify_table(repo.session, "alerts").ok

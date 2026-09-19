@@ -50,17 +50,32 @@ _LIST_PRIORITY = {"wanted": 3, "vip": 2, "authorized": 1}
 
 
 def apply_watchlist_hit(track, hit) -> bool:
-    """Attach a watchlist hit to a track; a stronger list is never downgraded."""
+    """Attach a watchlist hit to a track; a stronger list is never downgraded.
+
+    An unconfirmed (exact=False) hit is latched like any other, except that a
+    later *exact* read of the same list may confirm it — otherwise a single
+    confusable fold would stick to the track for its whole life.
+    """
     if hit is None:
         return False
     current = track.watchlist
-    if current and _LIST_PRIORITY.get(current["list_type"], 0) >= _LIST_PRIORITY.get(hit.list_type, 0):
-        return False
+    if current:
+        rank = _LIST_PRIORITY.get(current["list_type"], 0)
+        new_rank = _LIST_PRIORITY.get(hit.list_type, 0)
+        confirming = (
+            new_rank == rank and hit.exact and not current.get("exact", True)
+        )
+        if rank >= new_rank and not confirming:
+            return False
     track.watchlist = hit.to_dict()
     if hit.kind == "face":
         track.identity_label = hit.label
         track.identity_score = hit.score
-        track.identity_status = "wanted" if hit.list_type == "wanted" else "known"
+        # An unconfirmed match must not brand the person as wanted.
+        if hit.list_type == "wanted" and hit.exact:
+            track.identity_status = "wanted"
+        else:
+            track.identity_status = "known"
     logger.warning(
         "Watchlist {} match camera={} track={} list={} label={} score={:.2f}",
         hit.kind, track.camera_id, track.track_uuid, hit.list_type, hit.label, hit.score,

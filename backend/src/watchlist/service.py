@@ -57,7 +57,7 @@ class WatchlistHit:
 @dataclass(frozen=True)
 class _Snapshot:
     plates_exact: dict
-    plates_canonical: dict
+    plates_canonical: dict  # only unambiguous keys of `wanted` entries
     face_matrix: np.ndarray | None
     face_hits: tuple
 
@@ -78,12 +78,20 @@ class WatchlistService:
             .all()
         )
         exact, canonical, vectors, face_hits = {}, {}, [], []
+        # canonical_owners[key] = the entry_ids folding onto it; a key claimed by
+        # more than one entry is ambiguous and is dropped from `canonical`.
+        canonical_owners: dict[str, set] = {}
         skipped = 0
         for row in rows:
             if row.kind == "plate" and row.plate:
                 hit = WatchlistHit(row.entry_id, "plate", row.list_type, row.label)
                 exact.setdefault(row.plate, hit)
-                canonical.setdefault(canonical_plate(row.plate), hit)
+                # Confusable folding is a deny-list aid only: on an allow-list a
+                # near-miss would hand an unknown vehicle someone else's clearance.
+                key = canonical_plate(row.plate)
+                canonical_owners.setdefault(key, set()).add(row.entry_id)
+                if row.list_type == "wanted":
+                    canonical.setdefault(key, hit)
             elif row.kind == "face" and row.embedding_enc:
                 try:
                     vector = crypto.decrypt_embedding(row.embedding_enc)
@@ -96,6 +104,13 @@ class WatchlistService:
                     continue
                 vectors.append(vector / norm)
                 face_hits.append(WatchlistHit(row.entry_id, "face", row.list_type, row.label))
+        ambiguous = [key for key, owners in canonical_owners.items() if len(owners) > 1]
+        for key in ambiguous:
+            canonical.pop(key, None)
+        if ambiguous:
+            logger.warning(
+                "Watchlist: {} plate(s) fold onto another entry and will only match exactly", len(ambiguous)
+            )
         if skipped:
             logger.warning("Watchlist: {} face entries could not be decrypted and are ignored", skipped)
 
@@ -122,6 +137,9 @@ class WatchlistService:
         fuzzy = snap.plates_canonical.get(canonical_plate(plate))
         if fuzzy is None:
             return None
+        # exact=False: downstream treats this as "possible match, verify" rather
+        # than a confirmed one. Distinct valid registrations can fold together
+        # (OD/DD, IB/LB), so a fold alone must not convict a vehicle.
         return WatchlistHit(fuzzy.entry_id, fuzzy.kind, fuzzy.list_type, fuzzy.label, score=0.9, exact=False)
 
     def match_face(self, embedding) -> WatchlistHit | None:

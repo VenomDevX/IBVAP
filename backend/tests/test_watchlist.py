@@ -371,3 +371,97 @@ def test_api_face_enrolment(client, monkeypatch):
 
     from src.watchlist.service import get_watchlist
     assert get_watchlist().match_face(_unit(1, 0, 0)).label == "Suspect A"
+
+
+# --------------------------------------------------------------------------- #
+# Fuzzy matching must not merge distinct real registrations
+# --------------------------------------------------------------------------- #
+
+
+def test_fuzzy_never_matches_an_allow_list_entry(repo):
+    """Confusable folding helps a deny-list; on an allow-list it is fail-open."""
+    repo.create_watchlist_entry(kind="plate", list_type="authorized", label="Patrol jeep",
+                                plate="DL01OB1234", created_by="admin")
+    service = WatchlistService()
+    service.load(repo.session)
+
+    assert service.match_plate("DL01OB1234").exact          # exact still works
+    assert service.match_plate("DL01QB1234") is None        # lookalike gets no free pass
+
+
+def test_ambiguous_canonical_key_matches_nothing(repo):
+    """OD/DD and IB/LB are distinct valid registrations that fold together."""
+    repo.create_watchlist_entry(kind="plate", list_type="wanted", label="Odisha car",
+                                plate="OD12AB1234", created_by="admin")
+    repo.create_watchlist_entry(kind="plate", list_type="wanted", label="Daman car",
+                                plate="DD12AB1234", created_by="admin")
+    service = WatchlistService()
+    service.load(repo.session)
+
+    # Each still matches itself exactly.
+    assert service.match_plate("OD12AB1234").label == "Odisha car"
+    assert service.match_plate("DD12AB1234").label == "Daman car"
+    # A read that folds onto both must not silently pick whichever was enrolled first.
+    assert service.match_plate("QD12AB1234") is None
+
+
+def test_fuzzy_wanted_hit_is_marked_inexact(repo):
+    repo.create_watchlist_entry(kind="plate", list_type="wanted", label="Stolen truck",
+                                plate="MH12AB3456", created_by="admin")
+    service = WatchlistService()
+    service.load(repo.session)
+
+    fuzzy = service.match_plate("MH12A83456")  # B read as 8
+    assert fuzzy is not None and not fuzzy.exact and fuzzy.list_type == "wanted"
+
+
+# --------------------------------------------------------------------------- #
+# An inexact (confusable-folded) hit must not be treated as a confirmed one
+# --------------------------------------------------------------------------- #
+
+INEXACT_WANTED_PLATE = {"entry_id": "WL_9", "kind": "plate", "list_type": "wanted",
+                        "label": "Stolen truck", "score": 0.9, "exact": False}
+
+
+def test_inexact_wanted_hit_is_not_forced_critical():
+    """A fuzzy plate collision must be a review item, not an automatic critical."""
+    engine = _risk_engine()
+    scored = engine.score_fused_event(
+        _fused(object_type="truck", vehicle={"plate_status": "read", "watchlist": INEXACT_WANTED_PLATE})
+    )
+    assert scored.risk_level != "critical"
+    assert any("possible" in reason.lower() for reason in scored.contributing_factors)
+
+    exact = {**INEXACT_WANTED_PLATE, "exact": True}
+    confirmed = engine.score_fused_event(
+        _fused(object_type="truck", vehicle={"plate_status": "read", "watchlist": exact})
+    )
+    assert confirmed.risk_level == "critical"
+
+
+def test_inexact_wanted_hit_raises_no_watchlist_behaviour_event():
+    from src.behavior.behavior_engine import BehaviorEngine, BehaviorType
+    from src.tracking.track import Track
+
+    track = Track(1, "car", "c")
+    track.watchlist = dict(INEXACT_WANTED_PLATE)
+    events = BehaviorEngine().analyze_track(track, {}, {}, {}, {}, apply_cooldown=False)
+    assert not any(e.behavior_type == BehaviorType.WATCHLIST_MATCH for e in events)
+
+    track2 = Track(2, "car", "c")
+    track2.watchlist = {**INEXACT_WANTED_PLATE, "exact": True}
+    events2 = BehaviorEngine().analyze_track(track2, {}, {}, {}, {}, apply_cooldown=False)
+    assert any(e.behavior_type == BehaviorType.WATCHLIST_MATCH for e in events2)
+
+
+def test_a_confirmed_read_replaces_an_inexact_hit_of_the_same_list():
+    from src.pipeline.pipeline import apply_watchlist_hit
+    from src.tracking.track import Track
+    from src.watchlist.service import WatchlistHit
+
+    track = Track(1, "car", "c")
+    apply_watchlist_hit(track, WatchlistHit("WL_9", "plate", "wanted", "Stolen truck", 0.9, exact=False))
+    assert track.watchlist["exact"] is False
+    # A later exact read of the same list must be able to confirm (not be latched out).
+    apply_watchlist_hit(track, WatchlistHit("WL_9", "plate", "wanted", "Stolen truck", 1.0, exact=True))
+    assert track.watchlist["exact"] is True
