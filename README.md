@@ -1,212 +1,310 @@
+<div align="center">
+
 # IBVAP — Intelligent Border Video Analytics Platform
 
-> AI-Based Intelligent Video Analytics Platform for Border Surveillance using Existing CCTV Infrastructure — SIH 2026 (PS 26187)
+**Turns existing CCTV and IP cameras into an AI surveillance system that detects, tracks and risk-scores security events in real time.**
+
+[![CI](https://github.com/VenomDevX/IBVAP/actions/workflows/ci.yml/badge.svg)](https://github.com/VenomDevX/IBVAP/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.141-009688?logo=fastapi&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js-16-000000?logo=nextdotjs&logoColor=white)
+![PyTorch](https://img.shields.io/badge/PyTorch-2.14%20%2B%20CUDA-EE4C2C?logo=pytorch&logoColor=white)
+
+Smart India Hackathon 2026 · Problem Statement **26187**
+
+</div>
+
+---
+
+## Table of contents
+
+- [Overview](#overview)
+- [Key features](#key-features)
+- [Architecture](#architecture)
+- [Model performance](#model-performance)
+- [Tech stack](#tech-stack)
+- [Getting started](#getting-started)
+- [Configuration](#configuration)
+- [Security](#security)
+- [Testing and CI](#testing-and-ci)
+- [Training the models](#training-the-models)
+- [Repository layout](#repository-layout)
+- [Troubleshooting](#troubleshooting)
+- [Documentation](#documentation)
 
 ## Overview
 
-IBVAP transforms existing CCTV/IP-camera infrastructure into an intelligent surveillance system. It detects, tracks, identifies, and prioritizes security-relevant events using computer vision and AI, presenting them through a real-time monitoring dashboard.
+Border posts already have cameras, but a human cannot watch dozens of feeds at once. IBVAP runs every feed through a GPU vision pipeline and shows operators only what matters.
 
-The distinguishing idea is **context fusion**: instead of raising one alert per raw detection, IBVAP combines spatial, temporal, identity, and behavioural signals for a single tracked object into **one explainable, risk-scored security event**.
+Its core idea is **context fusion**. Instead of raising an alert for every raw detection, IBVAP combines spatial, temporal, behavioural and identity signals for each tracked object into **one explainable, risk-scored event**. For example: *"person near the fence at night, loitering 90 s, moving toward a restricted zone"* becomes a single high-risk event, not four separate alerts.
 
-### Core Pipeline
+## Key features
 
-```
-CCTV/Video → Ingestion → Detection → Tracking → Spatial/Temporal Analysis
-    → Behaviour Engine → Context Fusion → Risk Scoring → Alert → Dashboard
-```
+| Area | What it does |
+|---|---|
+| **Video ingestion** | RTSP / IP camera streams and recorded video files, with automatic reconnect and a watchdog for stale feeds |
+| **Detection** | Custom 13-class detector (people, vehicles, licence plates, military vehicles, aircraft, helicopters, drones, animals, night-vision objects), exported to TensorRT FP16 and batched across cameras on the GPU |
+| **Fine classification** | Second-stage EfficientNetV2 classifier names the specific type of military detections (29 classes) |
+| **Tracking** | Persistent IDs and trajectories with ByteTrack |
+| **Spatial rules** | Polygon zones (restricted / buffer), **virtual borderlines** with crossing direction, approach detection, heatmaps |
+| **Temporal rules** | Loitering (dwell time) and night / low-light context |
+| **Identity** | Face recognition (InsightFace on ONNX Runtime GPU) and number-plate reading (PaddleOCR) with Indian plate-format validation |
+| **Watchlists** | Plate and face watchlists that raise alerts on a match |
+| **Risk scoring** | Explainable weighted score across spatial, temporal, behavioural, identity and visual factors, in four levels |
+| **Alerts** | Deduplication, per-camera rate limits, live WebSocket push, and optional email (SMTP) and SMS (Twilio) for critical alerts |
+| **Evidence** | Snapshots and video clips with SHA-256 hashes, plus an HMAC hash chain over events and alerts that makes tampering detectable |
+| **Operator console** | Live dashboard, multi-camera grid (remembers each user's layout), map view, alerts and incident workflow, events, zones, audit log, reports |
+| **Access control** | Supabase sign-in, role-based access (admin, commander, supervisor, operator, auditor, viewer), per-user camera scopes, and TOTP two-step verification |
 
-## Repository Layout
+## Architecture
 
-This is a monorepo with three deployable parts:
-
-```
-SIH 26187/
-├── backend/          # Python AI microservice + REST/WebSocket API (FastAPI)
-│   ├── main.py           # Entry point (uvicorn launcher)
-│   ├── configs/          # YAML config: cameras, zones, thresholds, risk weights, dataset
-│   ├── scripts/          # Training & data-prep scripts (YOLO, ResNet, dataset merge)
-│   ├── src/
-│   │   ├── ingestion/    # Video input (OpenCV), frame buffering, reconnect
-│   │   ├── detection/    # YOLOv8 object detection wrapper
-│   │   ├── tracking/     # ByteTrack (via `supervision`) multi-object tracking
-│   │   ├── spatial/      # Zones, virtual fence, direction, heatmap accumulator
-│   │   ├── temporal/     # Loitering, night/low-light detection
-│   │   ├── face/         # Face detect / embed / match (ArcFace-style) — module only
-│   │   ├── anpr/         # Plate detector + OCR (module only)
-│   │   ├── features/     # Dominant-colour extractor, plate OCR helper (pytesseract)
-│   │   ├── behavior/     # Rule-based behaviour classification
-│   │   ├── fusion/       # Context fusion engine (core novelty)
-│   │   ├── risk/         # Weighted rule-based risk engine + optional ML classifier
-│   │   ├── alerts/       # Alert generation, dedup, snapshot + SHA-256 hashing, notifiers
-│   │   ├── database/     # SQLAlchemy models + repository (SQLite runtime store)
-│   │   ├── api/          # FastAPI app, routes, auth, security middleware, WebSocket
-│   │   └── pipeline/     # Per-camera + master pipeline orchestration
-│   ├── ml/               # training / data-prep / eval (separate from the runtime src/)
-│   │   ├── taxonomy.py       # SINGLE source of truth for detector classes
-│   │   ├── remap_to_coarse.py, verify_dataset.py, eval_detector.py
-│   └── requirements.txt
-│
-├── frontend/         # Next.js 16 static export + Tailwind v4 (operator console)
-│   ├── app/              # Routes: dashboard, alerts, events, event, cameras, zones,
-│   │                     #   multiview, map, audit, settings, login, signup
-│   ├── src/
-│   │   ├── components/   # UI kit, app shell, video streams, charts (Recharts), map (Leaflet)
-│   │   ├── api/          # REST client + Supabase client (auth/session)
-│   │   ├── context/      # Auth + theme (light, dark or system)
-│   │   └── hooks/        # Alert WebSocket, polling, URL state, session timeout
-│   └── tests/            # Vitest unit tests; Playwright e2e in tests/e2e
-│
-├── supabase/         # Supabase project — auth + Postgres schema
-│   ├── config.toml
-│   └── migrations/       # Tables + Row-Level Security policies
-│
-├── docs/
-│   ├── IBVAP_PRD.md      # Product requirements / team understanding
-│   └── IBVAP_TRD.md      # Technical requirements document
-│
-└── docker-compose.yml    # backend + frontend containers
+```mermaid
+flowchart LR
+    CAM[CCTV / IP cameras<br/>video files] --> ING[Ingestion<br/>OpenCV]
+    ING --> DET[Detector<br/>TensorRT FP16]
+    DET --> TRK[Tracker<br/>ByteTrack]
+    DET --> FC[Fine classifier<br/>EfficientNetV2]
+    TRK --> SP[Spatial<br/>zones · borderlines]
+    TRK --> TP[Temporal<br/>loitering · night]
+    TRK --> ID[Identity<br/>face · ANPR · watchlists]
+    SP & TP & ID & FC --> FUS[Context fusion]
+    FUS --> RISK[Risk engine]
+    RISK --> ALR[Alerts + evidence<br/>hash chain]
+    ALR --> DB[(SQLite)]
+    ALR --> WS[WebSocket]
+    DB --> API[FastAPI REST]
+    API & WS --> UI[Next.js console]
+    SB[(Supabase<br/>auth · profiles)] -.-> API & UI
 ```
 
-## Features
+The system has three parts:
 
-| Area | Feature | Status |
-|---|---|---|
-| Ingestion | RTSP/IP streams, recorded video files, reconnect handling | Implemented |
-| Detection | People + vehicles (YOLOv8, COCO classes) in the live pipeline | Implemented |
-| Detection | **Coarse 13-class** border detector — person, car/bus/truck/motorcycle/bicycle, license_plate, military_ground_vehicle, aircraft, helicopter, drone_uav, night_vision_object, animal (`backend/ml/taxonomy.py`) | Dataset built + verified; **training run pending** (TRD §9A) |
-| Detection | Fine-grained military type ID (F-16 vs Rafale, 73 types) | Deferred to Phase 2 as a second-stage classifier over aircraft/helicopter/UAV crops only (TRD §9B) |
-| Tracking | Persistent track IDs + trajectory history (ByteTrack via `supervision`) | Implemented |
-| Spatial | Polygon zones (restricted / buffer / safe / entry-exit), virtual fence, crossing direction | Implemented |
-| Spatial | Movement-direction analysis, "moving toward restricted zone" | Implemented |
-| Temporal | Loitering (dwell-time), night / low-light context | Implemented |
-| Behaviour | Rule-based classification + "combined suspicious" (3+ flags) | Implemented |
-| Fusion | Multi-signal context fusion → one deduplicated event + semantic description | Implemented |
-| Risk | Explainable weighted score `R = w1·S + w2·T + w3·B + w4·I + w5·V`, 4 levels | Implemented |
-| Risk | Optional ML event-level classifier (RandomForest) for baseline comparison | Scaffolded — no trained model / feature dataset yet |
-| Alerts | Dedup + rate-limit + min-risk threshold, WebSocket push | Implemented |
-| Evidence | Snapshot SHA-256 + append-only HMAC **hash chain** over event/alert rows; `verify_evidence_chain.py` detects tampering (tamper-evident, not tamper-proof) | Implemented |
-| Identity | Face detect / embed / match modules | Module code present — **not called by the pipeline** |
-| ANPR | Plate crop + OCR | `pytesseract` helper with mock fallback — TRD target is PaddleOCR |
-| Dashboard | Live feed, alerts, events, event detail, camera status | Implemented |
-| Dashboard | Heatmap overlay, live Threat-Score panel, Multi-Camera grid, Map view | Implemented |
-| Reports | Daily aggregation endpoint (feeds CSV/PDF export on the frontend) | Implemented (endpoint) |
-| Notifications | Email (smtplib) + SMS (Twilio) for critical alerts, with mock fallback | Implemented |
-| Security | Supabase JWT auth, RBAC guards, security headers, rate limiting, input validation, audit log, client session timeout | Implemented |
+- **`backend/`** is a FastAPI service that runs the vision pipeline and serves the REST, streaming and WebSocket APIs. SQLite (via SQLAlchemy) stores cameras, tracks, events, alerts, zones and the audit log.
+- **`frontend/`** is the operator console: Next.js 16 as a static export, with React 19 and Tailwind CSS v4.
+- **`supabase/`** holds authentication and user profiles (roles, camera scopes, two-step verification setting) in Postgres, locked down with row-level security. See [ADR-001](docs/ADR-001-datastore.md) for why data is split this way.
 
-## Technology Stack
+## Model performance
 
-| Component | Technology |
-|-----------|-----------|
-| Backend language | Python 3.10+ |
-| Detection | Ultralytics YOLO — stock `yolov8n` fallback; custom **coarse 13-class** `yolo11s` @ 640 is the target model (`configs/dataset_coarse.yaml`) |
-| Stage-2 classifier | Phase 2 only — fine-grained military type ID over aircraft/UAV crops (TRD §9B); not in the runtime |
-| Tracking | ByteTrack via `supervision` |
-| Face (module) | InsightFace / ArcFace-style embeddings + cosine matching |
-| ANPR OCR | `pytesseract` helper (TRD target: PaddleOCR / EasyOCR) |
-| DL framework | PyTorch |
-| CV library | OpenCV |
-| Backend API | FastAPI + Uvicorn, WebSocket for alert push |
-| API security | `slowapi` rate limiting, TrustedHost + CORS, custom security-headers / request-logging / input-validation middleware |
-| Runtime data store | SQLite via SQLAlchemy 2.x (`ibvap.db`) |
-| Auth & identity | Supabase Auth (JWT, verified locally with `SUPABASE_JWT_SECRET`); `user_profiles` + RLS in Postgres |
-| Frontend | Next.js 15 (App Router/static export), React 19, TypeScript, Tailwind CSS v4 |
-| Frontend libs | ApexCharts, Grid.js, Leaflet / react-leaflet, `@supabase/supabase-js` |
-| Containers | Docker / docker-compose (backend + frontend + nginx) |
+The coarse detector was trained at 640 px for 50 epochs. Evaluation on the held-out validation split:
 
-> **Data-store note (ADR-001).** SQLite is the single application datastore — the pipeline persists cameras/tracks/events/alerts/zones/audit through the SQLAlchemy repository and the frontend reads them via the FastAPI REST API. Postgres (`supabase/migrations`) holds **only** `user_profiles` for auth/RBAC; the mirrored `events`/`alerts` tables and realtime publication there are vestigial. See `docs/ADR-001-datastore.md`.
+| Metric | Value |
+|---|---|
+| Precision | 0.759 |
+| Recall | 0.695 |
+| Macro F1 | 0.715 |
+| mAP@50 | **0.727** |
+| mAP@50–95 | 0.523 |
 
-## Quick Start
+<details>
+<summary>Per-class mAP@50</summary>
+
+| Class | mAP@50 | Class | mAP@50 |
+|---|---|---|---|
+| licence plate | 0.950 | person | 0.716 |
+| car | 0.905 | animal | 0.656 |
+| bicycle | 0.858 | night-vision object | 0.634 |
+| drone / UAV | 0.826 | bus | 0.632 |
+| military ground vehicle | 0.812 | aircraft | 0.530 |
+| motorcycle | 0.789 | helicopter | 0.379 |
+| truck | 0.768 | | |
+
+</details>
+
+Reproduce with `python -m ml.eval_detector --weights models/ibvap_coarse.pt` (from `backend/`).
+
+## Tech stack
+
+| Layer | Technology |
+|---|---|
+| Vision | Ultralytics YOLO · TensorRT · PyTorch 2.14 (CUDA 12.6) · timm (EfficientNetV2) · ByteTrack (`supervision`) · OpenCV |
+| Identity | InsightFace on ONNX Runtime GPU · PaddleOCR |
+| Backend | Python 3.11 · FastAPI · Uvicorn · SQLAlchemy 2 (SQLite) · slowapi |
+| Auth | Supabase Auth (JWT, TOTP MFA) · Postgres row-level security |
+| Frontend | Next.js 16 · React 19 · TypeScript 5.9 · Tailwind CSS v4 · Recharts · Leaflet |
+| Tooling | pytest · ruff · Bandit · Semgrep · pip-audit · Vitest · Playwright · oxlint |
+| Deployment | Docker Compose (optional GPU and TLS overlays) · nginx |
+
+## Getting started
 
 ### Prerequisites
 
-- Python 3.10+
-- Node.js 20+ (for the frontend)
-- A GPU is recommended for real-time inference but not required
-- (Optional) Supabase CLI + Docker for local auth; (optional) Tesseract OCR for ANPR
+- **Windows 10/11 or Linux**, Python **3.11**, Node.js **20+**
+- **Docker Desktop** and the **Supabase CLI** (run through `npx`) for local authentication
+- **NVIDIA GPU** recommended (developed on an RTX 4050, 6 GB, with driver ≥ 560). The pipeline also runs on CPU, but more slowly.
+- About **16 GB RAM**. Each enabled camera decodes its own video stream.
 
-### 1. Backend
+### Option A — one-click start (Windows)
 
-```bash
-cd backend
-python -m venv venv
-venv\Scripts\activate            # Windows  (source venv/bin/activate on Linux/macOS)
-pip install -r requirements.txt
+After the one-time setup below, a single command starts Docker, Supabase, the backend (port **8002**) and the frontend (port **3001**), and opens the browser:
 
-copy .env.example .env           # then edit .env (see below)
-python main.py                   # serves the API on http://localhost:8002
+```powershell
+.\start-ibvap.bat
+# or: powershell -ExecutionPolicy Bypass -File scripts\start-ibvap.ps1 [-Rebuild] [-NoBrowser]
 ```
 
-Key `.env` values:
+### Option B — manual setup
 
-| Variable | Purpose |
-|---|---|
-| `IBVAP_ENV` | `development` (docs at `/docs`) or `production` (docs disabled) |
-| `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_JWT_SECRET` | Auth — required for the API to accept logins |
-| `DATABASE_URL` | Defaults to `sqlite:///./ibvap.db` |
-| `IBVAP_ADMIN_PASSWORD`, `IBVAP_OPERATOR_PASSWORD` | Seed passwords for the local `admin` / `operator` rows. **If unset, a random password is generated and printed to the log at startup** — there are no fixed default credentials. |
-| `CORS_ORIGINS`, `TRUSTED_HOSTS` | Comma-separated allow-lists |
-| `SMTP_*`, `TWILIO_*` | Optional critical-alert notifications |
+**1. Authentication (Supabase)**
 
-Configure the surveillance inputs before running:
+```bash
+npx supabase start            # local auth + Postgres on :54321, applies supabase/migrations
+```
 
-1. `backend/configs/cameras.yaml` — camera IDs and sources (RTSP URL or path to a video file)
-2. `backend/configs/zones.yaml` — restricted zones and virtual fences
-3. `backend/configs/thresholds.yaml` — detection confidence, tracker, behaviour thresholds, alert limits
-4. `backend/configs/risk_weights.yaml` — risk-engine weights and score tables
+**2. Backend**
 
-### 2. Frontend
+```bash
+python -m venv .venv
+.venv\Scripts\activate                      # Linux/macOS: source .venv/bin/activate
+cd backend
+pip install -r requirements.txt
+pip install -r requirements-cuda.txt        # NVIDIA GPU: CUDA PyTorch, ONNX Runtime GPU, TensorRT
+cp .env.example .env                        # then fill in the values (see Configuration)
+python scripts/seed_users.py --defaults     # creates admin@ibvap.local and operator@ibvap.local
+python main.py --port 8002
+```
+
+**3. Frontend**
 
 ```bash
 cd frontend
-npm install
+npm ci
 # create .env with NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY
-npm run dev                       # http://localhost:3001; API is http://127.0.0.1:8002
+# (both are printed by `npx supabase status`)
+npm run build                 # static export to out/
+node scripts/serve-static.mjs # http://localhost:3001  (or `npm run dev` while editing)
 ```
 
-On Windows, the reliable one-command launcher builds the offline-capable
-production frontend and starts both services:
+Open **http://localhost:3001** and sign in. On first sign-in you'll be asked to set up two-step verification with an authenticator app (Google Authenticator, Microsoft Authenticator or Authy).
 
-```powershell
-.\scripts\run-local.ps1
-# Use .\scripts\run-local.ps1 -Dev only when actively editing the frontend.
-```
-
-### 3. Docker (optional)
+### Option C — Docker Compose
 
 ```bash
-docker compose up --build
+docker compose up --build                                               # CPU
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build   # NVIDIA GPU
 ```
 
-## Model Training (separate from the running app)
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for TLS and production settings.
 
-Training scripts live in `backend/scripts/` and write to `backend/outputs/`. They are **not** invoked by `main.py`.
+## Configuration
 
-# 1. Build the coarse (13-class) dataset from the legacy 91-class merge
-python -m ml.remap_to_coarse
+### Environment (`backend/.env`)
 
-# 2. Merge the license-plate dataset (class 6) — hard-links, keeps aug groups intact
-python scripts/add_plates.py --src "F:/Projects/SIH 26187/License Plate Recognition.v13i.yolov8"        --dst data/detector_yolo --purge-old --limit 18000
+| Variable | Purpose |
+|---|---|
+| `IBVAP_ENV` | `development` (API docs at `/docs`) or `production` (docs off) |
+| `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_SERVICE_KEY`, `SUPABASE_JWT_SECRET` | Token verification and role lookup |
+| `DATABASE_URL` | Defaults to `sqlite:///./ibvap.db` |
+| `IBVAP_ADMIN_PASSWORD`, `IBVAP_OPERATOR_PASSWORD` | Passwords for the seeded accounts. There are no built-in default credentials. |
+| `CORS_ORIGINS`, `TRUSTED_HOSTS` | Comma-separated allow-lists |
+| `SMTP_*`, `TWILIO_*` | Optional critical-alert notifications |
 
-# 3. Leak-free, clip-aware split -> configs/dataset_coarse.yaml
-python scripts/make_clean_split.py --src data/detector_yolo
+### Surveillance setup (`backend/configs/`)
 
-# 4. Gate: histogram / parity / leakage / box sizes
-python -m ml.verify_dataset --data configs/dataset_coarse.yaml
+| File | Controls |
+|---|---|
+| `cameras.yaml` | Camera IDs, names, sources (RTSP URL or video file), resolution, FPS |
+| `zones.yaml` | Restricted / buffer zones (polygons) and virtual borderlines (two points, direction, classes) |
+| `thresholds.yaml` | Detector confidence, per-class thresholds, device, face / ANPR / classifier settings, alert limits |
+| `risk_weights.yaml` | Risk-engine weights and score tables |
 
-# 5. Train (smoke-test with --epochs 3 first)
-python scripts/train_yolo.py --data configs/dataset_coarse.yaml --model yolo11s.pt
+Zone and fence coordinates are in the camera's configured frame resolution (for example 1920 × 1080). Cameras can also be turned on or off from the console, and that choice persists across restarts.
 
-# 6. Per-class mAP — tune against THIS table, not the aggregate number
+## Security
+
+- **Authentication:** Supabase JWTs are verified on every request, and a server-side denylist makes logout actually revoke the token.
+- **Two-step verification:** TOTP is on for every account by default. Admins can exempt individual users under **Settings → Users**, and every change is audited. The API refuses password-only sessions unless the user is exempt, and database row-level security requires the second factor for admin writes.
+- **Authorisation:** role guards on every route, plus per-user camera scopes for listings, streams and evidence.
+- **Hardening:** security headers, rate limiting, input validation, trusted-host and CORS allow-lists, and path-traversal protection on media routes.
+- **Evidence integrity:** SHA-256 on every snapshot and clip. `backend/scripts/verify_evidence_chain.py` checks the HMAC chain for tampering.
+- **Audit log:** records who changed what (cameras, zones, users, security settings).
+
+See [docs/SECURITY_AUDIT_2026-09-08.md](docs/SECURITY_AUDIT_2026-09-08.md) and [docs/SECRET_ROTATION.md](docs/SECRET_ROTATION.md).
+
+## Testing and CI
+
+```bash
+# backend (from backend/)
+pytest -q
+ruff check src scripts ml && ruff format --check src scripts ml tests
+bandit -r src ml -c bandit.yaml -q
+
+# frontend (from frontend/)
+npm run typecheck && npx oxlint && npm test
+npx playwright test          # end-to-end; needs the stack running on :3001
+```
+
+GitHub Actions ([`ci.yml`](.github/workflows/ci.yml)) runs backend lint and tests, the frontend type check and build, and a security job (Bandit, Semgrep, pip-audit, npm audit) on every push and pull request.
+
+## Training the models
+
+Training is separate from the running app. The scripts write to `backend/outputs/`, and `main.py` never runs them. The full walkthrough is in [docs/RUNBOOK_LOCAL_TRAINING.md](docs/RUNBOOK_LOCAL_TRAINING.md). In short, from `backend/`:
+
+```bash
+python -m ml.remap_to_coarse                                    # build the 13-class dataset
+python scripts/make_clean_split.py --src data/detector_yolo     # leak-free, clip-aware split
+python -m ml.verify_dataset --data configs/dataset_coarse.yaml  # class balance / leakage gate
+python scripts/train_yolo.py --data configs/dataset_coarse.yaml # train the detector
 python -m ml.eval_detector --weights outputs/training/ibvap_coarse/weights/best.pt
+python scripts/export_tensorrt.py                               # FP16 TensorRT engine for the GPU
 ```
 
-See **TRD §9A** for the class taxonomy, the imbalance-handling strategy, and the plan to integrate the trained weights into `src/detection/detector.py`.
+The detector's class list lives in one place: [`backend/ml/taxonomy.py`](backend/ml/taxonomy.py).
+
+## Repository layout
+
+```
+├── backend/
+│   ├── main.py              # API + pipeline entry point
+│   ├── configs/             # cameras, zones, thresholds, risk weights, datasets
+│   ├── src/
+│   │   ├── ingestion/       # video sources, reconnect, watchdog
+│   │   ├── detection/       # batched YOLO / TensorRT detector
+│   │   ├── classification/  # second-stage fine classifier
+│   │   ├── tracking/        # ByteTrack
+│   │   ├── spatial/         # zones, virtual borderlines, direction, heatmaps
+│   │   ├── temporal/        # loitering, night context
+│   │   ├── face/  anpr/     # face recognition, plate reading
+│   │   ├── watchlist/       # plate and face watchlists
+│   │   ├── behavior/  fusion/  risk/
+│   │   ├── alerts/          # alerts, evidence, clips, hash chain, notifiers
+│   │   ├── database/        # SQLAlchemy models + repository
+│   │   ├── api/             # FastAPI app, routes, auth, middleware, WebSocket
+│   │   └── pipeline/        # per-camera and master pipelines
+│   ├── ml/                  # dataset prep and evaluation
+│   ├── scripts/             # training, export, seeding, verification
+│   └── tests/
+├── frontend/
+│   ├── app/                 # dashboard, multiview, map, alerts, events, cameras,
+│   │                        #   zones, watchlists, audit, settings, login
+│   ├── src/                 # components, API client, auth context, hooks
+│   └── tests/               # Vitest unit tests, Playwright e2e
+├── supabase/                # config + migrations (profiles, RLS, MFA)
+├── scripts/                 # start-ibvap.ps1 launcher, local helpers
+├── docs/                    # PRD, TRD, ADRs, deployment, security, runbooks
+└── docker-compose*.yml      # base, GPU and TLS overlays
+```
+
+## Troubleshooting
+
+| Symptom | Cause and fix |
+|---|---|
+| Sign-in fails and nothing answers on `:54321` after a reboot | Windows reserved a port range that includes 54321. In an **admin** PowerShell run `net stop winnat; net start winnat`, then `npx supabase stop && npx supabase start`. |
+| Detections stop and the log shows `CUDA error: out of memory` while the GPU still has free memory | Windows is out of commit memory (RAM + page file). Close heavy apps or disable some cameras, then restart the backend. A larger page file prevents it. |
+| Backend health says `degraded` right after start | Cameras and models load in the background. Wait until `/api/health` reports `"ready": true`. |
 
 ## Documentation
 
-- **[docs/IBVAP_PRD.md](docs/IBVAP_PRD.md)** — what we are building and why (product requirements, MVP, workflows, limitations, success metrics)
-- **[docs/IBVAP_TRD.md](docs/IBVAP_TRD.md)** — how it is built (architecture, tech stack, dataset strategy, models, database, API, experiments, implementation status)
+| Document | Contents |
+|---|---|
+| [IBVAP_PRD.md](docs/IBVAP_PRD.md) | Product requirements, MVP scope, operator workflows, success metrics |
+| [IBVAP_TRD.md](docs/IBVAP_TRD.md) | Architecture, models, dataset strategy, database, API |
+| [ADR-001-datastore.md](docs/ADR-001-datastore.md) | Why SQLite for app data and Supabase for identity |
+| [DEPLOYMENT.md](docs/DEPLOYMENT.md) | Docker, GPU, TLS and production configuration |
+| [RUNBOOK_LOCAL_TRAINING.md](docs/RUNBOOK_LOCAL_TRAINING.md) | Rebuilding the dataset and training on a local GPU |
+| [SECURITY_AUDIT_2026-09-08.md](docs/SECURITY_AUDIT_2026-09-08.md) | Security review and the fixes applied |
 
-## License
+---
 
-Developed for Smart India Hackathon 2026.
+<div align="center">
+Built for <b>Smart India Hackathon 2026</b> · Problem Statement 26187
+</div>
