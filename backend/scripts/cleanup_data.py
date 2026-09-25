@@ -30,25 +30,38 @@ ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data"
 
 TARGETS: list[tuple[str, str, str]] = [
-    ("ibvap_coarse_dataset.tar", "safe",
-     "Colab packing artifact. Colab is no longer used and it is rebuildable "
-     "from raw_dataset/detector_yolo via scripts/pack_dataset_for_colab.py."),
-    ("colab_pack", "safe",
-     "Colab upload staging: a yaml, two split lists and UPLOAD.md. All "
-     "regenerable by scripts/pack_dataset_for_colab.py."),
-    ("demo", "keep",
-     "NOT dataset material. Holds the four demo videos every camera in "
-     "configs/cameras.yaml reads (street_traffic, people_walking, "
-     "highway_border, indoor_checkpoint). Deleting it breaks the live demo "
-     "to save 37 MB. Re-downloadable via scripts/download_samples.py, but "
-     "there is no reason to."),
+    (
+        "ibvap_coarse_dataset.tar",
+        "safe",
+        "Colab packing artifact. Colab is no longer used and it is rebuildable "
+        "from raw_dataset/detector_yolo via scripts/pack_dataset_for_colab.py.",
+    ),
+    (
+        "colab_pack",
+        "safe",
+        "Colab upload staging: a yaml, two split lists and UPLOAD.md. All "
+        "regenerable by scripts/pack_dataset_for_colab.py.",
+    ),
+    (
+        "demo",
+        "keep",
+        "NOT dataset material. Holds the four demo videos every camera in "
+        "configs/cameras.yaml reads (street_traffic, people_walking, "
+        "highway_border, indoor_checkpoint). Deleting it breaks the live demo "
+        "to save 37 MB. Re-downloadable via scripts/download_samples.py, but "
+        "there is no reason to.",
+    ),
     ("plates", "safe", "Empty (0 files)."),
-    ("raw_dataset/cropped_classes", "keep",
-     "Sole copy of the ~500k crops not selected. Needed to re-tune the prune "
-     "threshold or per-class cap."),
-    ("raw_dataset/detector_yolo", "keep",
-     "Sole copy of the source imagery. data/dataset/ holds only the curated "
-     "~50k subset."),
+    (
+        "raw_dataset/cropped_classes",
+        "keep",
+        "Sole copy of the ~500k crops not selected. Needed to re-tune the prune threshold or per-class cap.",
+    ),
+    (
+        "raw_dataset/detector_yolo",
+        "keep",
+        "Sole copy of the source imagery. data/dataset/ holds only the curated ~50k subset.",
+    ),
 ]
 
 
@@ -75,15 +88,12 @@ def human(n: float) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Report/reclaim source data space")
-    ap.add_argument("--delete", choices=["safe", "verify"],
-                    help="actually delete entries carrying this verdict")
+    ap.add_argument("--delete", choices=["safe", "verify"], help="actually delete entries carrying this verdict")
     args = ap.parse_args()
 
     manifest = DATA / "dataset" / "manifest.json"
     if not manifest.exists():
-        raise SystemExit(
-            "refusing: data/dataset/manifest.json not found — nothing has been built"
-        )
+        raise SystemExit("refusing: data/dataset/manifest.json not found — nothing has been built")
     if "emit" not in json.loads(manifest.read_text(encoding="utf-8")):
         raise SystemExit(
             "refusing: the manifest shows no completed emit stage. Finish "
@@ -113,8 +123,7 @@ def main() -> None:
         print(f"\nNothing carries the '{args.delete}' verdict.")
         return
 
-    print(f"\nAbout to PERMANENTLY delete {len(matched)} entr(y/ies), "
-          f"reclaiming ~{human(reclaim)}:")
+    print(f"\nAbout to PERMANENTLY delete {len(matched)} entr(y/ies), reclaiming ~{human(reclaim)}:")
     for name, _ in matched:
         print(f"  - data/{name}")
     if input("\nType DELETE to confirm: ").strip() != "DELETE":

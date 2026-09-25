@@ -93,9 +93,15 @@ class Repository:
         self.session.commit()
 
     CAMERA_FIELDS = {
-        "name": "name", "source": "stream_url", "type": "camera_type",
-        "location": "location_label", "latitude": "latitude", "longitude": "longitude",
-        "enabled": "enabled", "fps_limit": "fps_limit", "resolution": "resolution",
+        "name": "name",
+        "source": "stream_url",
+        "type": "camera_type",
+        "location": "location_label",
+        "latitude": "latitude",
+        "longitude": "longitude",
+        "enabled": "enabled",
+        "fps_limit": "fps_limit",
+        "resolution": "resolution",
     }
 
     def update_camera(self, camera_id: str, changes: dict, by_user: bool = False) -> CameraModel | None:
@@ -211,12 +217,18 @@ class Repository:
         return event
 
     def create_event_evidence(
-        self, event_id: str, evidence_type: str, snapshot_path: str | None = None,
-        clip_path: str | None = None, commit: bool = True,
+        self,
+        event_id: str,
+        evidence_type: str,
+        snapshot_path: str | None = None,
+        clip_path: str | None = None,
+        commit: bool = True,
     ) -> EventEvidenceModel:
         row = EventEvidenceModel(
-            event_id=event_id, evidence_type=evidence_type,
-            snapshot_path=snapshot_path, clip_path=clip_path,
+            event_id=event_id,
+            evidence_type=evidence_type,
+            snapshot_path=snapshot_path,
+            clip_path=clip_path,
         )
         self.session.add(row)
         if commit:
@@ -226,7 +238,12 @@ class Repository:
         return row
 
     def get_event_evidence(self, event_id: str) -> list[EventEvidenceModel]:
-        return self.session.query(EventEvidenceModel).filter_by(event_id=event_id).order_by(EventEvidenceModel.created_at).all()
+        return (
+            self.session.query(EventEvidenceModel)
+            .filter_by(event_id=event_id)
+            .order_by(EventEvidenceModel.created_at)
+            .all()
+        )
 
     def get_event(self, event_id: str) -> EventModel | None:
         return self.session.query(EventModel).filter_by(event_id=event_id).first()
@@ -269,10 +286,14 @@ class Repository:
             query = query.filter(EventModel.timestamp <= end_time)
         if search:
             term = f"%{search}%"
-            query = query.filter(or_(
-                EventModel.event_id.ilike(term), EventModel.event_type.ilike(term),
-                EventModel.camera_id.ilike(term), EventModel.object_type.ilike(term),
-            ))
+            query = query.filter(
+                or_(
+                    EventModel.event_id.ilike(term),
+                    EventModel.event_type.ilike(term),
+                    EventModel.camera_id.ilike(term),
+                    EventModel.object_type.ilike(term),
+                )
+            )
         sort_columns = {
             "timestamp": EventModel.timestamp,
             "risk_score": EventModel.risk_score,
@@ -284,8 +305,13 @@ class Repository:
         return query.order_by(ordering).offset(offset).limit(limit).all()
 
     def get_event_count(
-        self, camera_id: str = None, event_type: str = None, risk_level: str = None,
-        start_time: datetime = None, end_time: datetime = None, search: str = None,
+        self,
+        camera_id: str = None,
+        event_type: str = None,
+        risk_level: str = None,
+        start_time: datetime = None,
+        end_time: datetime = None,
+        search: str = None,
         allowed_cameras=None,
     ) -> int:
         query = self.session.query(EventModel)
@@ -303,10 +329,14 @@ class Repository:
             query = query.filter(EventModel.timestamp <= end_time)
         if search:
             term = f"%{search}%"
-            query = query.filter(or_(
-                EventModel.event_id.ilike(term), EventModel.event_type.ilike(term),
-                EventModel.camera_id.ilike(term), EventModel.object_type.ilike(term),
-            ))
+            query = query.filter(
+                or_(
+                    EventModel.event_id.ilike(term),
+                    EventModel.event_type.ilike(term),
+                    EventModel.camera_id.ilike(term),
+                    EventModel.object_type.ilike(term),
+                )
+            )
         return query.count()
 
     # ======================== ALERTS ========================
@@ -378,11 +408,15 @@ class Repository:
             query = query.filter(AlertModel.timestamp <= end_time)
         if search:
             term = f"%{search}%"
-            query = query.filter(or_(
-                AlertModel.alert_id.ilike(term), AlertModel.event_type.ilike(term),
-                AlertModel.camera_id.ilike(term), AlertModel.object_type.ilike(term),
-                AlertModel.assignee.ilike(term),
-            ))
+            query = query.filter(
+                or_(
+                    AlertModel.alert_id.ilike(term),
+                    AlertModel.event_type.ilike(term),
+                    AlertModel.camera_id.ilike(term),
+                    AlertModel.object_type.ilike(term),
+                    AlertModel.assignee.ilike(term),
+                )
+            )
         sort_columns = {
             "timestamp": AlertModel.timestamp,
             "risk_score": AlertModel.risk_score,
@@ -406,7 +440,9 @@ class Repository:
                 (AlertModel.risk_level == "low", 3),
                 else_=4,
             )
-            return query.order_by(status_rank, severity_rank, desc(AlertModel.timestamp)).offset(offset).limit(limit).all()
+            return (
+                query.order_by(status_rank, severity_rank, desc(AlertModel.timestamp)).offset(offset).limit(limit).all()
+            )
         column = sort_columns.get(sort_by, AlertModel.timestamp)
         ordering = asc(column) if sort_order == "asc" else desc(column)
         return query.order_by(ordering, desc(AlertModel.timestamp)).offset(offset).limit(limit).all()
@@ -444,11 +480,15 @@ class Repository:
             query = query.filter(AlertModel.timestamp <= end_time)
         if search:
             term = f"%{search}%"
-            query = query.filter(or_(
-                AlertModel.alert_id.ilike(term), AlertModel.event_type.ilike(term),
-                AlertModel.camera_id.ilike(term), AlertModel.object_type.ilike(term),
-                AlertModel.assignee.ilike(term),
-            ))
+            query = query.filter(
+                or_(
+                    AlertModel.alert_id.ilike(term),
+                    AlertModel.event_type.ilike(term),
+                    AlertModel.camera_id.ilike(term),
+                    AlertModel.object_type.ilike(term),
+                    AlertModel.assignee.ilike(term),
+                )
+            )
         return query.count()
 
     def mark_alert_reviewed(self, alert_id: str, reviewed_by: str = "operator") -> bool:
@@ -516,10 +556,14 @@ class Repository:
     @staticmethod
     def _new_track_row(track) -> TrackModel:
         return TrackModel(
-            track_id=track.track_id, track_uuid=track.track_uuid, session_id=track.session_id,
-            camera_id=track.camera_id, object_type=track.object_type,
+            track_id=track.track_id,
+            track_uuid=track.track_uuid,
+            session_id=track.session_id,
+            camera_id=track.camera_id,
+            object_type=track.object_type,
             start_time=datetime.utcfromtimestamp(track.first_seen),
-            last_seen=datetime.utcfromtimestamp(track.last_seen), status=track.status,
+            last_seen=datetime.utcfromtimestamp(track.last_seen),
+            status=track.status,
         )
 
     @staticmethod
@@ -554,17 +598,19 @@ class Repository:
             return
         existing_tracks = {
             row.track_uuid: row
-            for row in self.session.query(TrackModel).filter(
-                TrackModel.track_uuid.in_([t.track_uuid for t in tracks])
-            )
+            for row in self.session.query(TrackModel).filter(TrackModel.track_uuid.in_([t.track_uuid for t in tracks]))
         }
         vehicles = [t for t in tracks if t.object_type in vehicle_types]
-        existing_vehicles = {
-            row.track_uuid: row
-            for row in self.session.query(VehicleProfileModel).filter(
-                VehicleProfileModel.track_uuid.in_([t.track_uuid for t in vehicles])
-            )
-        } if vehicles else {}
+        existing_vehicles = (
+            {
+                row.track_uuid: row
+                for row in self.session.query(VehicleProfileModel).filter(
+                    VehicleProfileModel.track_uuid.in_([t.track_uuid for t in vehicles])
+                )
+            }
+            if vehicles
+            else {}
+        )
         for track in tracks:
             row = existing_tracks.get(track.track_uuid)
             if row is None:
@@ -582,7 +628,8 @@ class Repository:
     @staticmethod
     def _new_vehicle_row(track) -> VehicleProfileModel:
         return VehicleProfileModel(
-            track_uuid=track.track_uuid, camera_id=track.camera_id,
+            track_uuid=track.track_uuid,
+            camera_id=track.camera_id,
             vehicle_class=track.object_type,
             first_seen=datetime.utcfromtimestamp(track.first_seen),
             last_seen=datetime.utcfromtimestamp(track.last_seen),
@@ -629,14 +676,20 @@ class Repository:
         )
 
     def create_operator_feedback(self, alert: AlertModel, operator: str, reason: str) -> OperatorFeedbackModel:
-        existing = self.session.query(OperatorFeedbackModel).filter_by(
-            alert_id=alert.alert_id, operator=operator, reason=reason
-        ).first()
+        existing = (
+            self.session.query(OperatorFeedbackModel)
+            .filter_by(alert_id=alert.alert_id, operator=operator, reason=reason)
+            .first()
+        )
         if existing:
             return existing
         row = OperatorFeedbackModel(
-            event_id=alert.event_id, alert_id=alert.alert_id, operator=operator,
-            reason=reason, camera_id=alert.camera_id, event_type=alert.event_type,
+            event_id=alert.event_id,
+            alert_id=alert.alert_id,
+            operator=operator,
+            reason=reason,
+            camera_id=alert.camera_id,
+            event_type=alert.event_type,
             model_confidence=alert.risk_score,
             track_information={"track_id": alert.track_id, "object_type": alert.object_type},
         )
@@ -698,8 +751,13 @@ class Repository:
         if list_type not in LIST_TYPES:
             raise ValueError(f"list_type must be one of {LIST_TYPES}")
         row = WatchlistEntryModel(
-            entry_id=f"WL_{uuid.uuid4().hex[:16]}", kind=kind, list_type=list_type,
-            label=label, notes=notes or "", created_by=created_by, active=True,
+            entry_id=f"WL_{uuid.uuid4().hex[:16]}",
+            kind=kind,
+            list_type=list_type,
+            label=label,
+            notes=notes or "",
+            created_by=created_by,
+            active=True,
         )
         if kind == "plate":
             row.plate = normalize_plate(plate)
@@ -831,8 +889,15 @@ class Repository:
         zone = self.session.query(ZoneModel).filter_by(zone_id=zone_id, deleted=False).first()
         if zone is None:
             return None
-        mapping = {"camera_id": "camera_id", "name": "name", "type": "zone_type", "points": "points", "color": "color", "enabled": "enabled",
-                   "trigger_classes": "trigger_classes"}
+        mapping = {
+            "camera_id": "camera_id",
+            "name": "name",
+            "type": "zone_type",
+            "points": "points",
+            "color": "color",
+            "enabled": "enabled",
+            "trigger_classes": "trigger_classes",
+        }
         for source, target in mapping.items():
             if source in changes:
                 setattr(zone, target, changes[source])
@@ -905,10 +970,7 @@ class Repository:
             age = int((now - timestamp).total_seconds() // 3600)
             if 0 <= age < hours:
                 buckets[hours - 1 - age] += 1
-        labels = [
-            (now - timedelta(hours=hours - 1 - index)).strftime("%H:00")
-            for index in range(hours)
-        ]
+        labels = [(now - timedelta(hours=hours - 1 - index)).strftime("%H:00") for index in range(hours)]
         return {"labels": labels, "data": buckets}
 
     def close(self):
@@ -917,9 +979,16 @@ class Repository:
     def get_snapshot_cameras(self, name: str) -> set[str]:
         owners = set()
         for model, field in ((EventModel, EventModel.evidence_path), (AlertModel, AlertModel.snapshot_path)):
-            rows = self.session.query(model.camera_id).filter(or_(
-                field == name, field.endswith("/" + name, autoescape=True),
-                field.endswith("\\" + name, autoescape=True),
-            )).all()
+            rows = (
+                self.session.query(model.camera_id)
+                .filter(
+                    or_(
+                        field == name,
+                        field.endswith("/" + name, autoescape=True),
+                        field.endswith("\\" + name, autoescape=True),
+                    )
+                )
+                .all()
+            )
             owners.update(camera_id for (camera_id,) in rows)
         return owners

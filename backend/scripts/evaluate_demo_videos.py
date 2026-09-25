@@ -116,8 +116,7 @@ def main() -> int:
             fallback_path = None
 
     videos = sorted(
-        path for path in Path(args.video_dir).iterdir()
-        if path.is_file() and path.suffix.lower() in VIDEO_SUFFIXES
+        path for path in Path(args.video_dir).iterdir() if path.is_file() and path.suffix.lower() in VIDEO_SUFFIXES
     )
     if not videos:
         raise SystemExit(f"no demo videos found in {args.video_dir}")

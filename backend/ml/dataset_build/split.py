@@ -26,9 +26,7 @@ def split_records(
     records: list[ImageRecord], val_fraction: float = 0.1, seed: int = 42
 ) -> tuple[list[ImageRecord], list[ImageRecord]]:
     """Partition by group key, stratified per source family, deterministically."""
-    by_family: dict[str, dict[str, list[ImageRecord]]] = defaultdict(
-        lambda: defaultdict(list)
-    )
+    by_family: dict[str, dict[str, list[ImageRecord]]] = defaultdict(lambda: defaultdict(list))
     for r in records:
         name = os.path.basename(r.path)
         by_family[family(name)][group_key(name)].append(r)
@@ -56,6 +54,4 @@ def assert_no_leak(train: list[ImageRecord], val: list[ImageRecord]) -> None:
     vk = {group_key(os.path.basename(r.path)) for r in val}
     shared = tk & vk
     if shared:
-        raise AssertionError(
-            f"LEAK: {len(shared)} group(s) on both sides, e.g. {sorted(shared)[:3]}"
-        )
+        raise AssertionError(f"LEAK: {len(shared)} group(s) on both sides, e.g. {sorted(shared)[:3]}")

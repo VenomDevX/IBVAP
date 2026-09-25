@@ -77,11 +77,17 @@ def main():
             precision = float(p[row])
             recall = float(r[row])
             f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
-            per_class.append({
-                "id": int(cid), "class": str(names[cid]),
-                "precision": precision, "recall": recall, "f1": f1,
-                "map50": float(ap50[row]), "map50_95": float(ap[row]),
-            })
+            per_class.append(
+                {
+                    "id": int(cid),
+                    "class": str(names[cid]),
+                    "precision": precision,
+                    "recall": recall,
+                    "f1": f1,
+                    "map50": float(ap50[row]),
+                    "map50_95": float(ap[row]),
+                }
+            )
             print(
                 f"{cid:>3}  {str(names[cid]):22s} {'-':>7} "
                 f"{'-':>8} {p[row]:7.3f} {r[row]:7.3f} {ap50[row]:8.3f} {ap[row]:9.3f}"
@@ -94,13 +100,21 @@ def main():
     print("=" * 78)
     result_dir = os.path.join(out_dir, run)
     with open(os.path.join(result_dir, "metrics.json"), "w", encoding="utf-8") as fh:
-        json.dump({
-            "weights": weights, "split": args.split, "imgsz": args.imgsz,
-            "precision": float(m.box.mp), "recall": float(m.box.mr),
-            "f1_macro": float(sum(x["f1"] for x in per_class) / len(per_class)) if per_class else 0.0,
-            "map50": float(m.box.map50), "map50_95": float(m.box.map),
-            "per_class": per_class,
-        }, fh, indent=2)
+        json.dump(
+            {
+                "weights": weights,
+                "split": args.split,
+                "imgsz": args.imgsz,
+                "precision": float(m.box.mp),
+                "recall": float(m.box.mr),
+                "f1_macro": float(sum(x["f1"] for x in per_class) / len(per_class)) if per_class else 0.0,
+                "map50": float(m.box.map50),
+                "map50_95": float(m.box.map),
+                "per_class": per_class,
+            },
+            fh,
+            indent=2,
+        )
     print(f"\nplots + confusion matrix + predictions.json + metrics.json -> {result_dir}")
     print("Weak classes (low mAP50): add data / raise imgsz / bump copy_paste, then retrain.")
 

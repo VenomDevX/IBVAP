@@ -84,12 +84,9 @@ class ObjectDetector:
         self.detect_all = detect_all
         self.imgsz = imgsz
         self.class_thresholds = {
-            _normalize_class(name): float(value)
-            for name, value in (class_thresholds or {}).items()
+            _normalize_class(name): float(value) for name, value in (class_thresholds or {}).items()
         }
-        self.inference_confidence = min(
-            [self.confidence_threshold, *self.class_thresholds.values()]
-        )
+        self.inference_confidence = min([self.confidence_threshold, *self.class_thresholds.values()])
         self.half_precision = bool(half_precision)
         self._agnostic_nms = bool(agnostic_nms)
         self._augment = bool(augment)
@@ -181,6 +178,7 @@ class ObjectDetector:
             self._model = YOLO(resolved_path)
 
             import torch
+
             # Auto-detect device, or enforce an explicitly requested GPU.
             if self._device == "auto":
                 self._device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -197,8 +195,7 @@ class ObjectDetector:
             # name metadata — names will be generic like {0: "class0", 1: "class1"}.
             # Detect this and load names from the original .pt weights.
             names_are_generic = model_names and all(
-                str(v).strip() in (str(k), f"class{k}")
-                for k, v in dict(model_names).items()
+                str(v).strip() in (str(k), f"class{k}") for k, v in dict(model_names).items()
             )
 
             if is_engine and names_are_generic:
@@ -219,9 +216,7 @@ class ObjectDetector:
                 try:
                     self._fallback_model = YOLO(self._fallback_model_path)
                     fallback_names = getattr(self._fallback_model, "names", None) or COCO_TARGET_CLASSES
-                    self._fallback_id2name = {
-                        int(k): _normalize_class(v) for k, v in dict(fallback_names).items()
-                    }
+                    self._fallback_id2name = {int(k): _normalize_class(v) for k, v in dict(fallback_names).items()}
                     logger.info(f"Loaded empty-frame fallback detector: {self._fallback_model_path}")
                 except Exception as fallback_error:
                     self._fallback_model = None
@@ -253,7 +248,6 @@ class ObjectDetector:
         confs = boxes.conf.cpu().numpy().tolist()
         cls_ids = boxes.cls.cpu().numpy().astype(int).tolist()
         for (x1, y1, x2, y2), conf, cls_id in zip(xyxy, confs, cls_ids):
-
             class_name = id2name.get(cls_id, f"class_{cls_id}")
             class_floor = self.class_thresholds.get(class_name, self.confidence_threshold)
             if conf < class_floor:
@@ -378,7 +372,7 @@ class ObjectDetector:
         """
         per_frame: list[list[DetectionResult]] = []
         for start in range(0, len(frames), self.MAX_BATCH):
-            per_frame.extend(self._detect_batch_chunk(frames[start:start + self.MAX_BATCH]))
+            per_frame.extend(self._detect_batch_chunk(frames[start : start + self.MAX_BATCH]))
 
         if self._fallback_model is not None and camera_ids is not None:
             for i, (frame, camera_id) in enumerate(zip(frames, camera_ids)):
@@ -426,7 +420,12 @@ class ObjectDetector:
                             "engine with a larger max batch size for real batched throughput."
                         )
                         self._batch_unsupported_warned = True
-                    results = [self._model(f, classes=None if self.detect_all else self.target_classes, **self._model_call_kwargs())[0] for f in frames]
+                    results = [
+                        self._model(
+                            f, classes=None if self.detect_all else self.target_classes, **self._model_call_kwargs()
+                        )[0]
+                        for f in frames
+                    ]
                 inference_seconds = time.perf_counter() - inference_started
             # Per-frame share of the batched call, for get_average_inference_time()
             # to keep meaning "cost per frame" whether batched or not.

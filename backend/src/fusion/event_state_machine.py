@@ -207,7 +207,8 @@ class EventStateMachine:
         self._last_prune = now
         retention = max(self.cooldown_seconds * 2, 60.0)
         self._incidents = {
-            key: value for key, value in self._incidents.items()
+            key: value
+            for key, value in self._incidents.items()
             if value.event.state != "CLOSED" or now - (value.event.closed_at or now) <= retention
         }
         self._track_keys = {}

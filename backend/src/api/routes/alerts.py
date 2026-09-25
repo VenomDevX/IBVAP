@@ -21,10 +21,18 @@ class IncidentUpdate(BaseModel):
     disposition: Literal["true_alarm", "false_alarm", "test", "escalated"] | None = None
     assignee: str | None = Field(default=None, max_length=100)
     note: str | None = Field(default=None, max_length=4000)
-    false_positive_reason: Literal[
-        "Wrong object detection", "Duplicate alert", "Authorized person", "Authorized vehicle",
-        "Incorrect zone", "Behavior incorrectly classified", "Other",
-    ] | None = None
+    false_positive_reason: (
+        Literal[
+            "Wrong object detection",
+            "Duplicate alert",
+            "Authorized person",
+            "Authorized vehicle",
+            "Incorrect zone",
+            "Behavior incorrectly classified",
+            "Other",
+        ]
+        | None
+    ) = None
 
 
 def _serialize_alert(alert) -> dict:
@@ -94,15 +102,23 @@ async def query_alerts(
     try:
         repo = Repository(session)
         filters = dict(
-            camera_id=camera_id, risk_level=risk_level, reviewed=reviewed, status=status,
+            camera_id=camera_id,
+            risk_level=risk_level,
+            reviewed=reviewed,
+            status=status,
             active_only=active_only,
-            start_time=start_time, end_time=end_time, search=search,
+            start_time=start_time,
+            end_time=end_time,
+            search=search,
             allowed_cameras=scoped_cameras(user),
         )
         total = repo.count_alerts(**filters)
         rows = repo.get_alerts(
-            **filters, limit=page_size, offset=(page - 1) * page_size,
-            sort_by=sort_by, sort_order=sort_order,
+            **filters,
+            limit=page_size,
+            offset=(page - 1) * page_size,
+            sort_by=sort_by,
+            sort_order=sort_order,
         )
         return {"items": [_serialize_alert(row) for row in rows], "page": page, "page_size": page_size, "total": total}
     finally:
@@ -116,8 +132,9 @@ async def get_live_alerts(user: dict = Depends(require_auth)):
 
     pipeline = get_pipeline()
     if pipeline:
-        return [a for a in pipeline.alert_engine.get_all_alerts(limit=5000)
-                if can_access_camera(user, a["camera_id"])][:50]
+        return [a for a in pipeline.alert_engine.get_all_alerts(limit=5000) if can_access_camera(user, a["camera_id"])][
+            :50
+        ]
     return []
 
 
@@ -151,9 +168,11 @@ async def update_incident(
     actor = user.get("email") or user.get("user_id") or "unknown"
     role = user.get("app_role")
     requested_status = update.status
-    allowed = {"admin", "commander", "supervisor", "operator"} if requested_status in {"resolved", "false_positive", "reopened"} else {
-        "admin", "commander", "supervisor", "operator"
-    }
+    allowed = (
+        {"admin", "commander", "supervisor", "operator"}
+        if requested_status in {"resolved", "false_positive", "reopened"}
+        else {"admin", "commander", "supervisor", "operator"}
+    )
     if role not in allowed:
         raise HTTPException(status_code=403, detail="Role cannot perform this incident transition")
     session = get_database().get_session()

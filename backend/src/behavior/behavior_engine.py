@@ -226,9 +226,13 @@ class BehaviorEngine:
 
         if not getattr(self, "_apply_cooldown", True):
             return BehaviorEvent(
-                event_id="", track_id=track.track_id, camera_id=track.camera_id,
-                behavior_type=behavior_type, timestamp=now,
-                details=details or {}, contributing_factors=factors or [],
+                event_id="",
+                track_id=track.track_id,
+                camera_id=track.camera_id,
+                behavior_type=behavior_type,
+                timestamp=now,
+                details=details or {},
+                contributing_factors=factors or [],
             )
 
         if len(self._cooldowns) > 512:

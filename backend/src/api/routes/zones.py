@@ -89,7 +89,8 @@ async def list_zones(camera_id: str | None = None, user: dict = Depends(require_
             "enabled": z.enabled,
             "trigger_classes": list(z.trigger_classes or []),
         }
-        for z in zones if can_access_camera(user, z.camera_id)
+        for z in zones
+        if can_access_camera(user, z.camera_id)
     ]
     session.close()
 
@@ -157,8 +158,15 @@ async def update_zone(zone_id: str, update: ZoneUpdate, user: dict = Depends(req
         if "color" in changes and changes["color"] is not None:
             changes["color"] = list(changes["color"])
         existing = next((z for z in repo.get_zones() if z.zone_id == zone_id), None)
-        field_map = {"camera_id": "camera_id", "name": "name", "type": "zone_type", "points": "points",
-                     "color": "color", "enabled": "enabled", "trigger_classes": "trigger_classes"}
+        field_map = {
+            "camera_id": "camera_id",
+            "name": "name",
+            "type": "zone_type",
+            "points": "points",
+            "color": "color",
+            "enabled": "enabled",
+            "trigger_classes": "trigger_classes",
+        }
         before = {f: getattr(existing, field_map[f], None) for f in changes} if existing else {}
         row = repo.update_zone(zone_id, changes)
         if row is None:
@@ -166,7 +174,8 @@ async def update_zone(zone_id: str, update: ZoneUpdate, user: dict = Depends(req
         actor = user.get("email") or user.get("user_id") or "unknown"
         diff = {
             f: ({"from": "(shape)", "to": "(new shape)"} if f == "points" else {"from": before.get(f), "to": v})
-            for f, v in changes.items() if before.get(f) != v
+            for f, v in changes.items()
+            if before.get(f) != v
         }
         if set(diff) == {"enabled"}:
             action = "enable_zone" if changes["enabled"] else "disable_zone"
@@ -176,15 +185,22 @@ async def update_zone(zone_id: str, update: ZoneUpdate, user: dict = Depends(req
 
         from src.api.app import get_pipeline
         from src.spatial.zone_manager import Zone
+
         pipeline = get_pipeline()
         if pipeline:
             pipeline.zone_manager.remove_zone(zone_id)
-            pipeline.zone_manager.add_zone(Zone(
-                zone_id=row.zone_id, name=row.name, zone_type=row.zone_type,
-                camera_id=row.camera_id, points=[tuple(point) for point in row.points],
-                enabled=row.enabled, color=tuple(row.color),
-                trigger_classes=list(row.trigger_classes or []),
-            ))
+            pipeline.zone_manager.add_zone(
+                Zone(
+                    zone_id=row.zone_id,
+                    name=row.name,
+                    zone_type=row.zone_type,
+                    camera_id=row.camera_id,
+                    points=[tuple(point) for point in row.points],
+                    enabled=row.enabled,
+                    color=tuple(row.color),
+                    trigger_classes=list(row.trigger_classes or []),
+                )
+            )
         return {"message": "Zone updated", "zone_id": zone_id}
     finally:
         session.close()

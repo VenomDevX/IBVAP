@@ -58,8 +58,7 @@ class FaceDetector:
                 if hasattr(model, "session")
             }
             if wants_cuda and (
-                not self.providers
-                or any("CUDAExecutionProvider" not in active for active in self.providers.values())
+                not self.providers or any("CUDAExecutionProvider" not in active for active in self.providers.values())
             ):
                 self._model = None
                 self.device = "unavailable"

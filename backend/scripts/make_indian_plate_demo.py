@@ -31,8 +31,10 @@ FIRST_PLATE = "MH12AB3456"
 
 
 def plate_number(rng: random.Random) -> str:
-    return (f"{rng.choice(STATES)}{rng.randint(1, 99):02d}"
-            f"{''.join(rng.choice(LETTERS) for _ in range(2))}{rng.randint(1, 9999):04d}")
+    return (
+        f"{rng.choice(STATES)}{rng.randint(1, 99):02d}"
+        f"{''.join(rng.choice(LETTERS) for _ in range(2))}{rng.randint(1, 9999):04d}"
+    )
 
 
 def split_rows(text: str, two_row: bool) -> list[str]:
@@ -52,8 +54,9 @@ def render_plate(rows: list[str], width: int, height: int) -> np.ndarray:
     plate = np.full((big_h, big_w, 3), 245, np.uint8)
     cv2.rectangle(plate, (4, 4), (big_w - 5, big_h - 5), (20, 20, 20), 5)
     for i, (row, (w, h)) in enumerate(zip(rows, sizes)):
-        cv2.putText(plate, row, ((big_w - w) // 2, 10 + row_h * i + h + 12), font, scale, (15, 15, 15),
-                    thickness, cv2.LINE_AA)
+        cv2.putText(
+            plate, row, ((big_w - w) // 2, 10 + row_h * i + h + 12), font, scale, (15, 15, 15), thickness, cv2.LINE_AA
+        )
     return cv2.resize(plate, (width, height), interpolation=cv2.INTER_AREA)
 
 
@@ -65,8 +68,11 @@ def paste(frame: np.ndarray, box, patch: np.ndarray) -> None:
     patch = patch.astype(np.float32) * np.clip(region.mean() / 150.0, 0.55, 1.0)
     mask = np.ones((h, w), np.float32)
     feather = max(1, min(h, w) // 10)
-    mask = cv2.GaussianBlur(np.pad(mask[feather:-feather or None, feather:-feather or None],
-                                   feather, constant_values=0), (0, 0), feather / 2)[:h, :w, None]
+    mask = cv2.GaussianBlur(
+        np.pad(mask[feather : -feather or None, feather : -feather or None], feather, constant_values=0),
+        (0, 0),
+        feather / 2,
+    )[:h, :w, None]
     frame[y1:y2, x1:x2] = (patch * mask + region * (1 - mask)).astype(np.uint8)
 
 
@@ -102,7 +108,8 @@ def main():
 
     def read(capture):
         ok, full = capture.read()
-        return ok, (full[cy:cy + height, cx:cx + width].copy() if ok else None)
+        return ok, (full[cy : cy + height, cx : cx + width].copy() if ok else None)
+
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
     # Pass 1: detect and track plates (boxes per frame per track).
@@ -130,9 +137,16 @@ def main():
                 best["detections"] += 1
                 taken.add(best["id"])
             else:
-                track = {"id": len(tracks), "boxes": {index: box}, "last": box, "velocity": (0, 0, 0, 0),
-                         "missed": 0, "detections": 1, "first_frame": index,
-                         "two_row": (box[3] - box[1]) / max(1, box[2] - box[0]) > 0.45}
+                track = {
+                    "id": len(tracks),
+                    "boxes": {index: box},
+                    "last": box,
+                    "velocity": (0, 0, 0, 0),
+                    "missed": 0,
+                    "detections": 1,
+                    "first_frame": index,
+                    "two_row": (box[3] - box[1]) / max(1, box[2] - box[0]) > 0.45,
+                }
                 tracks.append(track)
                 taken.add(track["id"])
         for track in live:
@@ -170,8 +184,11 @@ def main():
             x1, y1 = max(0, box[0]), max(0, box[1])
             x2, y2 = min(width, box[2]), min(height, box[3])
             if x2 - x1 > 4 and y2 - y1 > 4:
-                paste(frame, (x1, y1, x2, y2),
-                      render_plate(split_rows(track["plate"], track["two_row"]), x2 - x1, y2 - y1))
+                paste(
+                    frame,
+                    (x1, y1, x2, y2),
+                    render_plate(split_rows(track["plate"], track["two_row"]), x2 - x1, y2 - y1),
+                )
         writer.write(frame)
     writer.release()
     cap.release()
@@ -182,9 +199,16 @@ def main():
         "crop": list(crop),
         "note": "Real traffic footage; plates replaced with rendered Indian plates.",
         "watchlist_demo_plate": FIRST_PLATE if visible else None,
-        "plates": [{"plate": t["plate"], "two_row": t["two_row"], "first_frame": t["first_frame"],
-                    "detections": t["detections"], "painted_frames": len(t["boxes"])}
-                   for t in sorted(visible, key=lambda t: t["first_frame"])],
+        "plates": [
+            {
+                "plate": t["plate"],
+                "two_row": t["two_row"],
+                "first_frame": t["first_frame"],
+                "detections": t["detections"],
+                "painted_frames": len(t["boxes"]),
+            }
+            for t in sorted(visible, key=lambda t: t["first_frame"])
+        ],
     }
     with open(os.path.splitext(args.output)[0] + ".json", "w", encoding="utf-8") as fh:
         json.dump(truth, fh, indent=2)

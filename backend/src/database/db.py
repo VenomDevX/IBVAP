@@ -27,12 +27,7 @@ class Database:
         is_postgres = self.db_url.startswith("postgres")
 
         if is_postgres:
-            connect_args = {
-                "keepalives": 1,
-                "keepalives_idle": 30,
-                "keepalives_interval": 10,
-                "keepalives_count": 5
-            }
+            connect_args = {"keepalives": 1, "keepalives_idle": 30, "keepalives_interval": 10, "keepalives_count": 5}
             self.engine = create_engine(
                 self.db_url,
                 pool_size=20,
@@ -52,6 +47,7 @@ class Database:
             )
 
         if is_sqlite:
+
             @event.listens_for(self.engine, "connect")
             def _sqlite_pragmas(dbapi_conn, _rec):
                 cur = dbapi_conn.cursor()
@@ -79,10 +75,12 @@ class Database:
         from sqlalchemy import inspect, text
 
         with self.engine.begin() as conn:
-            conn.execute(text(
-                "CREATE TABLE IF NOT EXISTS schema_migrations "
-                "(version INTEGER PRIMARY KEY, applied_at DATETIME NOT NULL)"
-            ))
+            conn.execute(
+                text(
+                    "CREATE TABLE IF NOT EXISTS schema_migrations "
+                    "(version INTEGER PRIMARY KEY, applied_at DATETIME NOT NULL)"
+                )
+            )
             applied = {row[0] for row in conn.execute(text("SELECT version FROM schema_migrations"))}
 
         migrations = [
@@ -110,7 +108,11 @@ class Database:
 
     def _migration_columns(self, insp, text):
         wanted = {
-            "zones": {"deleted": "BOOLEAN NOT NULL DEFAULT FALSE" if self.db_url.startswith("postgres") else "BOOLEAN NOT NULL DEFAULT 0"},
+            "zones": {
+                "deleted": "BOOLEAN NOT NULL DEFAULT FALSE"
+                if self.db_url.startswith("postgres")
+                else "BOOLEAN NOT NULL DEFAULT 0"
+            },
             "events": {"prev_hash": "VARCHAR(64)", "chain_hash": "VARCHAR(64)"},
             "alerts": {"prev_hash": "VARCHAR(64)", "chain_hash": "VARCHAR(64)"},
         }
@@ -169,25 +171,36 @@ class Database:
     def _migration_incident_state(self, insp, text):
         timestamp_type = "TIMESTAMP" if self.db_url.startswith("postgres") else "DATETIME"
         json_type = "JSONB" if self.db_url.startswith("postgres") else "JSON"
-        boolean_type = "BOOLEAN NOT NULL DEFAULT FALSE" if self.db_url.startswith("postgres") else "BOOLEAN NOT NULL DEFAULT 0"
+        boolean_type = (
+            "BOOLEAN NOT NULL DEFAULT FALSE" if self.db_url.startswith("postgres") else "BOOLEAN NOT NULL DEFAULT 0"
+        )
         wanted = {
             "cameras": {
-                "last_heartbeat": timestamp_type, "last_frame_at": timestamp_type,
+                "last_heartbeat": timestamp_type,
+                "last_frame_at": timestamp_type,
                 "stream_status": "VARCHAR(20) DEFAULT 'offline'",
             },
             "tracks": {
-                "track_uuid": "VARCHAR(64)", "session_id": "VARCHAR(64)",
-                "last_seen": timestamp_type, "status": "VARCHAR(20) DEFAULT 'CLOSED'",
-                "best_snapshot": "VARCHAR(500)", "best_confidence": "FLOAT DEFAULT 0",
+                "track_uuid": "VARCHAR(64)",
+                "session_id": "VARCHAR(64)",
+                "last_seen": timestamp_type,
+                "status": "VARCHAR(20) DEFAULT 'CLOSED'",
+                "best_snapshot": "VARCHAR(500)",
+                "best_confidence": "FLOAT DEFAULT 0",
             },
             "events": {
-                "track_uuid": "VARCHAR(64)", "zone_id": "VARCHAR(50)",
-                "state": "VARCHAR(20) NOT NULL DEFAULT 'OPEN'", "opened_at": timestamp_type,
-                "last_updated": timestamp_type, "closed_at": timestamp_type,
-                "score_breakdown": json_type, "dedupe_key": "VARCHAR(500)",
+                "track_uuid": "VARCHAR(64)",
+                "zone_id": "VARCHAR(50)",
+                "state": "VARCHAR(20) NOT NULL DEFAULT 'OPEN'",
+                "opened_at": timestamp_type,
+                "last_updated": timestamp_type,
+                "closed_at": timestamp_type,
+                "score_breakdown": json_type,
+                "dedupe_key": "VARCHAR(500)",
             },
             "alerts": {
-                "acknowledged_by": "VARCHAR(100)", "resolved_by": "VARCHAR(100)",
+                "acknowledged_by": "VARCHAR(100)",
+                "resolved_by": "VARCHAR(100)",
                 "false_positive": boolean_type,
             },
             "vehicle_profiles": {"description": "VARCHAR(1000) DEFAULT ''"},
@@ -240,15 +253,20 @@ class Database:
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN chain_version INTEGER"))
                 # Seed the head row from the newest chained row so v2 appends
                 # continue the existing chain.
-                head = conn.execute(text(
-                    f"SELECT chain_hash FROM {table} WHERE chain_hash IS NOT NULL ORDER BY id DESC LIMIT 1"
-                )).scalar()
+                # `table` is one of the two literals above, never user input.
+                head = conn.execute(
+                    text(
+                        f"SELECT chain_hash FROM {table} WHERE chain_hash IS NOT NULL ORDER BY id DESC LIMIT 1"  # nosec B608
+                    )
+                ).scalar()
                 present = conn.execute(
                     text("SELECT 1 FROM evidence_chain_heads WHERE table_name = :t"), {"t": table}
                 ).scalar()
                 if not present:
                     conn.execute(
-                        text("INSERT INTO evidence_chain_heads(table_name, head_hash, updated_at) VALUES (:t, :h, :at)"),
+                        text(
+                            "INSERT INTO evidence_chain_heads(table_name, head_hash, updated_at) VALUES (:t, :h, :at)"
+                        ),
                         {"t": table, "h": head, "at": datetime.utcnow()},
                     )
 

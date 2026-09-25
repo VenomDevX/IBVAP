@@ -112,8 +112,7 @@ class FaceMatcher:
             data = {
                 "_info": "IBVAP Face Gallery — add entries with: name, embedding (512-dim ArcFace vector)",
                 "identities": [
-                    {"name": label, "embeddings": [e.tolist() for e in embs]}
-                    for label, embs in self._gallery.items()
+                    {"name": label, "embeddings": [e.tolist() for e in embs]} for label, embs in self._gallery.items()
                 ],
             }
             with open(self.gallery_path, "w", encoding="utf-8") as f:

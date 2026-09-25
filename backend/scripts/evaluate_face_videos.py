@@ -70,16 +70,18 @@ def main() -> int:
         total_frames += sampled
         total_faces += faces
         total_embeddings += embeddings
-        rows.append({
-            "file": video.name,
-            "opened": sampled > 0,
-            "sampled_frames": sampled,
-            "faces": faces,
-            "embeddings": embeddings,
-            "frames_with_face_rate": None if sampled == 0 else round(frames_with_faces / sampled, 4),
-            "mean_face_confidence": round(statistics.fmean(confidences), 4) if confidences else None,
-            "mean_inference_ms": round(statistics.fmean(times), 2) if times else None,
-        })
+        rows.append(
+            {
+                "file": video.name,
+                "opened": sampled > 0,
+                "sampled_frames": sampled,
+                "faces": faces,
+                "embeddings": embeddings,
+                "frames_with_face_rate": None if sampled == 0 else round(frames_with_faces / sampled, 4),
+                "mean_face_confidence": round(statistics.fmean(confidences), 4) if confidences else None,
+                "mean_inference_ms": round(statistics.fmean(times), 2) if times else None,
+            }
+        )
 
     report = {
         "schema_version": 1,

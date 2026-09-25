@@ -6,20 +6,23 @@ import pytest
 from src.anpr.plate_format import parse_plate
 
 
-@pytest.mark.parametrize("raw, expected, kind", [
-    ("MH12AB3456", "MH12AB3456", "standard"),
-    ("mh 12 ab 3456", "MH12AB3456", "standard"),
-    ("MH12A83456", "MH12AB3456", "standard"),      # 8 read in a letter slot
-    ("MHI2AB3456", "MH12AB3456", "standard"),      # I read in a digit slot
-    ("0L01C0001", "DL01C0001", "standard"),        # 0 read in the state code
-    ("KA05MN9999", "KA05MN9999", "standard"),
-    ("DL3CAB1234", "DL3CAB1234", "standard"),      # old Delhi 1-digit district, 3-letter series
-    ("UP320001", "UP320001", "standard"),          # no series letters
-    ("IND MH12AB3456", "MH12AB3456", "standard"),  # hologram text read as a prefix
-    ("22BH1234AA", "22BH1234AA", "bharat"),
-    ("22BH1234A", "22BH1234A", "bharat"),
-    ("Z2BHI234AA", "22BH1234AA", "bharat"),
-])
+@pytest.mark.parametrize(
+    "raw, expected, kind",
+    [
+        ("MH12AB3456", "MH12AB3456", "standard"),
+        ("mh 12 ab 3456", "MH12AB3456", "standard"),
+        ("MH12A83456", "MH12AB3456", "standard"),  # 8 read in a letter slot
+        ("MHI2AB3456", "MH12AB3456", "standard"),  # I read in a digit slot
+        ("0L01C0001", "DL01C0001", "standard"),  # 0 read in the state code
+        ("KA05MN9999", "KA05MN9999", "standard"),
+        ("DL3CAB1234", "DL3CAB1234", "standard"),  # old Delhi 1-digit district, 3-letter series
+        ("UP320001", "UP320001", "standard"),  # no series letters
+        ("IND MH12AB3456", "MH12AB3456", "standard"),  # hologram text read as a prefix
+        ("22BH1234AA", "22BH1234AA", "bharat"),
+        ("22BH1234A", "22BH1234A", "bharat"),
+        ("Z2BHI234AA", "22BH1234AA", "bharat"),
+    ],
+)
 def test_valid_plates_are_normalised(raw, expected, kind):
     reading = parse_plate(raw)
     assert reading.valid

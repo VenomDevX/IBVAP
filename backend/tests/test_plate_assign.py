@@ -86,8 +86,14 @@ def test_pipeline_ocrs_the_located_plate(tmp_path, monkeypatch):
         return {"text": "KA05MN9999", "confidence": 0.9}
 
     monkeypatch.setattr(pipeline_mod, "extract_plate", fake_extract)
-    cam = CameraPipeline(CameraInfo("c", "C", "rtsp://x"), Mock(), ZoneManager(), FenceDetector(), {},
-                         AlertEngine(snapshots_dir=str(tmp_path)))
+    cam = CameraPipeline(
+        CameraInfo("c", "C", "rtsp://x"),
+        Mock(),
+        ZoneManager(),
+        FenceDetector(),
+        {},
+        AlertEngine(snapshots_dir=str(tmp_path)),
+    )
     car = _vehicle()
     car.best_frame = np.zeros((150, 200, 3), np.uint8)
     car.plate_crop = np.zeros((36, 96, 3), np.uint8)
@@ -106,18 +112,32 @@ def test_vehicle_without_detected_plate_is_not_ocrd_by_default(tmp_path, monkeyp
     from src.spatial.zone_manager import ZoneManager
 
     calls = []
-    monkeypatch.setattr(pipeline_mod, "extract_plate", lambda crop, **kw: calls.append(kw) or {"text": "Unknown", "confidence": 0})
-    cam = CameraPipeline(CameraInfo("c", "C", "rtsp://x"), Mock(), ZoneManager(), FenceDetector(), {},
-                         AlertEngine(snapshots_dir=str(tmp_path)))
+    monkeypatch.setattr(
+        pipeline_mod, "extract_plate", lambda crop, **kw: calls.append(kw) or {"text": "Unknown", "confidence": 0}
+    )
+    cam = CameraPipeline(
+        CameraInfo("c", "C", "rtsp://x"),
+        Mock(),
+        ZoneManager(),
+        FenceDetector(),
+        {},
+        AlertEngine(snapshots_dir=str(tmp_path)),
+    )
     car = _vehicle()
     car.best_frame = np.zeros((150, 200, 3), np.uint8)
     assert not cam._anpr_due(car)
     car.plate_crop = np.zeros((30, 90, 3), np.uint8)
     assert cam._anpr_due(car)
 
-    loose = CameraPipeline(CameraInfo("d", "D", "rtsp://x"), Mock(), ZoneManager(), FenceDetector(), {},
-                           AlertEngine(snapshots_dir=str(tmp_path)),
-                           thresholds={"anpr": {"require_detected_plate": False}})
+    loose = CameraPipeline(
+        CameraInfo("d", "D", "rtsp://x"),
+        Mock(),
+        ZoneManager(),
+        FenceDetector(),
+        {},
+        AlertEngine(snapshots_dir=str(tmp_path)),
+        thresholds={"anpr": {"require_detected_plate": False}},
+    )
     guess = _vehicle()
     guess.best_frame_score = 0.5
     assert loose._anpr_due(guess)

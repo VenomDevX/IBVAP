@@ -75,7 +75,7 @@ def extract_plate(vehicle_crop: np.ndarray, strict_format: bool = True, plate_lo
     reading = parse_plate(text)
     if reading.valid:
         # Each positional correction makes the read a little less certain.
-        text, conf = reading.text, round(conf * 0.95 ** reading.corrections, 3)
+        text, conf = reading.text, round(conf * 0.95**reading.corrections, 3)
     elif strict_format:
         text, conf = "", 0.0
     else:

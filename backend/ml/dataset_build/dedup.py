@@ -52,9 +52,7 @@ def _make_rank(priority: Callable[[ImageRecord], int]):
     return _rank
 
 
-def _near_pass(
-    survivors: list[ImageRecord], max_distance: int, emit
-) -> list[ImageRecord]:
+def _near_pass(survivors: list[ImageRecord], max_distance: int, emit) -> list[ImageRecord]:
     """Multi-index-hashing near-duplicate pass over one already-ranked group."""
     band_index: list[dict[int, list[int]]] = [defaultdict(list) for _ in range(BANDS)]
     kept: list[ImageRecord] = []
@@ -119,9 +117,7 @@ def dedup(
     prio = priority or (lambda _r: 0)
     _rank = _make_rank(prio)
     removed: list[tuple[str, str, str]] = []
-    emit = on_removed if on_removed is not None else (
-        lambda a, b, c: removed.append((a, b, c))
-    )
+    emit = on_removed if on_removed is not None else (lambda a, b, c: removed.append((a, b, c)))
 
     # ---- pass 1: exact, by md5 (always global) ----
     by_md5: dict[str, list[ImageRecord]] = defaultdict(list)

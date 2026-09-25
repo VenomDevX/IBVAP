@@ -89,7 +89,8 @@ def main():
             else []
         )
         expired = [
-            f for f in candidates
+            f
+            for f in candidates
             if snapshot_cutoff is not None and os.path.getmtime(os.path.join(snap_dir, f)) < snapshot_cutoff
         ]
         orphans = [f for f in candidates if f not in referenced]

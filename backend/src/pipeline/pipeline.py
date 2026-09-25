@@ -62,9 +62,7 @@ def apply_watchlist_hit(track, hit) -> bool:
     if current:
         rank = _LIST_PRIORITY.get(current["list_type"], 0)
         new_rank = _LIST_PRIORITY.get(hit.list_type, 0)
-        confirming = (
-            new_rank == rank and hit.exact and not current.get("exact", True)
-        )
+        confirming = new_rank == rank and hit.exact and not current.get("exact", True)
         if rank >= new_rank and not confirming:
             return False
     track.watchlist = hit.to_dict()
@@ -78,7 +76,12 @@ def apply_watchlist_hit(track, hit) -> bool:
             track.identity_status = "known"
     logger.warning(
         "Watchlist {} match camera={} track={} list={} label={} score={:.2f}",
-        hit.kind, track.camera_id, track.track_uuid, hit.list_type, hit.label, hit.score,
+        hit.kind,
+        track.camera_id,
+        track.track_uuid,
+        hit.list_type,
+        hit.label,
+        hit.score,
     )
     return True
 
@@ -118,7 +121,8 @@ class CameraPipeline:
         if self.batch_coordinator is not None:
             self.batch_coordinator.register_camera(camera_info.camera_id)
         self.tracker = MultiObjectTracker(
-            max_age=tracking.get("max_age", 30), min_hits=tracking.get("min_hits", 3),
+            max_age=tracking.get("max_age", 30),
+            min_hits=tracking.get("min_hits", 3),
             iou_threshold=tracking.get("iou_threshold", 0.3),
             frame_rate=camera_info.fps_limit or 30,
             session_id=self.stream_session_id,
@@ -137,7 +141,8 @@ class CameraPipeline:
             stationary_speed_threshold=behavior.get("stationary_speed_threshold", 5.0),
         )
         self.night_detector = NightDetector(
-            night_start=behavior.get("night_start", "19:00"), night_end=behavior.get("night_end", "05:00"),
+            night_start=behavior.get("night_start", "19:00"),
+            night_end=behavior.get("night_end", "05:00"),
             brightness_threshold=behavior.get("low_light_brightness_threshold", 60),
         )
         self.behavior_engine = BehaviorEngine(
@@ -173,26 +178,33 @@ class CameraPipeline:
         self._ANPR_STRICT_FORMAT = bool(anpr_cfg.get("strict_format", True))
         self._ANPR_REQUIRE_DETECTED_PLATE = bool(anpr_cfg.get("require_detected_plate", True))
         evidence_cfg = thresholds.get("evidence", {})
-        self.evidence_buffer = EvidenceClipBuffer(
-            camera_info.camera_id,
-            output_dir() / "clips",
-            pre_seconds=evidence_cfg.get("pre_event_seconds", 3),
-            post_seconds=evidence_cfg.get("post_event_seconds", 3),
-            capture_fps=evidence_cfg.get("capture_fps", 5),
-            max_width=evidence_cfg.get("max_width", 960),
-            jpeg_quality=evidence_cfg.get("jpeg_quality", 65),
-            on_complete=self._clip_completed,
-            max_clips_per_hour=evidence_cfg.get("max_clips_per_hour", 60),
-            max_storage_mb=evidence_cfg.get("max_clip_storage_mb", 4096),
-            min_free_mb=evidence_cfg.get("min_free_storage_mb", 1024),
-        ) if evidence_cfg.get("clips_enabled", True) else None
+        self.evidence_buffer = (
+            EvidenceClipBuffer(
+                camera_info.camera_id,
+                output_dir() / "clips",
+                pre_seconds=evidence_cfg.get("pre_event_seconds", 3),
+                post_seconds=evidence_cfg.get("post_event_seconds", 3),
+                capture_fps=evidence_cfg.get("capture_fps", 5),
+                max_width=evidence_cfg.get("max_width", 960),
+                jpeg_quality=evidence_cfg.get("jpeg_quality", 65),
+                on_complete=self._clip_completed,
+                max_clips_per_hour=evidence_cfg.get("max_clips_per_hour", 60),
+                max_storage_mb=evidence_cfg.get("max_clip_storage_mb", 4096),
+                min_free_mb=evidence_cfg.get("min_free_storage_mb", 1024),
+            )
+            if evidence_cfg.get("clips_enabled", True)
+            else None
+        )
         self.fine_classifier = fine_classifier or FineClassifier(enabled=False)
         self._fine_check_times: dict[str, float] = {}
         self._best_frame_check_times: dict[str, float] = {}
         self._FACE_RECHECK_S = 0.8  # Check faces more frequently (was 2.0)
         self._FINE_RECHECK_S = 2.0
         self._persist_events = os.getenv("IBVAP_PERSIST_EVENTS", "true").strip().lower() not in {
-            "0", "false", "no", "off"
+            "0",
+            "false",
+            "no",
+            "off",
         }
 
         self._running = False
@@ -238,7 +250,11 @@ class CameraPipeline:
             try:
                 self._persist_transition(transition, frame=None)
             except Exception as exc:
-                logger.error("Incident close persistence failed event_id={} error={}", transition.event.event_id, type(exc).__name__)
+                logger.error(
+                    "Incident close persistence failed event_id={} error={}",
+                    transition.event.event_id,
+                    type(exc).__name__,
+                )
         self.video_source.release()
         self._persist_camera_runtime("offline", force=True)
         self._close_stream_session()
@@ -250,7 +266,6 @@ class CameraPipeline:
         """Signal this pipeline to stop without waiting for its worker thread."""
         self._running = False
         self._stop_event.set()
-
 
     def _process_loop(self):
         """Main processing loop."""
@@ -340,8 +355,13 @@ class CameraPipeline:
                             else:
                                 improved = False
                             vehicle = track.object_type in (
-                                "car", "truck", "bus", "motorcycle", "vehicle",
-                                "military_ground_vehicle", "night_vision_object",
+                                "car",
+                                "truck",
+                                "bus",
+                                "motorcycle",
+                                "vehicle",
+                                "military_ground_vehicle",
+                                "night_vision_object",
                             )
                             if improved and vehicle:
                                 track.color = get_dominant_color(track.best_frame)
@@ -514,7 +534,9 @@ class CameraPipeline:
         except Exception as exc:
             logger.warning(
                 "Could not persist {} result camera={} error={}",
-                kind, self.camera_info.camera_id, type(exc).__name__,
+                kind,
+                self.camera_info.camera_id,
+                type(exc).__name__,
             )
 
     def _recover_source(self) -> bool:
@@ -536,7 +558,11 @@ class CameraPipeline:
             try:
                 self._persist_transition(transition, frame=None)
             except Exception as exc:
-                logger.error("Incident close persistence failed event_id={} error={}", transition.event.event_id, type(exc).__name__)
+                logger.error(
+                    "Incident close persistence failed event_id={} error={}",
+                    transition.event.event_id,
+                    type(exc).__name__,
+                )
         self._close_stream_session()
         self.stream_session_id = str(uuid.uuid4())
         self.tracker.reset(self.stream_session_id)
@@ -551,14 +577,18 @@ class CameraPipeline:
             with get_database().get_session() as session:
                 Repository(session).start_camera_session(self.camera_info.camera_id, self.stream_session_id)
         except Exception as exc:
-            logger.warning("Could not persist camera session camera={} error={}", self.camera_info.camera_id, type(exc).__name__)
+            logger.warning(
+                "Could not persist camera session camera={} error={}", self.camera_info.camera_id, type(exc).__name__
+            )
 
     def _close_stream_session(self) -> None:
         try:
             with get_database().get_session() as session:
                 Repository(session).close_camera_session(self.stream_session_id)
         except Exception as exc:
-            logger.warning("Could not close camera session camera={} error={}", self.camera_info.camera_id, type(exc).__name__)
+            logger.warning(
+                "Could not close camera session camera={} error={}", self.camera_info.camera_id, type(exc).__name__
+            )
 
     def _persist_camera_runtime(self, status: str, force: bool = False) -> None:
         now = time.time()
@@ -571,7 +601,9 @@ class CameraPipeline:
                     self.camera_info.camera_id, status, self.video_source.last_frame_at
                 )
         except Exception as exc:
-            logger.warning("Could not persist camera runtime camera={} error={}", self.camera_info.camera_id, type(exc).__name__)
+            logger.warning(
+                "Could not persist camera runtime camera={} error={}", self.camera_info.camera_id, type(exc).__name__
+            )
 
     def _process_track(self, track, frame: np.ndarray, night_ctx: dict | None = None):
         """Process a single track through spatial/temporal/behavior/fusion/risk pipeline."""
@@ -636,8 +668,10 @@ class CameraPipeline:
             "is_night": night_ctx.get("is_night", False),
             "is_night_time": night_ctx.get("is_night_time", False),
             "is_loitering": len(loiter_events) > 0 or track.is_loitering,
-            "loiter_duration": max((self.loitering_detector.get_zone_duration(track.track_uuid, zid)
-                                     for zid in current_zone_ids), default=0),
+            "loiter_duration": max(
+                (self.loitering_detector.get_zone_duration(track.track_uuid, zid) for zid in current_zone_ids),
+                default=0,
+            ),
             "loiter_zone": loiter_events[0].zone_id if loiter_events else "",
             "zone_session_id": next(
                 (track.zone_session_ids[zid] for zid in current_zone_ids if zid in track.zone_session_ids),
@@ -665,21 +699,31 @@ class CameraPipeline:
             identity_context["color"] = track.color
         if track.object_type == "person":
             identity_context["identity"] = track.identity_label
-            identity_context["identity_status"] = track.identity_status if self.face_recognizer.active else "not_checked"
+            identity_context["identity_status"] = (
+                track.identity_status if self.face_recognizer.active else "not_checked"
+            )
             identity_context["identity_score"] = track.identity_score
         if track.watchlist and track.watchlist["kind"] == "face":
             identity_context["watchlist"] = track.watchlist
 
         vehicle_context = {}
         if track.object_type in (
-            "car", "truck", "bus", "motorcycle", "vehicle",
-            "military_ground_vehicle", "night_vision_object",
+            "car",
+            "truck",
+            "bus",
+            "motorcycle",
+            "vehicle",
+            "military_ground_vehicle",
+            "night_vision_object",
         ):
             vehicle_context["plate"] = track.license_plate
             vehicle_context["plate_confidence"] = track.plate_confidence
             vehicle_context["plate_status"] = (
-                "not_detected" if track.license_plate == "Unknown" else
-                "low_confidence" if track.plate_confidence < 0.6 else "read"
+                "not_detected"
+                if track.license_plate == "Unknown"
+                else "low_confidence"
+                if track.plate_confidence < 0.6
+                else "read"
             )
         if track.watchlist and track.watchlist["kind"] == "plate":
             vehicle_context["watchlist"] = track.watchlist
@@ -727,15 +771,17 @@ class CameraPipeline:
         now = time.time()
         # Every upsert serializes the track's whole trajectory (up to 500
         # points) to JSON; at 1s this was ~13% of GIL time on busy cameras.
-        due = [
-            track for track in tracks
-            if now - self._profile_persist_times.get(track.track_uuid, 0.0) >= 5.0
-        ]
+        due = [track for track in tracks if now - self._profile_persist_times.get(track.track_uuid, 0.0) >= 5.0]
         if not due:
             return
         vehicle_types = {
-            "car", "truck", "bus", "motorcycle", "vehicle",
-            "military_ground_vehicle", "night_vision_object",
+            "car",
+            "truck",
+            "bus",
+            "motorcycle",
+            "vehicle",
+            "military_ground_vehicle",
+            "night_vision_object",
         }
         try:
             with get_database().get_session() as session:
@@ -746,7 +792,9 @@ class CameraPipeline:
         except Exception as exc:
             logger.error(
                 "Track profile batch persistence failed camera={} tracks={} error={}",
-                self.camera_info.camera_id, len(due), type(exc).__name__,
+                self.camera_info.camera_id,
+                len(due),
+                type(exc).__name__,
             )
 
     def _persist_transition(self, transition: IncidentTransition, frame: np.ndarray | None) -> None:
@@ -765,7 +813,9 @@ class CameraPipeline:
             )
 
         if not self._persist_events:
-            alert = self.alert_engine.generate_alert(fused_event, frame=None, publish=False) if action == "opened" else None
+            alert = (
+                self.alert_engine.generate_alert(fused_event, frame=None, publish=False) if action == "opened" else None
+            )
             if action == "opened":
                 self.context_fusion.mark_recorded(fused_event)
                 self._stats["events_generated"] += 1
@@ -793,8 +843,10 @@ class CameraPipeline:
                         repo.create_alert(alert.to_dict(), commit=False)
                     if action == "opened" and fused_event.evidence_path:
                         repo.create_event_evidence(
-                            fused_event.event_id, "best_snapshot",
-                            snapshot_path=fused_event.evidence_path, commit=False,
+                            fused_event.event_id,
+                            "best_snapshot",
+                            snapshot_path=fused_event.evidence_path,
+                            commit=False,
                         )
                     session.commit()
                 except Exception:
@@ -820,9 +872,7 @@ class CameraPipeline:
 
     def _clip_completed(self, event_id: str, clip_path: str) -> None:
         with get_database().get_session() as session:
-            Repository(session).create_event_evidence(
-                event_id, "pre_post_clip", clip_path=clip_path
-            )
+            Repository(session).create_event_evidence(event_id, "pre_post_clip", clip_path=clip_path)
 
     def get_latest_frame(self) -> np.ndarray | None:
         """Get the latest raw frame."""
@@ -926,9 +976,7 @@ class IBVAPPipeline:
                 "object_detector", RuntimeError("model unavailable"), os.path.basename(detector_identifier)
             )
         else:
-            self.model_registry.ready(
-                "object_detector", self.detector._device, os.path.basename(detector_identifier)
-            )
+            self.model_registry.ready("object_detector", self.detector._device, os.path.basename(detector_identifier))
 
         # Batches per-camera frames into one GPU forward pass per tick
         # instead of each CameraPipeline calling detect() one frame at a
@@ -989,9 +1037,7 @@ class IBVAPPipeline:
         if not fc.get("enabled", False):
             self.model_registry.disabled("face_recognition", reason="disabled by configuration")
         elif self.face_recognizer.active:
-            self.model_registry.ready(
-                "face_recognition", self.face_recognizer._detector.device, "insightface"
-            )
+            self.model_registry.ready("face_recognition", self.face_recognizer._detector.device, "insightface")
         else:
             self.model_registry.failed(
                 "face_recognition", RuntimeError("dependency, weights, or gallery unavailable"), "insightface"
@@ -1014,13 +1060,15 @@ class IBVAPPipeline:
             )
         else:
             self.model_registry.failed(
-                "fine_classifier", RuntimeError("weights or architecture unavailable"),
+                "fine_classifier",
+                RuntimeError("weights or architecture unavailable"),
                 os.path.basename(cc.get("weights", "")),
             )
 
         self.model_registry.ready("tracker", "cpu", "ByteTrack")
         self.model_registry.ready("vehicle_attribute_service", "cpu", "deterministic-hsv-laplacian")
         import importlib.util
+
         if any(importlib.util.find_spec(name) is not None for name in ("easyocr", "paddleocr", "pytesseract")):
             self.model_registry.ready("ocr", "cpu", "local-adapter")
         else:
@@ -1044,7 +1092,8 @@ class IBVAPPipeline:
             # Loading PaddleOCR in the worker takes ~30 s; do it now, not on the first plate.
             threading.Thread(
                 target=lambda: logger.info("ANPR OCR worker ready: {}", plate_ocr.engine_name()),
-                name="ocr-warmup", daemon=True,
+                name="ocr-warmup",
+                daemon=True,
             ).start()
 
         watchlist = get_watchlist()
@@ -1083,10 +1132,15 @@ class IBVAPPipeline:
                 existing = repo.get_camera(cam_cfg["id"])
                 if existing is None:
                     repo.create_camera(
-                        camera_id=cam_cfg["id"], name=values["name"], stream_url=values["source"],
-                        camera_type=values["type"], location_label=values["location"],
-                        latitude=values["latitude"], longitude=values["longitude"],
-                        enabled=values["enabled"], fps_limit=values["fps_limit"],
+                        camera_id=cam_cfg["id"],
+                        name=values["name"],
+                        stream_url=values["source"],
+                        camera_type=values["type"],
+                        location_label=values["location"],
+                        latitude=values["latitude"],
+                        longitude=values["longitude"],
+                        enabled=values["enabled"],
+                        fps_limit=values["fps_limit"],
                         resolution=values["resolution"],
                     )
                     continue
@@ -1127,12 +1181,18 @@ class IBVAPPipeline:
                 if row.trigger_classes is None and default is not None and default.trigger_classes:
                     # Zones seeded before trigger_classes was persisted: backfill from YAML.
                     repo.update_zone(row.zone_id, {"trigger_classes": list(default.trigger_classes)})
-                self.zone_manager.add_zone(Zone(
-                    zone_id=row.zone_id, camera_id=row.camera_id, name=row.name,
-                    zone_type=row.zone_type, points=[tuple(p) for p in row.points],
-                    color=tuple(row.color), enabled=row.enabled,
-                    trigger_classes=list(row.trigger_classes or []),
-                ))
+                self.zone_manager.add_zone(
+                    Zone(
+                        zone_id=row.zone_id,
+                        camera_id=row.camera_id,
+                        name=row.name,
+                        zone_type=row.zone_type,
+                        points=[tuple(p) for p in row.points],
+                        color=tuple(row.color),
+                        enabled=row.enabled,
+                        trigger_classes=list(row.trigger_classes or []),
+                    )
+                )
 
     def stop_all(self):
         """Stop all camera pipelines."""

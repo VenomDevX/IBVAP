@@ -81,14 +81,21 @@ async def query_events(
     try:
         repo = Repository(session)
         filters = dict(
-            camera_id=camera_id, event_type=event_type, risk_level=risk_level,
-            start_time=start_time, end_time=end_time, search=search,
+            camera_id=camera_id,
+            event_type=event_type,
+            risk_level=risk_level,
+            start_time=start_time,
+            end_time=end_time,
+            search=search,
             allowed_cameras=scoped_cameras(user),
         )
         total = repo.get_event_count(**filters)
         rows = repo.get_events(
-            **filters, limit=page_size, offset=(page - 1) * page_size,
-            sort_by=sort_by, sort_order=sort_order,
+            **filters,
+            limit=page_size,
+            offset=(page - 1) * page_size,
+            sort_by=sort_by,
+            sort_order=sort_order,
         )
         return {"items": [_serialize_event(row) for row in rows], "page": page, "page_size": page_size, "total": total}
     finally:
@@ -123,7 +130,8 @@ async def get_event(event_id: str, user: dict = Depends(require_auth)):
         result = _serialize_event(event, include_context=True)
         result["evidence"] = [
             {
-                "evidence_id": row.id, "type": row.evidence_type,
+                "evidence_id": row.id,
+                "type": row.evidence_type,
                 "created_at": row.created_at.isoformat(),
                 "download_url": f"/api/v1/evidence/{event.event_id}/{row.id}",
             }

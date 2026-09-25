@@ -105,7 +105,13 @@ def resolve_profile(user_id: str) -> dict:
         client = _get_service_client()
         if client is None:
             raise RuntimeError("Profile service unavailable")
-        resp = client.table("user_profiles").select("role, allowed_areas, mfa_required").eq("id", user_id).limit(1).execute()
+        resp = (
+            client.table("user_profiles")
+            .select("role, allowed_areas, mfa_required")
+            .eq("id", user_id)
+            .limit(1)
+            .execute()
+        )
         row = (resp.data or [None])[0]
     except Exception as e:
         logger.error(f"Profile lookup failed: {type(e).__name__}")
@@ -223,9 +229,13 @@ def issue_media_ticket(user: dict, lifetime_seconds: int = 120) -> str:
     now = int(time.time())
     return jwt.encode(
         {
-            "sub": user["user_id"], "email": user.get("email", ""),
-            "app_role": user["app_role"], "allowed_areas": user["allowed_areas"],
-            "iat": now, "exp": now + lifetime_seconds, "type": "media",
+            "sub": user["user_id"],
+            "email": user.get("email", ""),
+            "app_role": user["app_role"],
+            "allowed_areas": user["allowed_areas"],
+            "iat": now,
+            "exp": now + lifetime_seconds,
+            "type": "media",
         },
         secret,
         algorithm="HS256",
@@ -246,9 +256,13 @@ def _verify_media_ticket(ticket: str) -> dict:
     if not isinstance(areas, list):
         raise _unauth("Invalid media scope")
     return {
-        "token": ticket, "user_id": payload["sub"], "exp": payload["exp"],
-        "email": payload.get("email", ""), "app_role": payload["app_role"],
-        "allowed_areas": areas, "role": payload["app_role"],
+        "token": ticket,
+        "user_id": payload["sub"],
+        "exp": payload["exp"],
+        "email": payload.get("email", ""),
+        "app_role": payload["app_role"],
+        "allowed_areas": areas,
+        "role": payload["app_role"],
     }
 
 

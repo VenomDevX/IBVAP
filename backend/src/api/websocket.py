@@ -44,8 +44,13 @@ async def authenticate_ws(websocket: WebSocket) -> dict | None:
         return None
 
     await websocket.accept(subprotocol=subprotocol)
-    return {**payload, "token": token, "user_id": payload["sub"],
-            "app_role": profile["role"], "allowed_areas": profile["allowed_areas"]}
+    return {
+        **payload,
+        "token": token,
+        "user_id": payload["sub"],
+        "app_role": profile["role"],
+        "allowed_areas": profile["allowed_areas"],
+    }
 
 
 class WebSocketManager:

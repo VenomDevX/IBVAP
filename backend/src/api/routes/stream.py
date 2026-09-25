@@ -19,9 +19,9 @@ router = APIRouter()
 
 # ~1 hour hard cap so a forgotten tab cannot pin a connection forever
 _MAX_FRAMES = 60 * 60 * 30
-_STREAM_FPS = 15.0                # Smoother motion (was 10)
-_STREAM_MAX_WIDTH = 1280           # Higher resolution (was 960)
-_STREAM_JPEG_QUALITY = 80          # Sharper image (was 65)
+_STREAM_FPS = 15.0  # Smoother motion (was 10)
+_STREAM_MAX_WIDTH = 1280  # Higher resolution (was 960)
+_STREAM_JPEG_QUALITY = 80  # Sharper image (was 65)
 _stream_cache: dict[str, dict] = {}
 _stream_cache_guard = threading.Lock()
 
@@ -45,9 +45,7 @@ def _encoded_frame(camera_id: str, cam_pipeline) -> bytes | None:
         if frame.shape[1] > _STREAM_MAX_WIDTH:
             height = max(1, round(frame.shape[0] * _STREAM_MAX_WIDTH / frame.shape[1]))
             frame = cv2.resize(frame, (_STREAM_MAX_WIDTH, height), interpolation=cv2.INTER_AREA)
-        ok, buffer = cv2.imencode(
-            ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, _STREAM_JPEG_QUALITY]
-        )
+        ok, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, _STREAM_JPEG_QUALITY])
         if not ok:
             return None
         cache["revision"] = revision

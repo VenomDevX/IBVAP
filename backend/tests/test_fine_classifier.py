@@ -83,12 +83,14 @@ def test_preprocess_matches_the_training_transform_exactly():
     from PIL import Image
     from torchvision import transforms
 
-    ref_tf = transforms.Compose([
-        transforms.Resize(int(224 * 1.14)),
-        transforms.CenterCrop(224),
-        transforms.ToTensor(),
-        transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
-    ])
+    ref_tf = transforms.Compose(
+        [
+            transforms.Resize(int(224 * 1.14)),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+        ]
+    )
     rng = np.random.default_rng(0)
     for h, w in ((300, 400), (90, 120), (224, 224)):
         rgb = rng.integers(0, 255, (h, w, 3), dtype=np.uint8)

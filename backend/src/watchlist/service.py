@@ -21,9 +21,19 @@ LIST_TYPES = ("wanted", "authorized", "vip")
 
 _NON_ALNUM = re.compile(r"[^A-Z0-9]")
 # Characters OCR routinely confuses on number plates, folded to one symbol.
-_CONFUSABLE = str.maketrans({
-    "O": "0", "Q": "0", "D": "0", "I": "1", "L": "1", "Z": "2", "S": "5", "B": "8", "G": "6",
-})
+_CONFUSABLE = str.maketrans(
+    {
+        "O": "0",
+        "Q": "0",
+        "D": "0",
+        "I": "1",
+        "L": "1",
+        "Z": "2",
+        "S": "5",
+        "B": "8",
+        "G": "6",
+    }
+)
 
 
 def normalize_plate(text: str | None) -> str:
@@ -71,12 +81,7 @@ class WatchlistService:
         self.skipped_entries = 0
 
     def load(self, session) -> None:
-        rows = (
-            session.query(WatchlistEntryModel)
-            .filter_by(active=True)
-            .order_by(WatchlistEntryModel.id)
-            .all()
-        )
+        rows = session.query(WatchlistEntryModel).filter_by(active=True).order_by(WatchlistEntryModel.id).all()
         exact, canonical, vectors, face_hits = {}, {}, [], []
         # canonical_owners[key] = the entry_ids folding onto it; a key claimed by
         # more than one entry is ambiguous and is dropped from `canonical`.
@@ -108,9 +113,7 @@ class WatchlistService:
         for key in ambiguous:
             canonical.pop(key, None)
         if ambiguous:
-            logger.warning(
-                "Watchlist: {} plate(s) fold onto another entry and will only match exactly", len(ambiguous)
-            )
+            logger.warning("Watchlist: {} plate(s) fold onto another entry and will only match exactly", len(ambiguous))
         if skipped:
             logger.warning("Watchlist: {} face entries could not be decrypted and are ignored", skipped)
 

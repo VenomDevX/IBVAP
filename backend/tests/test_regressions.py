@@ -48,19 +48,37 @@ def records(tmp_db):
         repo = Repository(session)
         for camera in ("a", "b"):
             repo.create_camera(camera, camera, "test")
-            repo.create_event({**event(camera, event_id=f"e-{camera}").to_dict(),
-                               "evidence_path": f"outputs/snapshots/{camera}.jpg"})
-            repo.create_alert({"alert_id": f"al-{camera}", "event_id": f"e-{camera}",
-                               "camera_id": camera, "timestamp": time.time(), "event_type": "intrusion"})
-            repo.create_zone({"zone_id": f"z-{camera}", "camera_id": camera, "name": "zone",
-                              "points": [[0, 0], [100, 0], [0, 100]]})
+            repo.create_event(
+                {**event(camera, event_id=f"e-{camera}").to_dict(), "evidence_path": f"outputs/snapshots/{camera}.jpg"}
+            )
+            repo.create_alert(
+                {
+                    "alert_id": f"al-{camera}",
+                    "event_id": f"e-{camera}",
+                    "camera_id": camera,
+                    "timestamp": time.time(),
+                    "event_type": "intrusion",
+                }
+            )
+            repo.create_zone(
+                {"zone_id": f"z-{camera}", "camera_id": camera, "name": "zone", "points": [[0, 0], [100, 0], [0, 100]]}
+            )
 
 
-@pytest.mark.parametrize("path", [
-    "/api/events/e-b", "/api/alerts/al-b", "/api/cameras/b", "/api/cameras/b/status",
-    "/api/cameras/b/heatmap", "/api/stream/b", "/api/stream/b/snapshot", "/api/zones/b",
-    "/api/tracks/1?camera_id=b",
-])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/events/e-b",
+        "/api/alerts/al-b",
+        "/api/cameras/b",
+        "/api/cameras/b/status",
+        "/api/cameras/b/heatmap",
+        "/api/stream/b",
+        "/api/stream/b/snapshot",
+        "/api/zones/b",
+        "/api/tracks/1?camera_id=b",
+    ],
+)
 def test_restricted_camera_endpoints(client, records, scoped_user, path):
     assert client.get(path, headers=scoped_user).status_code == 403
 
@@ -162,11 +180,14 @@ def test_websocket_filters_and_rechecks_scope(monkeypatch):
 
 
 def test_fusion_ids_and_escalation(monkeypatch):
-    behavior = BehaviorEvent("b", 1, "a", BehaviorType.RESTRICTED_ZONE_ENTRY, time.time(),
-                             contributing_factors=["restricted"])
+    behavior = BehaviorEvent(
+        "b", 1, "a", BehaviorType.RESTRICTED_ZONE_ENTRY, time.time(), contributing_factors=["restricted"]
+    )
     engines = [ContextFusion(), ContextFusion()]
-    generated = [engine.fuse_events(1, cam, "person", [behavior], {"in_restricted": True}, {})
-                 for engine, cam in zip(engines, ("a", "b"))]
+    generated = [
+        engine.fuse_events(1, cam, "person", [behavior], {"in_restricted": True}, {})
+        for engine, cam in zip(engines, ("a", "b"))
+    ]
     assert generated[0].event_id != generated[1].event_id
     engine, first = engines[0], generated[0]
     first.risk_level = "medium"
@@ -244,17 +265,22 @@ def test_sqlite_foreign_keys_and_migrations_are_enabled(tmp_db):
 
     with tmp_db.engine.connect() as connection:
         assert connection.execute(text("PRAGMA foreign_keys")).scalar() == 1
-        versions = {
-            row[0] for row in connection.execute(text("SELECT version FROM schema_migrations"))
-        }
+        versions = {row[0] for row in connection.execute(text("SELECT version FROM schema_migrations"))}
     assert versions >= {1, 2}
 
 
 def camera_pipeline(tmp_path, **kwargs):
     zones = ZoneManager()
     zones.add_zone(Zone("z", "restricted", "restricted", "a", [(0, 0), (100, 0), (100, 100), (0, 100)]))
-    return CameraPipeline(CameraInfo("a", "A", "rtsp://camera", fps_limit=15), Mock(), zones,
-                          FenceDetector(), {}, AlertEngine(snapshots_dir=str(tmp_path)), **kwargs)
+    return CameraPipeline(
+        CameraInfo("a", "A", "rtsp://camera", fps_limit=15),
+        Mock(),
+        zones,
+        FenceDetector(),
+        {},
+        AlertEngine(snapshots_dir=str(tmp_path)),
+        **kwargs,
+    )
 
 
 @pytest.mark.parametrize("suppression", ["threshold", "cooldown", "rate"])
@@ -334,8 +360,11 @@ def test_publish_after_commit_and_rollback_on_failure(tmp_db, tmp_path, monkeypa
 def test_zones_restore_and_deleted_defaults_stay_deleted(tmp_db):
     from src.database.repository import Repository
 
-    config = {"zones": {"a": [{"id": "default", "name": "Default", "type": "restricted",
-                                "points": [[0, 0], [100, 0], [0, 100]]}]}}
+    config = {
+        "zones": {
+            "a": [{"id": "default", "name": "Default", "type": "restricted", "points": [[0, 0], [100, 0], [0, 100]]}]
+        }
+    }
     pipeline = IBVAPPipeline()
     with tmp_db.get_session() as session:
         Repository(session).create_camera("a", "A", "test")
@@ -343,8 +372,9 @@ def test_zones_restore_and_deleted_defaults_stay_deleted(tmp_db):
     with tmp_db.get_session() as session:
         repo = Repository(session)
         repo.delete_zone("default")
-        repo.create_zone({"zone_id": "saved", "camera_id": "a", "name": "Saved",
-                          "points": [[0, 0], [100, 0], [0, 100]]})
+        repo.create_zone(
+            {"zone_id": "saved", "camera_id": "a", "name": "Saved", "points": [[0, 0], [100, 0], [0, 100]]}
+        )
     restarted = IBVAPPipeline()
     restarted._restore_zones(config)
     assert restarted.zone_manager.get_zone("default") is None
@@ -366,11 +396,18 @@ def test_recovery_retries_initial_failure_and_stops(tmp_path):
 
 
 def test_config_and_scoring_contracts(tmp_path):
-    pipeline = camera_pipeline(tmp_path, thresholds={
-        "tracking": {"max_age": 90, "min_hits": 4, "iou_threshold": 0.7},
-        "behavior": {"loitering_threshold_seconds": 12, "night_start": "21:00",
-                     "direction_min_points": 8, "low_light_brightness_threshold": 30},
-    })
+    pipeline = camera_pipeline(
+        tmp_path,
+        thresholds={
+            "tracking": {"max_age": 90, "min_hits": 4, "iou_threshold": 0.7},
+            "behavior": {
+                "loitering_threshold_seconds": 12,
+                "night_start": "21:00",
+                "direction_min_points": 8,
+                "low_light_brightness_threshold": 30,
+            },
+        },
+    )
     assert pipeline.tracker.max_age == 90
     assert pipeline.tracker.min_hits == 4
     assert pipeline.loitering_detector.threshold_seconds == 12

@@ -14,6 +14,7 @@ def test_evidence_buffer_downscales_before_encoding(tmp_path):
     decoded = cv2.imdecode(np.frombuffer(encoded, np.uint8), cv2.IMREAD_COLOR)
     assert decoded.shape[:2] == (180, 320)
 
+
 # --------------------------------------------------------------------------- #
 # ANPR
 # --------------------------------------------------------------------------- #
@@ -171,13 +172,18 @@ def test_face_gallery_loads_documented_and_legacy_formats(tmp_path):
     from src.face.face_matcher import FaceMatcher
 
     documented = tmp_path / "gallery.json"
-    documented.write_text(json.dumps({
-        "_info": "comment",
-        "identities": [
-            {"name": "guard_1", "embedding": [1.0, 0.0]},
-            {"name": "guard_2", "embeddings": [[0.0, 1.0], [0.1, 0.9]]},
-        ],
-    }), encoding="utf-8")
+    documented.write_text(
+        json.dumps(
+            {
+                "_info": "comment",
+                "identities": [
+                    {"name": "guard_1", "embedding": [1.0, 0.0]},
+                    {"name": "guard_2", "embeddings": [[0.0, 1.0], [0.1, 0.9]]},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     matcher = FaceMatcher(gallery_path=str(documented))
     assert {k: len(v) for k, v in matcher._gallery.items()} == {"guard_1": 1, "guard_2": 2}
 

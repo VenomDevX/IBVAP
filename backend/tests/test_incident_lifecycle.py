@@ -1,6 +1,5 @@
 """Acceptance tests for track-aware incident semantics."""
 
-
 from src.alerts.alert_engine import AlertEngine
 from src.behavior.behavior_engine import BehaviorEngine
 from src.features.anpr import PlateConsensus
@@ -11,10 +10,16 @@ from src.tracking.track import Track
 
 def candidate(track, event_type="restricted_zone_entry", zone="z", level="high"):
     return FusedEvent(
-        event_id="transient", camera_id=track.camera_id, track_id=track.track_id,
-        track_uuid=track.track_uuid, timestamp=track.last_seen,
-        object_type=track.object_type, event_type=event_type,
-        risk_score=70, risk_level=level, zone_id=zone,
+        event_id="transient",
+        camera_id=track.camera_id,
+        track_id=track.track_id,
+        track_uuid=track.track_uuid,
+        timestamp=track.last_seen,
+        object_type=track.object_type,
+        event_type=event_type,
+        risk_score=70,
+        risk_level=level,
+        zone_id=zone,
         spatial_context={"in_restricted": True, "zones": [zone]},
         temporal_context={"zone_session_id": track.zone_session_ids.get(zone, "visit-1")},
     )
@@ -57,6 +62,7 @@ def test_ten_observations_make_one_vehicle_profile(repo):
         track.last_seen = track.first_seen + offset
         repo.upsert_vehicle_profile(track)
     from src.database.models import VehicleProfileModel
+
     assert repo.session.query(VehicleProfileModel).count() == 1
 
 
@@ -74,8 +80,11 @@ def test_night_movement_is_context_only_by_default():
     track = Track(1, "car", "cam")
     track.trajectory = [(0, 0, 1), (20, 0, 2)]
     events = BehaviorEngine().analyze_track(
-        track, {"in_restricted": False}, {"is_night": True},
-        {"toward_restricted": False}, {"crossed": False, "approaching": False},
+        track,
+        {"in_restricted": False},
+        {"is_night": True},
+        {"toward_restricted": False},
+        {"crossed": False, "approaching": False},
     )
     assert events == []
 
@@ -98,11 +107,16 @@ def test_resolved_or_closed_incident_leaves_active_count(repo):
     incident.opened_at = incident.timestamp
     incident.last_updated = incident.timestamp
     repo.create_event(incident.to_dict())
-    repo.create_alert({
-        "alert_id": "alert-active", "event_id": incident.event_id,
-        "camera_id": "cam", "timestamp": incident.timestamp,
-        "event_type": incident.event_type, "risk_level": "high",
-    })
+    repo.create_alert(
+        {
+            "alert_id": "alert-active",
+            "event_id": incident.event_id,
+            "camera_id": "cam",
+            "timestamp": incident.timestamp,
+            "event_type": incident.event_type,
+            "risk_level": "high",
+        }
+    )
     assert repo.get_dashboard_stats()["unreviewed_alerts"] == 1
     repo.update_alert_workflow("alert-active", "operator", status="acknowledged")
     assert repo.get_dashboard_stats()["unreviewed_alerts"] == 1
@@ -117,11 +131,15 @@ def test_false_positive_feedback_is_structured(repo):
     incident.event_id = "event-feedback"
     incident.state = "OPEN"
     repo.create_event(incident.to_dict())
-    alert = repo.create_alert({
-        "alert_id": "alert-feedback", "event_id": incident.event_id,
-        "camera_id": "cam", "timestamp": incident.timestamp,
-        "event_type": incident.event_type,
-    })
+    alert = repo.create_alert(
+        {
+            "alert_id": "alert-feedback",
+            "event_id": incident.event_id,
+            "camera_id": "cam",
+            "timestamp": incident.timestamp,
+            "event_type": incident.event_type,
+        }
+    )
     repo.update_alert_workflow(alert.alert_id, "operator", status="false_positive")
     feedback = repo.create_operator_feedback(alert, "operator", "Duplicate alert")
     repo.session.commit()

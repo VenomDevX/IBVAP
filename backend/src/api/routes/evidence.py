@@ -15,7 +15,9 @@ router = APIRouter()
 
 def _serialize(row) -> dict:
     return {
-        "evidence_id": row.id, "event_id": row.event_id, "type": row.evidence_type,
+        "evidence_id": row.id,
+        "event_id": row.event_id,
+        "type": row.evidence_type,
         "created_at": row.created_at.isoformat(),
         "download_url": f"/api/v1/evidence/{row.event_id}/{row.id}",
     }

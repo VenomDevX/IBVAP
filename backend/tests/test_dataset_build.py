@@ -234,8 +234,14 @@ def test_walk_images_finds_nested_files(tmp_path):
 
 def _rec(path, md5="m", dh=0, w=100, h=100, source="crops"):
     return ImageRecord(
-        path=path, source=source, rel=path, width=w, height=h,
-        size=w * h, md5=md5, dhash=dh,
+        path=path,
+        source=source,
+        rel=path,
+        width=w,
+        height=h,
+        size=w * h,
+        md5=md5,
+        dhash=dh,
     )
 
 
@@ -252,10 +258,12 @@ def test_dedup_removes_exact_duplicates():
 
 
 def test_dedup_keeps_highest_resolution_representative():
-    kept, _ = dedup([
-        _rec("small.jpg", "m1", 1, w=50, h=50),
-        _rec("big.jpg", "m2", 1, w=500, h=500),
-    ])
+    kept, _ = dedup(
+        [
+            _rec("small.jpg", "m1", 1, w=50, h=50),
+            _rec("big.jpg", "m2", 1, w=500, h=500),
+        ]
+    )
     assert [r.path for r in kept] == ["big.jpg"]
 
 
@@ -312,8 +320,7 @@ def test_dedup_removed_entries_point_at_a_survivor():
 
 
 def _d(path, w=640, h=640):
-    return ImageRecord(path=path, source="detector", rel=path, width=w, height=h,
-                       size=w * h, md5=path, dhash=0)
+    return ImageRecord(path=path, source="detector", rel=path, width=w, height=h, size=w * h, md5=path, dhash=0)
 
 
 def test_rare_class_ids_match_the_scarce_classes():
@@ -335,8 +342,7 @@ def test_person_only_images_are_subsampled_but_rare_survives():
     person = [_d(f"p{i}.jpg") for i in range(1000)]
     labels = {"rare.jpg": [7]}
     labels.update({r.path: [0] for r in person})
-    sel, _ = select_detector_images(rare + person, labels, target=101,
-                                    background_frac=0.0)
+    sel, _ = select_detector_images(rare + person, labels, target=101, background_frac=0.0)
     assert len(sel) == 101
     assert "rare.jpg" in {r.path for r in sel}
 
@@ -345,8 +351,7 @@ def test_common_selection_prefers_images_with_more_boxes():
     many = _d("many.jpg")
     few = _d("few.jpg")
     labels = {"many.jpg": [0, 0, 0, 1], "few.jpg": [0]}
-    sel, _ = select_detector_images([few, many], labels, target=1,
-                                    background_frac=0.0)
+    sel, _ = select_detector_images([few, many], labels, target=1, background_frac=0.0)
     assert [r.path for r in sel] == ["many.jpg"]
 
 
@@ -355,8 +360,7 @@ def test_backgrounds_capped_at_fraction_of_final_set():
     empty = [_d(f"e{i}.jpg") for i in range(500)]
     labels = {r.path: [0] for r in common}
     labels.update({r.path: [] for r in empty})
-    sel, stats = select_detector_images(common + empty, labels, target=95,
-                                        background_frac=0.05)
+    sel, stats = select_detector_images(common + empty, labels, target=95, background_frac=0.05)
     n_empty = sum(1 for r in sel if not labels[r.path])
     assert n_empty > 0, "some background is wanted, just not 14.7%"
     assert stats["background_pct"] <= 5.5
@@ -365,11 +369,9 @@ def test_backgrounds_capped_at_fraction_of_final_set():
 
 def test_unlabelled_images_are_dropped_not_treated_as_background():
     good = _d("good.jpg")
-    lost = _d("lost.jpg")   # no label FILE — annotation lost, not a background
+    lost = _d("lost.jpg")  # no label FILE — annotation lost, not a background
     labels = {"good.jpg": [0], "lost.jpg": []}
-    sel, stats = select_detector_images([good, lost], labels, target=10,
-                                        background_frac=0.5,
-                                        labelled={"good.jpg"})
+    sel, stats = select_detector_images([good, lost], labels, target=10, background_frac=0.5, labelled={"good.jpg"})
     assert [r.path for r in sel] == ["good.jpg"]
     assert stats["n_dropped_unlabelled"] == 1
 
@@ -396,8 +398,7 @@ def test_stats_reports_per_class_box_counts():
 
 def _c(rel, i, w=100):
     p = f"{rel}/{i}.jpg"
-    return ImageRecord(path=p, source="crops", rel=p, width=w, height=w,
-                       size=w * w, md5=p, dhash=i)
+    return ImageRecord(path=p, source="crops", rel=p, width=w, height=w, size=w * w, md5=p, dhash=i)
 
 
 def test_aggregate_map_drops_only_the_ambiguous_one():
@@ -501,8 +502,8 @@ def test_cap_limits_class_size_preferring_large_images():
     plan = build_class_plan(recs, threshold=10, cap=100)
     assigned = [k for k, v in plan.assignments.items() if v == "Person"]
     assert len(assigned) == 100
-    assert "People/Person/299.jpg" in assigned      # largest kept
-    assert "People/Person/0.jpg" not in assigned    # smallest dropped
+    assert "People/Person/299.jpg" in assigned  # largest kept
+    assert "People/Person/0.jpg" not in assigned  # smallest dropped
     assert plan.counts["Person"] == 100
 
 
@@ -528,8 +529,7 @@ def test_plan_is_deterministic_regardless_of_order():
 
 
 def _s(name):
-    return ImageRecord(path=f"/d/{name}", source="detector", rel=name, width=64,
-                       height=64, size=100, md5=name, dhash=0)
+    return ImageRecord(path=f"/d/{name}", source="detector", rel=name, width=64, height=64, size=100, md5=name, dhash=0)
 
 
 def test_split_is_roughly_val_fraction():
@@ -586,8 +586,9 @@ def _make_det(tmp_path, name, classes):
     lbl = tmp_path / "src" / "labels" / "train" / Path(name).with_suffix(".txt").name
     lbl.parent.mkdir(parents=True, exist_ok=True)
     lbl.write_text("".join(f"{c} 0.5 0.5 0.1 0.1\n" for c in classes))
-    return ImageRecord(path=str(img), source="detector", rel=f"images/train/{name}",
-                       width=32, height=32, size=100, md5=name, dhash=0)
+    return ImageRecord(
+        path=str(img), source="detector", rel=f"images/train/{name}", width=32, height=32, size=100, md5=name, dhash=0
+    )
 
 
 def test_emit_detector_copies_images_and_labels(tmp_path):
@@ -655,7 +656,8 @@ def test_build_dataset_cli_help_runs():
 
     r = subprocess.run(
         [sys.executable, "scripts/build_dataset.py", "--help"],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
         cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     )
     assert r.returncode == 0, r.stderr
@@ -674,9 +676,16 @@ def _agg(rel, md5, dh=None):
     dhash defaults to a value derived from md5 so identical bytes hash alike and
     unrelated fixtures do not collide in the near pass.
     """
-    return ImageRecord(path=rel, source="crops", rel=rel, width=100, height=100,
-                       size=1000, md5=md5,
-                       dhash=dh if dh is not None else (hash(md5) & 0xFFFFFFFFFFFFFFFF))
+    return ImageRecord(
+        path=rel,
+        source="crops",
+        rel=rel,
+        width=100,
+        height=100,
+        size=1000,
+        md5=md5,
+        dhash=dh if dh is not None else (hash(md5) & 0xFFFFFFFFFFFFFFFF),
+    )
 
 
 def test_specificity_ranks_specific_class_over_aggregate():
@@ -694,11 +703,11 @@ def test_dedup_keeps_the_specifically_labelled_copy_not_the_aggregate():
     (T < V, 'Animal/' < 'Animals') and zeroed 8 real classes."""
     recs = [
         _agg("Two_Wheeler/a.jpg", "m1"),
-        _agg("Vehicles/Bicycle/a.jpg", "m1"),      # same bytes
+        _agg("Vehicles/Bicycle/a.jpg", "m1"),  # same bytes
         _agg("Animal/b.jpg", "m2"),
-        _agg("Animals/Dog/b.jpg", "m2"),           # same bytes
+        _agg("Animals/Dog/b.jpg", "m2"),  # same bytes
         _agg("Military_Aircraft/c.jpg", "m3"),
-        _agg("Military/F16/c.jpg", "m3"),          # same bytes
+        _agg("Military/F16/c.jpg", "m3"),  # same bytes
     ]
     kept, _ = dedup(recs, priority=specificity)
     surviving = {r.rel for r in kept}
@@ -723,10 +732,12 @@ def test_dedup_specificity_survives_a_full_class_plan():
 
 
 def test_rare_first_priority_keeps_the_rare_detector_image():
-    a = ImageRecord(path="person.jpg", source="detector", rel="person.jpg",
-                    width=640, height=640, size=100, md5="same", dhash=0)
-    b = ImageRecord(path="tank.jpg", source="detector", rel="tank.jpg",
-                    width=640, height=640, size=100, md5="same", dhash=0)
+    a = ImageRecord(
+        path="person.jpg", source="detector", rel="person.jpg", width=640, height=640, size=100, md5="same", dhash=0
+    )
+    b = ImageRecord(
+        path="tank.jpg", source="detector", rel="tank.jpg", width=640, height=640, size=100, md5="same", dhash=0
+    )
     labels = {"person.jpg": [0], "tank.jpg": [7]}  # 7 = military_ground_vehicle
     kept, _ = dedup([a, b], priority=rare_first_priority(labels))
     assert [r.path for r in kept] == ["tank.jpg"]
@@ -776,7 +787,8 @@ def test_train_classifier_help_runs():
 
     r = subprocess.run(
         [sys.executable, "scripts/train_classifier.py", "--help"],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
         cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     )
     assert r.returncode == 0, r.stderr
@@ -851,7 +863,7 @@ def test_prune_removes_stale_output_from_an_earlier_build(tmp_path):
     out = tmp_path / "dataset"
     keep = _make_det(tmp_path, "keep.jpg", [0])
     stale = _make_det(tmp_path, "stale.jpg", [0])
-    emit_detector([keep, stale], [], out)          # simulate the earlier build
+    emit_detector([keep, stale], [], out)  # simulate the earlier build
     assert (out / "detector" / "images" / "train" / "stale.jpg").exists()
 
     expected = {
@@ -879,8 +891,7 @@ def test_prune_removes_class_folders_no_longer_in_the_plan(tmp_path):
 def test_verify_flags_a_file_count_mismatch(tmp_path):
     """Per-file checks pass on stale output; only the count betrays it."""
     out = tmp_path / "dataset"
-    emit_detector([_make_det(tmp_path, "a.jpg", [0]), _make_det(tmp_path, "b.jpg", [0])],
-                  [], out)
+    emit_detector([_make_det(tmp_path, "a.jpg", [0]), _make_det(tmp_path, "b.jpg", [0])], [], out)
     problems = verify(out, expected_counts={"detector/images/train": 1})
     assert any("expected 1" in p and "found 2" in p for p in problems)
     assert verify(out) == [], "without counts the stale file is invisible"

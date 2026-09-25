@@ -181,9 +181,7 @@ class _QuietAfterActivationByteTrack:
             self._reported_once.add(tid)
             ids.append(tid)
         if not ids:
-            return sv.Detections(
-                xyxy=np.zeros((0, 4)), confidence=np.zeros(0), class_id=np.zeros(0, dtype=int)
-            )
+            return sv.Detections(xyxy=np.zeros((0, 4)), confidence=np.zeros(0), class_id=np.zeros(0, dtype=int))
         # only ever "confirms" tracker_id=1 in this fixture (single object)
         return sv.Detections(
             xyxy=sv_detections.xyxy[:1],
@@ -225,9 +223,7 @@ class _NeverConfirmsByteTrack:
     def update_with_detections(self, sv_detections):
         import supervision as sv
 
-        return sv.Detections(
-            xyxy=np.zeros((0, 4)), confidence=np.zeros(0), class_id=np.zeros(0, dtype=int)
-        )
+        return sv.Detections(xyxy=np.zeros((0, 4)), confidence=np.zeros(0), class_id=np.zeros(0, dtype=int))
 
 
 def test_fallback_never_creates_a_track_bytetrack_did_not_confirm():

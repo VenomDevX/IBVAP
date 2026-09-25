@@ -40,8 +40,12 @@ def plate_images(split_file: str) -> list[str]:
     with open(split_file, encoding="utf-8") as fh:
         for line in fh:
             image = line.strip()
-            label = os.path.splitext(image.replace(f"{os.sep}images{os.sep}", f"{os.sep}labels{os.sep}")
-                                     .replace("/images/", "/labels/"))[0] + ".txt"
+            label = (
+                os.path.splitext(
+                    image.replace(f"{os.sep}images{os.sep}", f"{os.sep}labels{os.sep}").replace("/images/", "/labels/")
+                )[0]
+                + ".txt"
+            )
             try:
                 with open(label, encoding="utf-8") as lf:
                     if any(row.split()[:1] == [str(PLATE_CLASS_ID)] for row in lf):
@@ -85,18 +89,26 @@ def _render(rows: list[str], rng: random.Random):
     plate = np.full((height, width, 3), background, np.uint8)
     cv2.rectangle(plate, (3, 3), (width - 4, height - 4), (0, 0, 0), 3)
     for i, (row, (w, h)) in enumerate(zip(rows, sizes)):
-        cv2.putText(plate, row, ((width - w) // 2, 8 + row_h * i + h + 8), font, scale, (0, 0, 0), thickness,
-                    cv2.LINE_AA)
+        cv2.putText(
+            plate, row, ((width - w) // 2, 8 + row_h * i + h + 8), font, scale, (0, 0, 0), thickness, cv2.LINE_AA
+        )
     # Perspective + scale down to CCTV size + blur + noise, on a dark bumper.
     canvas = np.full((height + 40, width + 40, 3), rng.randint(20, 90), np.uint8)
-    canvas[20:20 + height, 20:20 + width] = plate
+    canvas[20 : 20 + height, 20 : 20 + width] = plate
     h2, w2 = canvas.shape[:2]
     jitter = lambda: rng.uniform(-0.06, 0.06)  # noqa: E731
     src = np.float32([[0, 0], [w2, 0], [w2, h2], [0, h2]])
-    dst = np.float32([[w2 * jitter(), h2 * jitter()], [w2 * (1 + jitter()), h2 * jitter()],
-                      [w2 * (1 + jitter()), h2 * (1 + jitter())], [w2 * jitter(), h2 * (1 + jitter())]])
-    canvas = cv2.warpPerspective(canvas, cv2.getPerspectiveTransform(src, dst), (w2, h2),
-                                 borderMode=cv2.BORDER_REPLICATE)
+    dst = np.float32(
+        [
+            [w2 * jitter(), h2 * jitter()],
+            [w2 * (1 + jitter()), h2 * jitter()],
+            [w2 * (1 + jitter()), h2 * (1 + jitter())],
+            [w2 * jitter(), h2 * (1 + jitter())],
+        ]
+    )
+    canvas = cv2.warpPerspective(
+        canvas, cv2.getPerspectiveTransform(src, dst), (w2, h2), borderMode=cv2.BORDER_REPLICATE
+    )
     # Real CCTV plates are often 60-120 px wide, smeared and heavily compressed.
     target_w = rng.randint(60, 180)
     canvas = cv2.resize(canvas, (target_w, max(1, int(h2 * target_w / w2))), interpolation=cv2.INTER_AREA)
@@ -193,8 +205,16 @@ def main():
         if args.save_crops and len(samples) < 60:
             name = f"{index:04d}_{reading.text if reading.valid else 'X_' + (text or 'none')}.jpg"
             cv2.imwrite(os.path.join(args.save_crops, name), crop)
-        samples.append({"image": os.path.basename(path), "raw": text, "conf": conf,
-                        "plate": reading.text, "format": reading.kind, "fixes": reading.corrections})
+        samples.append(
+            {
+                "image": os.path.basename(path),
+                "raw": text,
+                "conf": conf,
+                "plate": reading.text,
+                "format": reading.kind,
+                "fixes": reading.corrections,
+            }
+        )
 
     n = len(images)
     summary = {

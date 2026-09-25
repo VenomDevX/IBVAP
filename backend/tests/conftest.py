@@ -13,7 +13,9 @@ os.environ.setdefault("EVIDENCE_HMAC_KEY", "test-hmac-key")
 # TestClient's WebSocket host handling trips TrustedHostMiddleware otherwise.
 os.environ.setdefault("TRUSTED_HOSTS", "*")
 # Keep third-party runtime state inside the workspace in restricted CI/sandboxes.
-os.environ.setdefault("YOLO_CONFIG_DIR", os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".pytest_cache", "ultralytics")))
+os.environ.setdefault(
+    "YOLO_CONFIG_DIR", os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".pytest_cache", "ultralytics"))
+)
 os.environ.pop("SUPABASE_JWT_SECRET", None)
 os.environ.pop("SUPABASE_SERVICE_KEY", None)
 

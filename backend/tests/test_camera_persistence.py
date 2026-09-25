@@ -6,10 +6,12 @@ from src.database.repository import Repository
 from src.pipeline.pipeline import IBVAPPipeline
 from tests.conftest import make_token
 
-YAML = {"cameras": [
-    {"id": "cam_a", "name": "A", "source": "./data/demo/a.mp4", "fps": 10, "enabled": True},
-    {"id": "cam_b", "name": "B", "source": "./data/demo/b.mp4", "fps": 10, "enabled": False},
-]}
+YAML = {
+    "cameras": [
+        {"id": "cam_a", "name": "A", "source": "./data/demo/a.mp4", "fps": 10, "enabled": True},
+        {"id": "cam_b", "name": "B", "source": "./data/demo/b.mp4", "fps": 10, "enabled": False},
+    ]
+}
 
 
 def _startup(tmp_db):
@@ -101,11 +103,17 @@ def test_edit_is_audited_with_old_and_new_values_and_no_secrets(client, monkeypa
     with tmp_db.get_session() as session:
         Repository(session).create_camera("cam_y", "Y", "rtsp://user:secret@10.0.0.9/live", fps_limit=15)
     headers = {"Authorization": make_token("admin", monkeypatch)}
-    response = client.patch("/api/cameras/cam_y", headers=headers, json={
-        "name": "Gate Y", "fps_limit": 8, "source": "rtsp://user:newsecret@10.0.0.10/live",
-    })
+    response = client.patch(
+        "/api/cameras/cam_y",
+        headers=headers,
+        json={
+            "name": "Gate Y",
+            "fps_limit": 8,
+            "source": "rtsp://user:newsecret@10.0.0.10/live",
+        },
+    )
     assert response.status_code == 200
-    (_, details), = _audit(tmp_db, "update_camera")
+    ((_, details),) = _audit(tmp_db, "update_camera")
     changes = details["changes"]
     assert changes["name"] == {"from": "Y", "to": "Gate Y"}
     assert changes["fps_limit"] == {"from": 15, "to": 8}

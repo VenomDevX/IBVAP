@@ -19,9 +19,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--seconds", type=float, default=15.0)
     parser.add_argument("--require-face", action="store_true")
-    parser.add_argument(
-        "--output", default=str(BACKEND / "outputs" / "metrics" / "runtime_smoke.json")
-    )
+    parser.add_argument("--output", default=str(BACKEND / "outputs" / "metrics" / "runtime_smoke.json"))
     args = parser.parse_args()
 
     with tempfile.TemporaryDirectory(prefix="ibvap-smoke-") as temporary:
@@ -42,10 +40,7 @@ def main() -> int:
         if args.require_face and (
             not face.active
             or face._detector.device != "cuda:0"
-            or any(
-                "CUDAExecutionProvider" not in providers
-                for providers in face._detector.providers.values()
-            )
+            or any("CUDAExecutionProvider" not in providers for providers in face._detector.providers.values())
         ):
             raise SystemExit("smoke failed: face detection/embedding is not using CUDA")
 
@@ -58,10 +53,7 @@ def main() -> int:
             pipeline.stop_all()
 
         stats = pipeline.get_all_stats()
-        healthy = {
-            camera_id: row for camera_id, row in stats.items()
-            if row.get("frames_processed", 0) > 0
-        }
+        healthy = {camera_id: row for camera_id, row in stats.items() if row.get("frames_processed", 0) > 0}
         report = {
             "generated_at": time.time(),
             "device": pipeline.detector._device,
@@ -72,9 +64,9 @@ def main() -> int:
             "configured_cameras": len(stats),
             "cameras_processing": len(healthy),
             "total_frames_processed": sum(row.get("frames_processed", 0) for row in stats.values()),
-            "mean_pipeline_fps": round(
-                statistics.fmean(row.get("fps", 0.0) for row in healthy.values()), 2
-            ) if healthy else 0.0,
+            "mean_pipeline_fps": round(statistics.fmean(row.get("fps", 0.0) for row in healthy.values()), 2)
+            if healthy
+            else 0.0,
             "detector_mean_ms": round(pipeline.detector.get_average_inference_time(), 2),
             "detector_queue_ms": round(pipeline.detector.get_average_queue_wait_time(), 2),
             "detector_service_ms": round(pipeline.detector.get_average_service_time(), 2),

@@ -11,9 +11,17 @@ which OCR reads far better than a plate guessed inside a small vehicle crop.
 from src.detection.detection_result import DetectionResult, FrameDetections
 
 PLATE_CLASS = "license_plate"
-VEHICLE_TYPES = frozenset({
-    "car", "truck", "bus", "motorcycle", "vehicle", "military_ground_vehicle", "night_vision_object",
-})
+VEHICLE_TYPES = frozenset(
+    {
+        "car",
+        "truck",
+        "bus",
+        "motorcycle",
+        "vehicle",
+        "military_ground_vehicle",
+        "night_vision_object",
+    }
+)
 _PAD_X, _PAD_Y = 0.12, 0.25
 
 

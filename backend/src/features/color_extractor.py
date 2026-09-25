@@ -11,7 +11,7 @@ def get_dominant_color(crop: np.ndarray) -> str:
     if crop is None or crop.size == 0 or crop.shape[0] < 20 or crop.shape[1] < 20:
         return "Unknown"
     height, width = crop.shape[:2]
-    roi = crop[int(height * 0.15):int(height * 0.88), int(width * 0.1):int(width * 0.9)]
+    roi = crop[int(height * 0.15) : int(height * 0.88), int(width * 0.1) : int(width * 0.9)]
     hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
     hue, saturation, value = cv2.split(hsv)
     masks = {

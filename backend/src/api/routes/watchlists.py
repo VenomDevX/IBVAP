@@ -72,14 +72,25 @@ async def add_plate(entry: PlateEntry, user: dict = Depends(can_edit)):
         repo = Repository(session)
         try:
             row = repo.create_watchlist_entry(
-                kind="plate", list_type=entry.list_type, label=entry.label.strip(),
-                plate=entry.plate, notes=entry.notes, created_by=_actor(user),
+                kind="plate",
+                list_type=entry.list_type,
+                label=entry.label.strip(),
+                plate=entry.plate,
+                notes=entry.notes,
+                created_by=_actor(user),
             )
         except ValueError as exc:
             raise HTTPException(status_code=409 if "already" in str(exc) else 422, detail=str(exc)) from exc
-        repo.create_audit_log("watchlist_add", _actor(user), {
-            "entry_id": row.entry_id, "kind": "plate", "list_type": row.list_type, "plate": row.plate,
-        })
+        repo.create_audit_log(
+            "watchlist_add",
+            _actor(user),
+            {
+                "entry_id": row.entry_id,
+                "kind": "plate",
+                "list_type": row.list_type,
+                "plate": row.plate,
+            },
+        )
         result = _entry_dict(row)
     reload_watchlist()
     return result
@@ -120,14 +131,24 @@ async def add_face(
         repo = Repository(session)
         try:
             row = repo.create_watchlist_entry(
-                kind="face", list_type=list_type, label=label.strip(), notes=notes,
-                embedding=faces[0]["embedding"], created_by=_actor(user),
+                kind="face",
+                list_type=list_type,
+                label=label.strip(),
+                notes=notes,
+                embedding=faces[0]["embedding"],
+                created_by=_actor(user),
             )
         except WatchlistKeyError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
-        repo.create_audit_log("watchlist_add", _actor(user), {
-            "entry_id": row.entry_id, "kind": "face", "list_type": row.list_type,
-        })
+        repo.create_audit_log(
+            "watchlist_add",
+            _actor(user),
+            {
+                "entry_id": row.entry_id,
+                "kind": "face",
+                "list_type": row.list_type,
+            },
+        )
         result = _entry_dict(row)
     reload_watchlist()
     return result

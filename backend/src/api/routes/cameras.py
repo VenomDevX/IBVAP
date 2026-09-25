@@ -144,9 +144,7 @@ async def list_cameras(user: dict = Depends(require_auth)):
                 cam["fps"] = round(stats.get("fps", 0), 1)
                 cam["active_tracks"] = stats.get("active_tracks", 0)
                 if p.video_source.last_frame_at:
-                    cam["last_frame_at"] = datetime.fromtimestamp(
-                        p.video_source.last_frame_at, tz=UTC
-                    ).isoformat()
+                    cam["last_frame_at"] = datetime.fromtimestamp(p.video_source.last_frame_at, tz=UTC).isoformat()
                 cam["stream_status"] = p.video_source.status.value
 
     session.close()
@@ -161,16 +159,30 @@ async def create_camera(camera: CameraCreate, user: dict = Depends(require_admin
         if repo.get_camera(camera.camera_id):
             raise HTTPException(status_code=409, detail="Camera ID already exists")
         row = repo.create_camera(
-            camera.camera_id, camera.name, camera.source, camera.type, camera.location,
-            camera.latitude, camera.longitude, camera.enabled, camera.fps_limit,
+            camera.camera_id,
+            camera.name,
+            camera.source,
+            camera.type,
+            camera.location,
+            camera.latitude,
+            camera.longitude,
+            camera.enabled,
+            camera.fps_limit,
             list(camera.resolution) if camera.resolution else None,
         )
         actor = user.get("email") or user.get("user_id") or "unknown"
-        repo.create_audit_log("create_camera", actor, {
-            "camera_id": camera.camera_id, "name": camera.name, "enabled": camera.enabled,
-            "source": _audit_value("source", camera.source),
-        })
+        repo.create_audit_log(
+            "create_camera",
+            actor,
+            {
+                "camera_id": camera.camera_id,
+                "name": camera.name,
+                "enabled": camera.enabled,
+                "source": _audit_value("source", camera.source),
+            },
+        )
         from src.api.app import get_pipeline
+
         pipeline = get_pipeline()
         if pipeline:
             await run_in_threadpool(pipeline.configure_camera, row)
@@ -209,7 +221,8 @@ async def update_camera(camera_id: str, update: CameraUpdate, user: dict = Depen
         actor = user.get("email") or user.get("user_id") or "unknown"
         diff = {
             f: {"from": _audit_value(f, before[f]), "to": _audit_value(f, changes[f])}
-            for f in changes if before.get(f) != changes[f]
+            for f in changes
+            if before.get(f) != changes[f]
         }
         if set(diff) == {"enabled"}:
             action = "enable_camera" if changes["enabled"] else "disable_camera"
@@ -217,6 +230,7 @@ async def update_camera(camera_id: str, update: CameraUpdate, user: dict = Depen
         elif diff:
             repo.create_audit_log("update_camera", actor, {"camera_id": camera_id, "name": row.name, "changes": diff})
         from src.api.app import get_pipeline
+
         pipeline = get_pipeline()
         if pipeline:
             await run_in_threadpool(pipeline.configure_camera, row)
@@ -237,6 +251,7 @@ async def retire_camera(camera_id: str, user: dict = Depends(require_admin)):
         actor = user.get("email") or user.get("user_id") or "unknown"
         repo.create_audit_log("retire_camera", actor, {"camera_id": camera_id})
         from src.api.app import get_pipeline
+
         pipeline = get_pipeline()
         if pipeline:
             await run_in_threadpool(pipeline.remove_camera, camera_id)
@@ -249,6 +264,7 @@ async def retire_camera(camera_id: str, user: dict = Depends(require_admin)):
 async def restart_camera(camera_id: str, user: dict = Depends(require_admin)):
     camera_id = sanitize_camera_id(camera_id)
     from src.api.app import get_pipeline
+
     pipeline = get_pipeline()
     if pipeline is None or not await run_in_threadpool(pipeline.restart_camera, camera_id):
         raise HTTPException(status_code=409, detail="Camera pipeline is not active")
@@ -272,6 +288,7 @@ async def test_camera(camera_id: str, _user: dict = Depends(require_admin)):
 
     def probe():
         import cv2
+
         capture = cv2.VideoCapture(source)
         try:
             opened = capture.isOpened()

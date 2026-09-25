@@ -31,10 +31,18 @@ class EvidenceClipBuffer:
     _stores_lock = threading.Lock()
 
     def __init__(
-        self, camera_id: str, output_dir: str | Path, pre_seconds: float = 3,
-        post_seconds: float = 3, capture_fps: float = 5, max_width: int = 960,
-        jpeg_quality: int = 65, on_complete=None,
-        max_clips_per_hour: int = 60, max_storage_mb: float = 4096, min_free_mb: float = 1024,
+        self,
+        camera_id: str,
+        output_dir: str | Path,
+        pre_seconds: float = 3,
+        post_seconds: float = 3,
+        capture_fps: float = 5,
+        max_width: int = 960,
+        jpeg_quality: int = 65,
+        on_complete=None,
+        max_clips_per_hour: int = 60,
+        max_storage_mb: float = 4096,
+        min_free_mb: float = 1024,
     ):
         self.camera_id = camera_id
         self.output_dir = Path(output_dir)

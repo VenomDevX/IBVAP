@@ -31,8 +31,9 @@ def test_plate_normalisation():
 
 
 def test_plate_match_exact_and_ocr_tolerant(repo):
-    repo.create_watchlist_entry(kind="plate", list_type="wanted", label="Stolen truck",
-                                plate="MH 12 AB 3456", created_by="admin")
+    repo.create_watchlist_entry(
+        kind="plate", list_type="wanted", label="Stolen truck", plate="MH 12 AB 3456", created_by="admin"
+    )
     service = WatchlistService()
     service.load(repo.session)
 
@@ -47,18 +48,21 @@ def test_plate_match_exact_and_ocr_tolerant(repo):
 
 
 def test_exact_match_beats_fuzzy_match(repo):
-    repo.create_watchlist_entry(kind="plate", list_type="authorized", label="Patrol jeep", plate="DL01AB1234",
-                                created_by="admin")
-    repo.create_watchlist_entry(kind="plate", list_type="wanted", label="Look-alike", plate="DL01A81234",
-                                created_by="admin")
+    repo.create_watchlist_entry(
+        kind="plate", list_type="authorized", label="Patrol jeep", plate="DL01AB1234", created_by="admin"
+    )
+    repo.create_watchlist_entry(
+        kind="plate", list_type="wanted", label="Look-alike", plate="DL01A81234", created_by="admin"
+    )
     service = WatchlistService()
     service.load(repo.session)
     assert service.match_plate("DL01AB1234").label == "Patrol jeep"
 
 
 def test_deactivated_entries_do_not_match(repo):
-    entry = repo.create_watchlist_entry(kind="plate", list_type="wanted", label="x", plate="UP32XY0001",
-                                        created_by="admin")
+    entry = repo.create_watchlist_entry(
+        kind="plate", list_type="wanted", label="x", plate="UP32XY0001", created_by="admin"
+    )
     assert repo.deactivate_watchlist_entry(entry.entry_id, actor="admin")
     service = WatchlistService()
     service.load(repo.session)
@@ -69,8 +73,7 @@ def test_deactivated_entries_do_not_match(repo):
 def test_duplicate_active_plate_is_rejected(repo):
     repo.create_watchlist_entry(kind="plate", list_type="wanted", label="a", plate="HR26DK8337", created_by="admin")
     with pytest.raises(ValueError):
-        repo.create_watchlist_entry(kind="plate", list_type="vip", label="b", plate="hr-26 dk 8337",
-                                    created_by="admin")
+        repo.create_watchlist_entry(kind="plate", list_type="vip", label="b", plate="hr-26 dk 8337", created_by="admin")
 
 
 # --------------------------------------------------------------------------- #
@@ -80,18 +83,21 @@ def test_duplicate_active_plate_is_rejected(repo):
 
 def test_face_embeddings_are_encrypted_at_rest(repo):
     embedding = _unit(0.1, 0.2, 0.3, 0.4)
-    entry = repo.create_watchlist_entry(kind="face", list_type="wanted", label="Suspect A",
-                                        embedding=embedding, created_by="admin")
+    entry = repo.create_watchlist_entry(
+        kind="face", list_type="wanted", label="Suspect A", embedding=embedding, created_by="admin"
+    )
     stored = entry.embedding_enc
     assert stored and "0.1" not in stored
     assert np.allclose(crypto.decrypt_embedding(stored), embedding)
 
 
 def test_face_match_uses_threshold(repo):
-    repo.create_watchlist_entry(kind="face", list_type="wanted", label="Suspect A",
-                                embedding=_unit(1, 0, 0), created_by="admin")
-    repo.create_watchlist_entry(kind="face", list_type="authorized", label="Guard B",
-                                embedding=_unit(0, 1, 0), created_by="admin")
+    repo.create_watchlist_entry(
+        kind="face", list_type="wanted", label="Suspect A", embedding=_unit(1, 0, 0), created_by="admin"
+    )
+    repo.create_watchlist_entry(
+        kind="face", list_type="authorized", label="Guard B", embedding=_unit(0, 1, 0), created_by="admin"
+    )
     service = WatchlistService(face_threshold=0.5)
     service.load(repo.session)
 
@@ -160,13 +166,26 @@ def _fused(event_type="general_activity", object_type="person", identity=None, v
 
     from src.fusion.context_fusion import FusedEvent
 
-    return FusedEvent(event_id="e", camera_id="c", track_id=1, timestamp=time.time(),
-                      object_type=object_type, event_type=event_type,
-                      identity_context=identity or {}, vehicle_context=vehicle or {})
+    return FusedEvent(
+        event_id="e",
+        camera_id="c",
+        track_id=1,
+        timestamp=time.time(),
+        object_type=object_type,
+        event_type=event_type,
+        identity_context=identity or {},
+        vehicle_context=vehicle or {},
+    )
 
 
-WANTED_FACE = {"entry_id": "WL_1", "kind": "face", "list_type": "wanted", "label": "Suspect A",
-               "score": 0.8, "exact": True}
+WANTED_FACE = {
+    "entry_id": "WL_1",
+    "kind": "face",
+    "list_type": "wanted",
+    "label": "Suspect A",
+    "score": 0.8,
+    "exact": True,
+}
 
 
 def test_wanted_match_is_always_critical():
@@ -179,8 +198,9 @@ def test_wanted_match_is_always_critical():
 def test_wanted_plate_is_critical_and_authorized_face_adds_no_risk():
     engine = _risk_engine()
     plate_hit = {**WANTED_FACE, "kind": "plate", "label": "Stolen truck"}
-    scored = engine.score_fused_event(_fused(object_type="truck", vehicle={"plate_status": "read",
-                                                                           "watchlist": plate_hit}))
+    scored = engine.score_fused_event(
+        _fused(object_type="truck", vehicle={"plate_status": "read", "watchlist": plate_hit})
+    )
     assert scored.risk_level == "critical"
 
     authorized = {**WANTED_FACE, "list_type": "authorized", "label": "Guard B"}
@@ -218,15 +238,22 @@ def test_pipeline_applies_plate_hit(repo, tmp_path, monkeypatch):
     from src.tracking.track import Track
     from src.watchlist.service import WatchlistService
 
-    repo.create_watchlist_entry(kind="plate", list_type="wanted", label="Stolen truck",
-                                plate="MH12AB3456", created_by="admin")
+    repo.create_watchlist_entry(
+        kind="plate", list_type="wanted", label="Stolen truck", plate="MH12AB3456", created_by="admin"
+    )
     service = WatchlistService()
     service.load(repo.session)
     monkeypatch.setattr(pipeline_mod, "get_watchlist", lambda: service)
     monkeypatch.setattr(pipeline_mod, "extract_plate", lambda crop, **_: {"text": "MH12AB3456", "confidence": 0.9})
 
-    cam = CameraPipeline(CameraInfo("c", "C", "rtsp://x"), Mock(), ZoneManager(), FenceDetector(), {},
-                         AlertEngine(snapshots_dir=str(tmp_path)))
+    cam = CameraPipeline(
+        CameraInfo("c", "C", "rtsp://x"),
+        Mock(),
+        ZoneManager(),
+        FenceDetector(),
+        {},
+        AlertEngine(snapshots_dir=str(tmp_path)),
+    )
     cam.plate_consensus.min_observations = 1
     track = Track(1, "truck", "c")
     track.best_frame = np.zeros((10, 10, 3), np.uint8)
@@ -262,16 +289,24 @@ def test_pipeline_face_hit_marks_track_wanted(repo, tmp_path, monkeypatch):
     from src.watchlist.service import WatchlistService
 
     repo.create_camera(camera_id="c", name="C", stream_url="x")
-    repo.create_watchlist_entry(kind="face", list_type="wanted", label="Suspect A",
-                                embedding=_unit(1, 0, 0), created_by="admin")
+    repo.create_watchlist_entry(
+        kind="face", list_type="wanted", label="Suspect A", embedding=_unit(1, 0, 0), created_by="admin"
+    )
     service = WatchlistService(face_threshold=0.5)
     service.load(repo.session)
     monkeypatch.setattr(pipeline_mod, "get_watchlist", lambda: service)
 
     recognizer = Mock()
     recognizer.best_face.return_value = {"embedding": list(_unit(0.98, 0.05, 0)), "confidence": 0.9}
-    cam = CameraPipeline(CameraInfo("c", "C", "rtsp://x"), Mock(), ZoneManager(), FenceDetector(), {},
-                         AlertEngine(snapshots_dir=str(tmp_path)), face_recognizer=recognizer)
+    cam = CameraPipeline(
+        CameraInfo("c", "C", "rtsp://x"),
+        Mock(),
+        ZoneManager(),
+        FenceDetector(),
+        {},
+        AlertEngine(snapshots_dir=str(tmp_path)),
+        face_recognizer=recognizer,
+    )
     track = Track(1, "person", "c")
     track.best_frame = np.zeros((10, 10, 3), np.uint8)
     cam._run_face_identify(track)
@@ -280,6 +315,7 @@ def test_pipeline_face_hit_marks_track_wanted(repo, tmp_path, monkeypatch):
     recognizer.match.assert_not_called()  # the gallery is irrelevant once a watchlist hit is found
 
     from src.database.models import IdentityResultModel
+
     assert repo.session.query(IdentityResultModel).one().identity_label == "Suspect A"
 
 
@@ -304,8 +340,10 @@ def test_api_plate_lifecycle_and_roles(client, monkeypatch):
 
     headers = {"Authorization": make_token("operator", monkeypatch)}
     assert client.get("/api/watchlists", headers=headers).status_code == 200
-    assert client.post("/api/watchlists/plates", headers=headers,
-                       json={"plate": "MH12AB3456", "label": "x"}).status_code == 403
+    assert (
+        client.post("/api/watchlists/plates", headers=headers, json={"plate": "MH12AB3456", "label": "x"}).status_code
+        == 403
+    )
 
     headers = {"Authorization": make_token("commander", monkeypatch)}
     # The security middleware (400) or the schema (422) must stop script-like input.
@@ -313,8 +351,11 @@ def test_api_plate_lifecycle_and_roles(client, monkeypatch):
     assert bad.status_code in (400, 422)
     short = client.post("/api/watchlists/plates", headers=headers, json={"plate": "AB", "label": "x"})
     assert short.status_code == 422
-    created = client.post("/api/watchlists/plates", headers=headers,
-                          json={"plate": "mh-12 ab 3456", "label": "Stolen truck", "list_type": "wanted"})
+    created = client.post(
+        "/api/watchlists/plates",
+        headers=headers,
+        json={"plate": "mh-12 ab 3456", "label": "Stolen truck", "list_type": "wanted"},
+    )
     assert created.status_code == 201, created.text
     entry = created.json()
     assert entry["plate"] == "MH12AB3456" and "embedding_enc" not in entry
@@ -323,6 +364,7 @@ def test_api_plate_lifecycle_and_roles(client, monkeypatch):
     assert dup.status_code == 409
 
     from src.watchlist.service import get_watchlist
+
     assert get_watchlist().match_plate("MH12AB3456") is not None
 
     listing = client.get("/api/watchlists?kind=plate", headers=headers).json()
@@ -335,6 +377,7 @@ def test_api_plate_lifecycle_and_roles(client, monkeypatch):
 
     from src.database.db import get_database
     from src.database.models import AuditLogModel
+
     with get_database().get_session() as session:
         actions = [a.action for a in session.query(AuditLogModel).filter(AuditLogModel.action.like("watchlist%"))]
     assert actions == ["watchlist_add", "watchlist_remove"]
@@ -370,6 +413,7 @@ def test_api_face_enrolment(client, monkeypatch):
     assert created.json()["kind"] == "face"
 
     from src.watchlist.service import get_watchlist
+
     assert get_watchlist().match_face(_unit(1, 0, 0)).label == "Suspect A"
 
 
@@ -380,21 +424,24 @@ def test_api_face_enrolment(client, monkeypatch):
 
 def test_fuzzy_never_matches_an_allow_list_entry(repo):
     """Confusable folding helps a deny-list; on an allow-list it is fail-open."""
-    repo.create_watchlist_entry(kind="plate", list_type="authorized", label="Patrol jeep",
-                                plate="DL01OB1234", created_by="admin")
+    repo.create_watchlist_entry(
+        kind="plate", list_type="authorized", label="Patrol jeep", plate="DL01OB1234", created_by="admin"
+    )
     service = WatchlistService()
     service.load(repo.session)
 
-    assert service.match_plate("DL01OB1234").exact          # exact still works
-    assert service.match_plate("DL01QB1234") is None        # lookalike gets no free pass
+    assert service.match_plate("DL01OB1234").exact  # exact still works
+    assert service.match_plate("DL01QB1234") is None  # lookalike gets no free pass
 
 
 def test_ambiguous_canonical_key_matches_nothing(repo):
     """OD/DD and IB/LB are distinct valid registrations that fold together."""
-    repo.create_watchlist_entry(kind="plate", list_type="wanted", label="Odisha car",
-                                plate="OD12AB1234", created_by="admin")
-    repo.create_watchlist_entry(kind="plate", list_type="wanted", label="Daman car",
-                                plate="DD12AB1234", created_by="admin")
+    repo.create_watchlist_entry(
+        kind="plate", list_type="wanted", label="Odisha car", plate="OD12AB1234", created_by="admin"
+    )
+    repo.create_watchlist_entry(
+        kind="plate", list_type="wanted", label="Daman car", plate="DD12AB1234", created_by="admin"
+    )
     service = WatchlistService()
     service.load(repo.session)
 
@@ -406,8 +453,9 @@ def test_ambiguous_canonical_key_matches_nothing(repo):
 
 
 def test_fuzzy_wanted_hit_is_marked_inexact(repo):
-    repo.create_watchlist_entry(kind="plate", list_type="wanted", label="Stolen truck",
-                                plate="MH12AB3456", created_by="admin")
+    repo.create_watchlist_entry(
+        kind="plate", list_type="wanted", label="Stolen truck", plate="MH12AB3456", created_by="admin"
+    )
     service = WatchlistService()
     service.load(repo.session)
 
@@ -419,8 +467,14 @@ def test_fuzzy_wanted_hit_is_marked_inexact(repo):
 # An inexact (confusable-folded) hit must not be treated as a confirmed one
 # --------------------------------------------------------------------------- #
 
-INEXACT_WANTED_PLATE = {"entry_id": "WL_9", "kind": "plate", "list_type": "wanted",
-                        "label": "Stolen truck", "score": 0.9, "exact": False}
+INEXACT_WANTED_PLATE = {
+    "entry_id": "WL_9",
+    "kind": "plate",
+    "list_type": "wanted",
+    "label": "Stolen truck",
+    "score": 0.9,
+    "exact": False,
+}
 
 
 def test_inexact_wanted_hit_is_not_forced_critical():

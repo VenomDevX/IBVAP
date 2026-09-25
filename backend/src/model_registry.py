@@ -37,7 +37,9 @@ class ModelRegistry:
             started = self._started.pop(name, None)
             elapsed = (time.perf_counter() - started) * 1000 if started is not None else None
             safe_error = f"{type(error).__name__}: {str(error)[:160]}"
-            self._items[name] = ModelHealth(name, "FAILED", "n/a", round(elapsed, 1) if elapsed else None, identifier, safe_error)
+            self._items[name] = ModelHealth(
+                name, "FAILED", "n/a", round(elapsed, 1) if elapsed else None, identifier, safe_error
+            )
 
     def disabled(self, name: str, identifier: str | None = None, reason: str | None = None) -> None:
         with self._lock:

@@ -103,9 +103,7 @@ def build_engine_from_onnx(
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Export a YOLO model to TensorRT engine"
-    )
+    parser = argparse.ArgumentParser(description="Export a YOLO model to TensorRT engine")
     parser.add_argument(
         "--weights",
         type=str,
@@ -166,6 +164,7 @@ def main():
     # --- Check CUDA ---
     try:
         import torch
+
         if not torch.cuda.is_available():
             print("ERROR: CUDA is not available.")
             sys.exit(1)
@@ -178,6 +177,7 @@ def main():
     # --- Check TensorRT ---
     try:
         import tensorrt as trt
+
         print(f"  TensorRT: {trt.__version__}")
     except ImportError:
         print("ERROR: tensorrt not installed.")
@@ -191,6 +191,7 @@ def main():
         print(f"\nStage 1: Exporting {weights_path} → ONNX ...")
         try:
             from ultralytics import YOLO
+
             model = YOLO(str(weights_path))
             model.export(format="onnx", imgsz=args.imgsz, half=use_half, simplify=True)
             if not onnx_path.exists():
@@ -202,7 +203,7 @@ def main():
             sys.exit(1)
 
     # --- Stage 2: .onnx → .engine (direct TensorRT API) ---
-    print(f"\nStage 2: Building TensorRT engine ...")
+    print("\nStage 2: Building TensorRT engine ...")
     try:
         build_engine_from_onnx(
             onnx_path=onnx_path,
@@ -219,8 +220,10 @@ def main():
     print("\nValidating engine loads correctly ...")
     try:
         from ultralytics import YOLO
+
         engine_model = YOLO(str(engine_path))
         import numpy as np
+
         dummy = np.zeros((args.imgsz, args.imgsz, 3), dtype=np.uint8)
         engine_model(dummy, verbose=False)
         print("  ✓ Engine loads and runs via Ultralytics YOLO()")

@@ -114,7 +114,9 @@ def _read_paddle(reader, img):
     if not lines:
         return "", 0.0
     # Two-row plates (common on Indian two-wheelers): read top row first.
-    lines.sort(key=lambda item: (round(float(np.mean(np.asarray(item[2])[:, 1])) / 12), np.min(np.asarray(item[2])[:, 0])))
+    lines.sort(
+        key=lambda item: (round(float(np.mean(np.asarray(item[2])[:, 1])) / 12), np.min(np.asarray(item[2])[:, 0]))
+    )
     text = "".join(item[0] for item in lines)
     weight = sum(len(item[0]) for item in lines)
     confidence = sum(item[1] * len(item[0]) for item in lines) / max(weight, 1)

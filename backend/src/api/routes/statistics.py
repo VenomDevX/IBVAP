@@ -74,12 +74,8 @@ def get_summary(user: dict = Depends(require_auth)):
 
     if pipeline:
         cameras = [p for cam, p in pipeline.camera_pipelines.items() if can_access_camera(user, cam)]
-        summary["online_cameras"] = sum(
-            1 for p in cameras if p.video_source.status.value == "online"
-        )
-        summary["active_tracks"] = sum(
-            p.get_stats().get("active_tracks", 0) for p in cameras
-        )
+        summary["online_cameras"] = sum(1 for p in cameras if p.video_source.status.value == "online")
+        summary["active_tracks"] = sum(p.get_stats().get("active_tracks", 0) for p in cameras)
 
     return summary
 

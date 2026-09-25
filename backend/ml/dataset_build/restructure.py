@@ -122,9 +122,7 @@ class ClassPlan:
     counts: dict[str, int] = field(default_factory=dict)  # class -> images kept
 
 
-def build_class_plan(
-    records: list[ImageRecord], threshold: int = 200, cap: int = 1500, seed: int = 42
-) -> ClassPlan:
+def build_class_plan(records: list[ImageRecord], threshold: int = 200, cap: int = 1500, seed: int = 42) -> ClassPlan:
     plan = ClassPlan()
 
     # ---- 1. candidate class per record, resolving aggregates ----

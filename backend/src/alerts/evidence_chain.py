@@ -36,21 +36,56 @@ CURRENT_VERSION = 3
 #    assessment is tamper-evident again while escalation stays free to rewrite
 #    the mutable risk_score / risk_level.
 EVENT_FIELDS = {
-    1: ["event_id", "camera_id", "track_id", "event_type", "timestamp",
-        "object_type", "risk_score", "risk_level", "evidence_hash"],
-    2: ["event_id", "camera_id", "track_id", "event_type", "timestamp",
-        "object_type", "evidence_hash"],
-    3: ["event_id", "camera_id", "track_id", "event_type", "timestamp",
-        "object_type", "original_risk_score", "original_risk_level", "evidence_hash"],
+    1: [
+        "event_id",
+        "camera_id",
+        "track_id",
+        "event_type",
+        "timestamp",
+        "object_type",
+        "risk_score",
+        "risk_level",
+        "evidence_hash",
+    ],
+    2: ["event_id", "camera_id", "track_id", "event_type", "timestamp", "object_type", "evidence_hash"],
+    3: [
+        "event_id",
+        "camera_id",
+        "track_id",
+        "event_type",
+        "timestamp",
+        "object_type",
+        "original_risk_score",
+        "original_risk_level",
+        "evidence_hash",
+    ],
 }
 ALERT_FIELDS = {
-    1: ["alert_id", "camera_id", "event_id", "track_id", "event_type",
-        "timestamp", "risk_score", "risk_level", "object_type", "snapshot_hash"],
-    2: ["alert_id", "camera_id", "event_id", "track_id", "event_type",
-        "timestamp", "object_type", "snapshot_hash"],
-    3: ["alert_id", "camera_id", "event_id", "track_id", "event_type",
-        "timestamp", "original_risk_score", "original_risk_level",
-        "object_type", "snapshot_hash"],
+    1: [
+        "alert_id",
+        "camera_id",
+        "event_id",
+        "track_id",
+        "event_type",
+        "timestamp",
+        "risk_score",
+        "risk_level",
+        "object_type",
+        "snapshot_hash",
+    ],
+    2: ["alert_id", "camera_id", "event_id", "track_id", "event_type", "timestamp", "object_type", "snapshot_hash"],
+    3: [
+        "alert_id",
+        "camera_id",
+        "event_id",
+        "track_id",
+        "event_type",
+        "timestamp",
+        "original_risk_score",
+        "original_risk_level",
+        "object_type",
+        "snapshot_hash",
+    ],
 }
 
 CHAINED = {
@@ -66,12 +101,7 @@ def fields_for(table: str, version: int | None) -> list[str]:
 def append(session, row, table: str) -> None:
     """Link `row` to the chain head. Call inside the transaction that inserts it."""
     model = CHAINED[table][0]
-    head = (
-        session.query(EvidenceChainHeadModel)
-        .filter_by(table_name=table)
-        .with_for_update()
-        .one_or_none()
-    )
+    head = session.query(EvidenceChainHeadModel).filter_by(table_name=table).with_for_update().one_or_none()
     if head is None:
         head = EvidenceChainHeadModel(table_name=table)
         session.add(head)
@@ -136,12 +166,7 @@ def verify_table(session, table: str) -> ChainReport:
     # cost gigabytes, and this runs next to a live, memory-hungry backend.
     all_fields = sorted({f for fields in CHAINED[table][1].values() for f in fields})
     columns = [getattr(model, f) for f in all_fields] + [model.prev_hash, model.chain_hash, model.chain_version]
-    rows = (
-        session.query(*columns)
-        .filter(model.chain_hash.isnot(None))
-        .order_by(model.id)
-        .yield_per(5000)
-    )
+    rows = session.query(*columns).filter(model.chain_hash.isnot(None)).order_by(model.id).yield_per(5000)
 
     prev = None
     seen = set()
@@ -208,9 +233,7 @@ def purge_chained_prefix(session, table: str, cutoff: datetime, dry_run: bool = 
         )
     else:
         ids = session.query(EventModel.event_id).filter(EventModel.id < boundary)
-        session.query(EventEvidenceModel).filter(EventEvidenceModel.event_id.in_(ids)).delete(
-            synchronize_session=False
-        )
+        session.query(EventEvidenceModel).filter(EventEvidenceModel.event_id.in_(ids)).delete(synchronize_session=False)
         session.query(OperatorFeedbackModel).filter(OperatorFeedbackModel.event_id.in_(ids)).delete(
             synchronize_session=False
         )

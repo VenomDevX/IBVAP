@@ -22,8 +22,21 @@ STATE_CODES = frozenset(
     "NL OD OR PB PY RJ SK TN TR TS UA UK UP WB".split()
 )
 
-_TO_DIGIT = {"O": "0", "Q": "0", "D": "0", "U": "0", "I": "1", "L": "1", "T": "1", "J": "1",
-             "Z": "2", "S": "5", "B": "8", "G": "6", "A": "4"}
+_TO_DIGIT = {
+    "O": "0",
+    "Q": "0",
+    "D": "0",
+    "U": "0",
+    "I": "1",
+    "L": "1",
+    "T": "1",
+    "J": "1",
+    "Z": "2",
+    "S": "5",
+    "B": "8",
+    "G": "6",
+    "A": "4",
+}
 _TO_LETTER = {"0": "O", "1": "I", "2": "Z", "5": "S", "8": "B", "6": "G", "4": "A"}
 # A misread state code often only makes sense with the other reading of "0".
 _STATE_ALTERNATIVES = {"0": ("O", "D")}

@@ -78,12 +78,10 @@ def test_api_storage_and_purge(client, monkeypatch, tmp_path):
     usage = client.get("/api/storage/clips", headers=operator)
     assert usage.status_code == 200
     assert usage.json()["files"] == 1
-    assert client.post("/api/storage/clips/purge", headers=operator,
-                       json={"older_than_days": 30}).status_code == 403
+    assert client.post("/api/storage/clips/purge", headers=operator, json={"older_than_days": 30}).status_code == 403
 
     admin = _client_user(monkeypatch, "admin")
-    assert client.post("/api/storage/clips/purge", headers=admin,
-                       json={"older_than_days": 0}).status_code == 422
+    assert client.post("/api/storage/clips/purge", headers=admin, json={"older_than_days": 0}).status_code == 422
     preview = client.post("/api/storage/clips/purge", headers=admin, json={"older_than_days": 30, "dry_run": True})
     assert preview.json() == {"files": 1, "freed_mb": 0.0, "freed_bytes": 2048, "dry_run": True}
     assert path.exists()

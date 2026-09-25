@@ -59,7 +59,9 @@ class EnrichmentWorker:
             except Exception as exc:
                 logger.error(
                     "Enrichment task failed track={} task={} error={}",
-                    track_key, task_type, type(exc).__name__,
+                    track_key,
+                    task_type,
+                    type(exc).__name__,
                 )
             finally:
                 with self._inflight_lock:

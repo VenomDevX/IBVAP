@@ -30,9 +30,7 @@ from src.classification.preprocess import preprocess_crop
 # Coarse classes worth a second look. Matches ml.taxonomy.MILITARY_TYPES; kept
 # as a literal so this module does not drag the data-prep package into the
 # pipeline's import graph.
-MILITARY_TYPES = frozenset(
-    {"military_ground_vehicle", "aircraft", "helicopter", "drone_uav"}
-)
+MILITARY_TYPES = frozenset({"military_ground_vehicle", "aircraft", "helicopter", "drone_uav"})
 
 DEFAULT_WEIGHTS = "./models/classifier/ibvap_fine.pt"
 
@@ -68,8 +66,7 @@ class FineClassifier:
 
         if not os.path.exists(weights):
             logger.warning(
-                f"FineClassifier: weights not found at {weights} - "
-                f"stage 2 disabled, pipeline stays single-stage"
+                f"FineClassifier: weights not found at {weights} - stage 2 disabled, pipeline stays single-stage"
             )
             self.enabled = False
             return
@@ -119,9 +116,7 @@ class FineClassifier:
 
             name = arch.split(".")[0]
             if not hasattr(models, name):
-                raise RuntimeError(
-                    f"timm is not installed and torchvision has no '{name}'"
-                ) from None
+                raise RuntimeError(f"timm is not installed and torchvision has no '{name}'") from None
             m = getattr(models, name)(weights=None)
             if hasattr(m, "fc"):
                 m.fc = nn.Linear(m.fc.in_features, n_classes)
@@ -178,6 +173,6 @@ def load_classes(weights: str = DEFAULT_WEIGHTS) -> list[str]:
         try:
             with open(side, encoding="utf-8") as fh:
                 return list(json.load(fh))
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"Could not read classifier classes from {side}: {e}")
     return []

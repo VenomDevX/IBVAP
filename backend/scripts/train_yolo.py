@@ -136,10 +136,7 @@ def train(args):
         # fixed at 40 it can never fire on a sub-40-epoch run: early stopping
         # would be silently inert.
         args.patience = max(10, round(args.epochs / 3))
-    print(
-        f"schedule: epochs={args.epochs}  warmup=3  "
-        f"close_mosaic={args.close_mosaic}  patience={args.patience}"
-    )
+    print(f"schedule: epochs={args.epochs}  warmup=3  close_mosaic={args.close_mosaic}  patience={args.patience}")
 
     _preflight(args)
 
@@ -245,8 +242,7 @@ if __name__ == "__main__":
         type=int,
         default=None,
         dest="close_mosaic",
-        help="epochs at the end to train without mosaic; default is 10%% of "
-        "--epochs (min 3).",
+        help="epochs at the end to train without mosaic; default is 10%% of --epochs (min 3).",
     )
     p.add_argument("--device", default="0", help="0 / 0,1 / cpu")
     p.add_argument("--project", default="outputs/training", help="output dir (point at Drive on Colab)")

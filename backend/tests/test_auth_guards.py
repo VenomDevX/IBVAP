@@ -102,15 +102,19 @@ def test_jwt_requires_second_factor(monkeypatch):
 
 def test_reset_mfa_is_admin_only(client, monkeypatch):
     make_token("operator", monkeypatch)
-    r = client.post("/api/auth/users/00000000-0000-0000-0000-000000000000/reset-mfa",
-                    headers={"Authorization": "Bearer x"})
+    r = client.post(
+        "/api/auth/users/00000000-0000-0000-0000-000000000000/reset-mfa", headers={"Authorization": "Bearer x"}
+    )
     assert r.status_code == 403
 
 
-@pytest.mark.parametrize("method,path", [
-    ("GET", "/api/auth/users"),
-    ("PUT", "/api/auth/users/00000000-0000-0000-0000-000000000000/mfa"),
-])
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("GET", "/api/auth/users"),
+        ("PUT", "/api/auth/users/00000000-0000-0000-0000-000000000000/mfa"),
+    ],
+)
 def test_user_mfa_admin_routes_reject_operator(client, monkeypatch, method, path):
     make_token("operator", monkeypatch)
     r = client.request(method, path, json={"required": False}, headers={"Authorization": "Bearer x"})

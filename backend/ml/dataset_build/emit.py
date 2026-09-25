@@ -33,7 +33,9 @@ def _copy(src: Path, dst: Path) -> bool:
 
 
 def emit_detector(
-    train: list[ImageRecord], val: list[ImageRecord], out_root: Path,
+    train: list[ImageRecord],
+    val: list[ImageRecord],
+    out_root: Path,
     progress: int = 0,
 ) -> dict:
     out_root = Path(out_root)
@@ -49,9 +51,7 @@ def emit_detector(
                 stats["skipped"] += 1
 
             lbl_src = label_path_for(r.path)
-            lbl_dst = (
-                out_root / "detector" / "labels" / split / Path(name).with_suffix(".txt").name
-            )
+            lbl_dst = out_root / "detector" / "labels" / split / Path(name).with_suffix(".txt").name
             if lbl_src.exists():
                 _copy(lbl_src, lbl_dst)
             else:
@@ -67,7 +67,10 @@ def emit_detector(
 
 
 def emit_classifier(
-    plan, train: list[ImageRecord], val: list[ImageRecord], out_root: Path,
+    plan,
+    train: list[ImageRecord],
+    val: list[ImageRecord],
+    out_root: Path,
     progress: int = 0,
 ) -> dict:
     out_root = Path(out_root)
@@ -184,8 +187,7 @@ def verify(out_root: Path, expected_counts: dict[str, int] | None = None) -> lis
         actual = sum(1 for f in d.iterdir() if f.is_file()) if d.is_dir() else 0
         if actual != n:
             problems.append(
-                f"{rel}: expected {n:,} files, found {actual:,} "
-                f"({actual - n:+,} — stale output from an earlier build?)"
+                f"{rel}: expected {n:,} files, found {actual:,} ({actual - n:+,} — stale output from an earlier build?)"
             )
 
     for split in ("train", "val"):

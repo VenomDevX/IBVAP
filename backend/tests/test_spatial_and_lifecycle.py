@@ -40,10 +40,21 @@ def test_zone_without_trigger_list_applies_to_everything():
 
 def test_zone_trigger_classes_load_from_yaml():
     zones = ZoneManager()
-    zones.load_from_config({"zones": {"a": [{
-        "id": "z", "name": "Z", "type": "restricted", "points": [list(p) for p in SQUARE],
-        "trigger_classes": ["car", "truck"],
-    }]}})
+    zones.load_from_config(
+        {
+            "zones": {
+                "a": [
+                    {
+                        "id": "z",
+                        "name": "Z",
+                        "type": "restricted",
+                        "points": [list(p) for p in SQUARE],
+                        "trigger_classes": ["car", "truck"],
+                    }
+                ]
+            }
+        }
+    )
     assert zones.get_zone("z").trigger_classes == ["car", "truck"]
     assert zones.get_all_zones()[0]["trigger_classes"] == ["car", "truck"]
 
@@ -52,14 +63,24 @@ def test_restore_backfills_trigger_classes_for_previously_seeded_zones(tmp_db):
     from src.database.repository import Repository
     from src.pipeline.pipeline import IBVAPPipeline
 
-    config = {"zones": {"a": [{"id": "walk", "name": "Walk", "type": "restricted",
-                                "points": [list(p) for p in SQUARE], "trigger_classes": ["person"]}]}}
+    config = {
+        "zones": {
+            "a": [
+                {
+                    "id": "walk",
+                    "name": "Walk",
+                    "type": "restricted",
+                    "points": [list(p) for p in SQUARE],
+                    "trigger_classes": ["person"],
+                }
+            ]
+        }
+    }
     with tmp_db.get_session() as session:
         repo = Repository(session)
         repo.create_camera("a", "A", "test")
         # Row seeded by an older build that did not store trigger_classes.
-        repo.create_zone({"zone_id": "walk", "camera_id": "a", "name": "Walk",
-                          "points": [list(p) for p in SQUARE]})
+        repo.create_zone({"zone_id": "walk", "camera_id": "a", "name": "Walk", "points": [list(p) for p in SQUARE]})
 
     pipeline = IBVAPPipeline()
     pipeline._restore_zones(config)

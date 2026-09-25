@@ -79,24 +79,26 @@ def build_model(arch: str, n_classes: int) -> nn.Module:
 
 def loaders(size: int, batch: int, workers: int):
     if not (DATA / "train").exists():
-        raise SystemExit(
-            f"{DATA / 'train'} not found.\nRun:  python scripts/build_dataset.py"
-        )
+        raise SystemExit(f"{DATA / 'train'} not found.\nRun:  python scripts/build_dataset.py")
 
-    train_tf = transforms.Compose([
-        transforms.RandomResizedCrop(size, scale=(0.6, 1.0)),
-        transforms.RandomHorizontalFlip(),
-        transforms.ColorJitter(0.3, 0.3, 0.3, 0.05),
-        transforms.ToTensor(),
-        transforms.Normalize(MEAN, STD),
-        transforms.RandomErasing(p=0.25),
-    ])
-    val_tf = transforms.Compose([
-        transforms.Resize(int(size * 1.14)),
-        transforms.CenterCrop(size),
-        transforms.ToTensor(),
-        transforms.Normalize(MEAN, STD),
-    ])
+    train_tf = transforms.Compose(
+        [
+            transforms.RandomResizedCrop(size, scale=(0.6, 1.0)),
+            transforms.RandomHorizontalFlip(),
+            transforms.ColorJitter(0.3, 0.3, 0.3, 0.05),
+            transforms.ToTensor(),
+            transforms.Normalize(MEAN, STD),
+            transforms.RandomErasing(p=0.25),
+        ]
+    )
+    val_tf = transforms.Compose(
+        [
+            transforms.Resize(int(size * 1.14)),
+            transforms.CenterCrop(size),
+            transforms.ToTensor(),
+            transforms.Normalize(MEAN, STD),
+        ]
+    )
 
     tr = datasets.ImageFolder(DATA / "train", train_tf)
     va = datasets.ImageFolder(DATA / "val", val_tf)
@@ -112,10 +114,18 @@ def loaders(size: int, batch: int, workers: int):
     sampler = WeightedRandomSampler(weights, len(weights), replacement=True)
 
     return (
-        DataLoader(tr, batch_size=batch, sampler=sampler, num_workers=workers,
-                   pin_memory=True, drop_last=True, persistent_workers=workers > 0),
-        DataLoader(va, batch_size=batch, shuffle=False, num_workers=workers,
-                   pin_memory=True, persistent_workers=workers > 0),
+        DataLoader(
+            tr,
+            batch_size=batch,
+            sampler=sampler,
+            num_workers=workers,
+            pin_memory=True,
+            drop_last=True,
+            persistent_workers=workers > 0,
+        ),
+        DataLoader(
+            va, batch_size=batch, shuffle=False, num_workers=workers, pin_memory=True, persistent_workers=workers > 0
+        ),
         tr.classes,
         counts,
     )
@@ -155,8 +165,7 @@ def main() -> None:
     ap.add_argument("--batch", type=int, default=64)
     ap.add_argument("--imgsz", type=int, default=224)
     ap.add_argument("--lr", type=float, default=3e-4)
-    ap.add_argument("--workers", type=int, default=2,
-                    help="use 0 on the Windows 'shared file mapping' error 1455")
+    ap.add_argument("--workers", type=int, default=2, help="use 0 on the Windows 'shared file mapping' error 1455")
     ap.add_argument("--resume", action="store_true")
     args = ap.parse_args()
 
@@ -213,14 +222,20 @@ def main() -> None:
         sched.step()
 
         acc, macro, hits, tots = evaluate(model, va, dev, len(classes))
-        print(f"  epoch {ep + 1:>3}: loss {running / max(seen, 1):.4f}  "
-              f"val acc {acc:.4f}  macro-recall {macro:.4f}")
+        print(f"  epoch {ep + 1:>3}: loss {running / max(seen, 1):.4f}  val acc {acc:.4f}  macro-recall {macro:.4f}")
 
         torch.save(
-            {"model": model.state_dict(), "opt": opt.state_dict(),
-             "sched": sched.state_dict(), "scaler": scaler.state_dict(),
-             "epoch": ep, "best": max(best, macro), "classes": classes,
-             "arch": args.arch, "imgsz": args.imgsz},
+            {
+                "model": model.state_dict(),
+                "opt": opt.state_dict(),
+                "sched": sched.state_dict(),
+                "scaler": scaler.state_dict(),
+                "epoch": ep,
+                "best": max(best, macro),
+                "classes": classes,
+                "arch": args.arch,
+                "imgsz": args.imgsz,
+            },
             ckpt_path,
         )
         # Select on macro-recall, not accuracy: accuracy would happily pick the
@@ -228,9 +243,14 @@ def main() -> None:
         if macro > best:
             best = macro
             torch.save(
-                {"model": model.state_dict(), "classes": classes,
-                 "arch": args.arch, "imgsz": args.imgsz,
-                 "acc": acc, "macro_recall": macro},
+                {
+                    "model": model.state_dict(),
+                    "classes": classes,
+                    "arch": args.arch,
+                    "imgsz": args.imgsz,
+                    "acc": acc,
+                    "macro_recall": macro,
+                },
                 OUT / "ibvap_fine.pt",
             )
             (OUT / "classes.json").write_text(json.dumps(classes, indent=2), encoding="utf-8")

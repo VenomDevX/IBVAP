@@ -21,12 +21,28 @@ def _seed(repo, ages_days, with_alerts=True):
     now = time.time()
     for i, age in enumerate(ages_days):
         ts = now - age * DAY
-        repo.create_event({"event_id": f"E{i}", "camera_id": "c1", "event_type": "t", "timestamp": ts,
-                           "risk_score": 10.0, "risk_level": "low"})
+        repo.create_event(
+            {
+                "event_id": f"E{i}",
+                "camera_id": "c1",
+                "event_type": "t",
+                "timestamp": ts,
+                "risk_score": 10.0,
+                "risk_level": "low",
+            }
+        )
         repo.create_event_evidence(f"E{i}", "snapshot", snapshot_path=f"s{i}.jpg")
         if with_alerts:
-            repo.create_alert({"alert_id": f"A{i}", "camera_id": "c1", "event_id": f"E{i}",
-                               "event_type": "t", "timestamp": ts, "risk_score": 50.0})
+            repo.create_alert(
+                {
+                    "alert_id": f"A{i}",
+                    "camera_id": "c1",
+                    "event_id": f"E{i}",
+                    "event_type": "t",
+                    "timestamp": ts,
+                    "risk_score": 50.0,
+                }
+            )
 
 
 def _cutoff(days):
@@ -78,8 +94,11 @@ def test_forged_checkpoint_is_ignored(repo):
     head_hash = repo.session.query(EventModel).filter_by(event_id="E0").one().chain_hash
     repo.session.query(EventEvidenceModel).filter_by(event_id="E0").delete()
     repo.session.query(EventModel).filter_by(event_id="E0").delete()
-    repo.session.add(EvidenceCheckpointModel(table_name="events", anchor_hash=head_hash,
-                                             rows_purged=1, created_at=datetime.utcnow(), mac="0" * 64))
+    repo.session.add(
+        EvidenceCheckpointModel(
+            table_name="events", anchor_hash=head_hash, rows_purged=1, created_at=datetime.utcnow(), mac="0" * 64
+        )
+    )
     repo.session.commit()
     assert not verify_table(repo.session, "events").ok
 
@@ -125,6 +144,7 @@ def test_legacy_v1_rows_still_verify(repo):
     row.chain_version = None
     row.chain_hash = evidence.compute_hash({f: getattr(row, f) for f in fields_for("events", 1)}, None)
     from src.database.models import EvidenceChainHeadModel
+
     repo.session.query(EvidenceChainHeadModel).filter_by(table_name="events").update({"head_hash": row.chain_hash})
     repo.session.commit()
     assert verify_table(repo.session, "events").ok
@@ -152,15 +172,17 @@ def test_concurrent_writers_do_not_fork_the_chain(tmp_db):
         Repository(s).create_camera(camera_id="c1", name="C1", stream_url="x")
 
     first = tmp_db.get_session()
-    Repository(first).create_event({"event_id": "EA", "camera_id": "c1", "event_type": "t",
-                                    "timestamp": time.time()}, commit=False)
+    Repository(first).create_event(
+        {"event_id": "EA", "camera_id": "c1", "event_type": "t", "timestamp": time.time()}, commit=False
+    )
     # `first` now holds the write lock with an uncommitted append.
     done = threading.Event()
 
     def second_writer():
         with tmp_db.get_session() as s:
-            Repository(s).create_event({"event_id": "EB", "camera_id": "c1", "event_type": "t",
-                                        "timestamp": time.time()})
+            Repository(s).create_event(
+                {"event_id": "EB", "camera_id": "c1", "event_type": "t", "timestamp": time.time()}
+            )
         done.set()
 
     t = threading.Thread(target=second_writer)
@@ -184,12 +206,18 @@ def test_append_links_to_rows_written_by_older_code(repo):
     from src.alerts.evidence_chain import fields_for
 
     _seed(repo, [1], with_alerts=False)
-    legacy = EventModel(event_id="LEGACY", camera_id="c1", event_type="t", timestamp=datetime.utcnow(),
-                        object_type="", risk_score=0.0, risk_level="low")
+    legacy = EventModel(
+        event_id="LEGACY",
+        camera_id="c1",
+        event_type="t",
+        timestamp=datetime.utcnow(),
+        object_type="",
+        risk_score=0.0,
+        risk_level="low",
+    )
     last = repo.session.query(EventModel).one()
     legacy.prev_hash = last.chain_hash
-    legacy.chain_hash = evidence.compute_hash({f: getattr(legacy, f) for f in fields_for("events", 1)},
-                                              last.chain_hash)
+    legacy.chain_hash = evidence.compute_hash({f: getattr(legacy, f) for f in fields_for("events", 1)}, last.chain_hash)
     repo.session.add(legacy)
     repo.session.commit()
 
@@ -214,8 +242,7 @@ def test_rows_appended_during_verification_are_not_reported(repo, monkeypatch):
         # A live writer appends right AFTER the verifier has read all the rows.
         if reading_events and not state["appended"]:
             state["appended"] = True
-            repo.create_event({"event_id": "LIVE", "camera_id": "c1", "event_type": "t",
-                               "timestamp": time.time()})
+            repo.create_event({"event_id": "LIVE", "camera_id": "c1", "event_type": "t", "timestamp": time.time()})
 
     monkeypatch.setattr(Query, "__iter__", iter_then_append)
     assert ec.verify_table(repo.session, "events").ok

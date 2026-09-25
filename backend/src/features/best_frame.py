@@ -4,7 +4,9 @@ import cv2
 import numpy as np
 
 
-def score_crop(crop: np.ndarray, confidence: float, frame_shape: tuple | None = None, bbox: tuple | None = None) -> float:
+def score_crop(
+    crop: np.ndarray, confidence: float, frame_shape: tuple | None = None, bbox: tuple | None = None
+) -> float:
     if crop is None or getattr(crop, "size", 0) == 0:
         return 0.0
     height, width = crop.shape[:2]

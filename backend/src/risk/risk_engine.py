@@ -132,11 +132,9 @@ class RiskEngine:
         fused_event.score_breakdown = self.calculate_breakdown(fused_event)
         # The structured breakdown is authoritative. Flatten its already
         # normalized reasons only for backwards-compatible UI/report display.
-        fused_event.contributing_factors = list(dict.fromkeys(
-            reason
-            for category in fused_event.score_breakdown.values()
-            for reason in category["reasons"]
-        ))
+        fused_event.contributing_factors = list(
+            dict.fromkeys(reason for category in fused_event.score_breakdown.values() for reason in category["reasons"])
+        )
         return fused_event
 
     def _calculate_spatial_risk(self, ctx: dict) -> tuple[float, list[str]]:
@@ -227,8 +225,13 @@ class RiskEngine:
             reasons.append(f"High-interest object class: {object_type.replace('_', ' ')}")
 
         context_only_types = {
-            "restricted_zone_entry", "night_restricted_zone_entry", "restricted_zone_loitering",
-            "loitering", "night_loitering", "fence_crossing", "night_fence_crossing",
+            "restricted_zone_entry",
+            "night_restricted_zone_entry",
+            "restricted_zone_loitering",
+            "loitering",
+            "night_loitering",
+            "fence_crossing",
+            "night_fence_crossing",
         }
         if not reasons and event_type not in context_only_types:
             reasons.append(f"Behavioral pattern: {event_type.replace('_', ' ')}")
@@ -252,8 +255,10 @@ class RiskEngine:
         label = hit.get("label", "")
         if hit.get("list_type") == "wanted":
             if not hit.get("exact", True):
-                return (float(self.watchlist_scores.get("wanted_possible", 60)),
-                        [f"Possible wanted watchlist match (unconfirmed read): {label}"])
+                return (
+                    float(self.watchlist_scores.get("wanted_possible", 60)),
+                    [f"Possible wanted watchlist match (unconfirmed read): {label}"],
+                )
             return float(self.watchlist_scores.get("wanted", 100)), [f"Wanted watchlist match: {label}"]
         if hit.get("list_type") == "authorized":
             return float(self.watchlist_scores.get("authorized", 0)), [f"Authorized: {label}"]

@@ -144,9 +144,7 @@ class ZoneManager:
                 containing_zones.append(zone)
         return containing_zones
 
-    def check_track_zones(
-        self, camera_id: str, centroid: tuple[int, int], object_type: str | None = None
-    ) -> list[str]:
+    def check_track_zones(self, camera_id: str, centroid: tuple[int, int], object_type: str | None = None) -> list[str]:
         """
         Check which zone IDs a tracked object's centroid falls inside.
         Returns list of zone IDs.

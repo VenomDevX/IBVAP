@@ -49,7 +49,8 @@ class TrackManager:
         """Get all currently active tracks."""
         now = time.time()
         return {
-            tid: t for tid, t in self._tracks.items()
+            tid: t
+            for tid, t in self._tracks.items()
             if t.is_active and t.status in {"NEW", "ACTIVE"} and now - t.last_seen <= self.expiry_seconds
         }
 
