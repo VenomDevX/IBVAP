@@ -13,7 +13,7 @@ router = APIRouter()
 
 
 @router.get("")
-async def get_statistics(user: dict = Depends(require_auth)):
+def get_statistics(user: dict = Depends(require_auth)):
     """Get comprehensive dashboard statistics."""
     from src.api.app import get_pipeline
 
@@ -44,7 +44,7 @@ async def get_statistics(user: dict = Depends(require_auth)):
 
 
 @router.get("/summary")
-async def get_summary(user: dict = Depends(require_auth)):
+def get_summary(user: dict = Depends(require_auth)):
     """Get a quick summary for the dashboard header."""
     from src.api.app import get_pipeline
 
@@ -85,7 +85,7 @@ async def get_summary(user: dict = Depends(require_auth)):
 
 
 @router.get("/timeseries")
-async def get_timeseries(user: dict = Depends(require_auth)):
+def get_timeseries(user: dict = Depends(require_auth)):
     """Get alert counts bucketed by hour for the last 24 hours."""
     session = get_database().get_session()
     try:
@@ -95,7 +95,7 @@ async def get_timeseries(user: dict = Depends(require_auth)):
 
 
 @router.get("/threats")
-async def get_threats(user: dict = Depends(require_auth)):
+def get_threats(user: dict = Depends(require_auth)):
     """Get active threats and risk scores across all cameras."""
     from src.api.app import get_pipeline
 

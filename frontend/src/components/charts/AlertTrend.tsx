@@ -20,7 +20,9 @@ function TrendTooltip({ active, payload, label }: Partial<TooltipContentProps<nu
 
 export default function AlertTrend({ data, height = 180 }: { data: TimeseriesData; height?: number }) {
   const colors = useChartColors();
-  const rows = data.labels.map((label, index) => ({ label, count: data.data[index] ?? 0 }));
+  const labels = data?.labels ?? [];
+  const values = data?.data ?? [];
+  const rows = labels.map((label, index) => ({ label, count: values[index] ?? 0 }));
   const total = rows.reduce((sum, row) => sum + row.count, 0);
 
   return (

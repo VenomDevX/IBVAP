@@ -31,6 +31,12 @@ def main():
     ap.add_argument("--conf", type=float, default=0.001)  # low conf for honest mAP
     ap.add_argument("--device", default="0")
     ap.add_argument("--batch", type=int, default=8)
+    ap.add_argument(
+        "--workers",
+        type=int,
+        default=0,
+        help="Validation dataloader workers; 0 is safest on Windows/low-pagefile systems.",
+    )
     ap.add_argument("--tta", action="store_true", help="test-time augmentation (slower, ~+1 mAP)")
     args = ap.parse_args()
 
@@ -48,6 +54,7 @@ def main():
         conf=args.conf,
         device=args.device,
         batch=args.batch,
+        workers=args.workers,
         augment=args.tta,
         plots=True,
         save_json=True,
@@ -67,9 +74,12 @@ def main():
         ap50, ap = m.box.ap50, m.box.ap
         per_class = []
         for row, cid in enumerate(idx):
+            precision = float(p[row])
+            recall = float(r[row])
+            f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
             per_class.append({
                 "id": int(cid), "class": str(names[cid]),
-                "precision": float(p[row]), "recall": float(r[row]),
+                "precision": precision, "recall": recall, "f1": f1,
                 "map50": float(ap50[row]), "map50_95": float(ap[row]),
             })
             print(
@@ -87,6 +97,7 @@ def main():
         json.dump({
             "weights": weights, "split": args.split, "imgsz": args.imgsz,
             "precision": float(m.box.mp), "recall": float(m.box.mr),
+            "f1_macro": float(sum(x["f1"] for x in per_class) / len(per_class)) if per_class else 0.0,
             "map50": float(m.box.map50), "map50_95": float(m.box.map),
             "per_class": per_class,
         }, fh, indent=2)

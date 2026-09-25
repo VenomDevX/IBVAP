@@ -42,6 +42,9 @@ function Wait-Until([scriptblock]$condition, [int]$timeoutSec, [string]$what) {
 }
 
 function Test-Docker {
+    # PowerShell 5.1 turns native stderr into a terminating error under "Stop",
+    # so a stopped daemon would abort the script instead of returning $false.
+    $ErrorActionPreference = "Continue"
     & docker info *> $null
     return $LASTEXITCODE -eq 0
 }
