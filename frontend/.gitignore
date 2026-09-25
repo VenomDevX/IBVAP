@@ -37,3 +37,6 @@ next-env.d.ts
 *.njsproj
 *.sln
 *.sw?
+
+# e2e TOTP secrets captured at enrollment
+tests/e2e/.totp-*

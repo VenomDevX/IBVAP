@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 import jwt
-from fastapi import Depends, FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
@@ -20,7 +20,7 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
-from src.api.auth import issue_media_ticket, require_auth
+from src.api.auth import _get_service_client, issue_media_ticket, require_admin, require_auth
 from src.api.middleware.input_validator import InputValidationMiddleware
 from src.api.middleware.security import RequestLoggingMiddleware, SecurityHeadersMiddleware
 from src.api.ratelimit import limiter
@@ -347,6 +347,27 @@ def create_app() -> FastAPI:
             exp = time.time() + 3600
         revoke_token(token, exp)
         return {"status": "logged_out"}
+
+    @app.post("/api/auth/users/{user_id}/reset-mfa", tags=["Auth"])
+    @limiter.limit("10/minute")
+    async def reset_mfa(request: Request, user_id: str, user: dict = Depends(require_admin)):
+        """Lost phone: drop every authenticator the user has; they re-enroll at next sign-in."""
+        client = _get_service_client()
+        if client is None:
+            raise HTTPException(status_code=503, detail="Auth admin API unavailable")
+        try:
+            factors = client.auth.admin.mfa.list_factors({"user_id": user_id}).factors
+            for factor in factors:
+                client.auth.admin.mfa.delete_factor({"user_id": user_id, "id": factor.id})
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid user id")
+        session = get_database().get_session()
+        try:
+            actor = user.get("email") or user.get("user_id") or "unknown"
+            Repository(session).create_audit_log("reset_mfa", actor, {"user_id": user_id, "factors": len(factors)})
+        finally:
+            session.close()
+        return {"status": "reset", "factors_removed": len(factors)}
 
     if is_production:
         logger.info("Running in PRODUCTION mode — API docs disabled")

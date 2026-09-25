@@ -70,3 +70,32 @@ def test_jwt_rejects_alg_none_and_bad_sig(monkeypatch):
     with pytest.raises(HTTPException):
         auth._verify_token(bad)
     importlib.reload(auth)
+
+
+def test_jwt_requires_second_factor(monkeypatch):
+    """A password-only (aal1) token is refused; the same token after the TOTP step (aal2) passes."""
+    monkeypatch.setenv("SUPABASE_JWT_SECRET", "s3cret")
+    import importlib
+
+    import src.api.auth as auth
+
+    importlib.reload(auth)
+    import jwt as pyjwt
+    from fastapi import HTTPException
+
+    claims = {"sub": "x", "aud": "authenticated", "exp": 9999999999}
+    aal1 = pyjwt.encode({**claims, "aal": "aal1"}, "s3cret", algorithm="HS256")
+    with pytest.raises(HTTPException) as err:
+        auth._verify_token(aal1)
+    assert err.value.detail == "mfa_required"
+
+    aal2 = pyjwt.encode({**claims, "aal": "aal2"}, "s3cret", algorithm="HS256")
+    assert auth._verify_token(aal2)["sub"] == "x"
+    importlib.reload(auth)
+
+
+def test_reset_mfa_is_admin_only(client, monkeypatch):
+    make_token("operator", monkeypatch)
+    r = client.post("/api/auth/users/00000000-0000-0000-0000-000000000000/reset-mfa",
+                    headers={"Authorization": "Bearer x"})
+    assert r.status_code == 403

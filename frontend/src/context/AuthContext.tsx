@@ -21,6 +21,17 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | null>(null);
 
+/** True once the session has passed the TOTP step; the backend refuses anything less. */
+function hasSecondFactor(session: Session | null) {
+  if (!session) return false;
+  try {
+    const part = session.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    return JSON.parse(atob(part)).aal === 'aal2';
+  } catch {
+    return false;
+  }
+}
+
 /** Roles the backend accepts for PATCH /api/alerts/{id}. */
 export function canManageAlerts(role: AppRole) {
   return role === 'admin' || role === 'commander' || role === 'supervisor' || role === 'operator';
@@ -55,7 +66,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // The application role lives in user_profiles, not in the JWT.
   const accessToken = session?.access_token ?? null;
-  const hasSession = !!session;
+  const hasSession = hasSecondFactor(session);
   useEffect(() => {
     let cancelled = false;
     if (!hasSession) {
@@ -106,7 +117,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ isAuthenticated: !!user, user, session, role, allowedAreas, profileError, mediaTicket, loading, logout }}>
+    <AuthContext.Provider value={{ isAuthenticated: hasSession, user, session, role, allowedAreas, profileError, mediaTicket, loading, logout }}>
       {children}
     </AuthContext.Provider>
   );

@@ -144,12 +144,16 @@ def _verify_token(token: str) -> dict:
             # asymmetric — verify against the project's published JWKS
             key = _jwks().get_signing_key_from_jwt(token).key
             payload = jwt.decode(token, key, algorithms=["ES256", "RS256", "RS384", "RS512", "EdDSA"], **kwargs)
-        return payload
     except jwt.ExpiredSignatureError:
         raise _unauth("Token has expired")
     except Exception as e:
         logger.warning(f"JWT rejected (alg={alg}): {e}")
         raise _unauth("Invalid authentication credentials")
+
+    # Two-step verification is mandatory: a password-only (aal1) session gets nothing.
+    if payload.get("aal") != "aal2":
+        raise _unauth("mfa_required")
+    return payload
 
 
 async def require_auth(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
