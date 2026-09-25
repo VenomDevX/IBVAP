@@ -9,6 +9,7 @@ import os
 import time
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 import jwt
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -16,11 +17,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from loguru import logger
+from pydantic import BaseModel
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
-from src.api.auth import _get_service_client, issue_media_ticket, require_admin, require_auth
+from src.api.auth import _get_service_client, invalidate_profile, issue_media_ticket, require_admin, require_auth
 from src.api.middleware.input_validator import InputValidationMiddleware
 from src.api.middleware.security import RequestLoggingMiddleware, SecurityHeadersMiddleware
 from src.api.ratelimit import limiter
@@ -52,6 +54,10 @@ if TYPE_CHECKING:
 pipeline: "IBVAPPipeline | None" = None
 
 _PLACEHOLDER_KEYS = {"", "change-me", "changeme", "test-hmac-key", "dev", "secret", "placeholder"}
+
+
+class MfaSetting(BaseModel):
+    required: bool
 
 
 @asynccontextmanager
@@ -356,7 +362,7 @@ def create_app() -> FastAPI:
         if client is None:
             raise HTTPException(status_code=503, detail="Auth admin API unavailable")
         try:
-            factors = client.auth.admin.mfa.list_factors({"user_id": user_id}).factors
+            factors = client.auth.admin.mfa.list_factors({"user_id": user_id})
             for factor in factors:
                 client.auth.admin.mfa.delete_factor({"user_id": user_id, "id": factor.id})
         except ValueError:
@@ -368,6 +374,55 @@ def create_app() -> FastAPI:
         finally:
             session.close()
         return {"status": "reset", "factors_removed": len(factors)}
+
+    @app.get("/api/auth/users", tags=["Auth"])
+    async def list_users(user: dict = Depends(require_admin)):
+        """Every account with its role and two-step verification state (Settings → Users)."""
+        client = _get_service_client()
+        if client is None:
+            raise HTTPException(status_code=503, detail="Auth admin API unavailable")
+        # ponytail: one page of 1000 and a factor lookup per user; fine for a control room, batch if accounts grow
+        accounts = client.auth.admin.list_users(per_page=1000)
+        profiles = {
+            row["id"]: row
+            for row in client.table("user_profiles").select("id, role, mfa_required").execute().data or []
+        }
+        return [
+            {
+                "user_id": a.id,
+                "email": a.email or "",
+                "role": profiles.get(a.id, {}).get("role"),
+                "mfa_required": profiles.get(a.id, {}).get("mfa_required") is not False,
+                "mfa_enrolled": any(
+                    f.factor_type == "totp" and f.status == "verified"
+                    for f in client.auth.admin.mfa.list_factors({"user_id": a.id})
+                ),
+            }
+            for a in accounts
+        ]
+
+    @app.put("/api/auth/users/{user_id}/mfa", tags=["Auth"])
+    @limiter.limit("30/minute")
+    async def set_user_mfa(request: Request, user_id: UUID, body: MfaSetting, user: dict = Depends(require_admin)):
+        """Admin switch: require the 6-digit code for this user at sign-in, or not."""
+        client = _get_service_client()
+        if client is None:
+            raise HTTPException(status_code=503, detail="Auth admin API unavailable")
+        updated = (
+            client.table("user_profiles").update({"mfa_required": body.required}).eq("id", str(user_id)).execute().data
+        )
+        if not updated:
+            raise HTTPException(status_code=404, detail="User not found")
+        invalidate_profile(str(user_id))
+        session = get_database().get_session()
+        try:
+            actor = user.get("email") or user.get("user_id") or "unknown"
+            Repository(session).create_audit_log(
+                "set_user_mfa", actor, {"user_id": str(user_id), "mfa_required": body.required}
+            )
+        finally:
+            session.close()
+        return {"user_id": str(user_id), "mfa_required": body.required}
 
     if is_production:
         logger.info("Running in PRODUCTION mode — API docs disabled")

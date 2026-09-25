@@ -64,7 +64,7 @@ DEFAULT_ROLE = "operator"
 security = HTTPBearer()
 
 _PROFILE_TTL = 60.0
-_profile_cache: dict = {}  # user_id -> (expiry_ts, {"role", "allowed_areas"})
+_profile_cache: dict = {}  # user_id -> (expiry_ts, {"role", "allowed_areas", "mfa_required"})
 _service_client = None
 _warned_no_service_key = False
 
@@ -92,20 +92,20 @@ def _get_service_client():
 
 
 def resolve_profile(user_id: str) -> dict:
-    """Return {'role': str, 'allowed_areas': list[str]} for a user id, cached 60s."""
+    """Return {'role', 'allowed_areas', 'mfa_required'} for a user id, cached 60s."""
     now = time.time()
     hit = _profile_cache.get(user_id)
     if hit and hit[0] > now:
         return hit[1]
 
     if user_id == "dev-admin" and _DEV_BYPASS and _IS_DEV:
-        return {"role": "admin", "allowed_areas": []}
+        return {"role": "admin", "allowed_areas": [], "mfa_required": False}
 
     try:
         client = _get_service_client()
         if client is None:
             raise RuntimeError("Profile service unavailable")
-        resp = client.table("user_profiles").select("role, allowed_areas").eq("id", user_id).limit(1).execute()
+        resp = client.table("user_profiles").select("role, allowed_areas, mfa_required").eq("id", user_id).limit(1).execute()
         row = (resp.data or [None])[0]
     except Exception as e:
         logger.error(f"Profile lookup failed: {type(e).__name__}")
@@ -115,10 +115,16 @@ def resolve_profile(user_id: str) -> dict:
     areas = row.get("allowed_areas")
     if not isinstance(areas, list) or any(not isinstance(a, str) or not a.strip() for a in areas):
         raise HTTPException(status_code=403, detail="Invalid camera access configuration")
-    profile = {"role": row["role"], "allowed_areas": areas}
+    # Anything but an explicit False keeps the code step on.
+    profile = {"role": row["role"], "allowed_areas": areas, "mfa_required": row.get("mfa_required") is not False}
 
     _profile_cache[user_id] = (now + _PROFILE_TTL, profile)
     return profile
+
+
+def invalidate_profile(user_id: str) -> None:
+    """Drop a cached profile so an admin's change applies on the next request, not in 60s."""
+    _profile_cache.pop(user_id, None)
 
 
 def _verify_token(token: str) -> dict:
@@ -150,8 +156,8 @@ def _verify_token(token: str) -> dict:
         logger.warning(f"JWT rejected (alg={alg}): {e}")
         raise _unauth("Invalid authentication credentials")
 
-    # Two-step verification is mandatory: a password-only (aal1) session gets nothing.
-    if payload.get("aal") != "aal2":
+    # A password-only (aal1) session gets nothing unless an admin exempted this user from the code step.
+    if payload.get("aal") != "aal2" and resolve_profile(payload["sub"])["mfa_required"]:
         raise _unauth("mfa_required")
     return payload
 

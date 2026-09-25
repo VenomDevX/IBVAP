@@ -4,7 +4,7 @@ import { Suspense, useEffect, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/src/api/supabase';
-import { useAuth } from '@/src/context/AuthContext';
+import { mfaRequiredFor, useAuth } from '@/src/context/AuthContext';
 import AuthShell from '@/src/components/auth/AuthShell';
 import { Field, Input } from '@/src/components/ui/Field';
 import { Button } from '@/src/components/ui/Button';
@@ -43,6 +43,10 @@ function LoginForm() {
           : authError.message);
       }
       if (!data.user) throw new Error('The sign-in service did not respond. Try again in a moment.');
+      if (!(await mfaRequiredFor(data.user.id))) {
+        router.replace('/');
+        return;
+      }
 
       const { data: factors, error: factorError } = await supabase.auth.mfa.listFactors();
       if (factorError) throw factorError;

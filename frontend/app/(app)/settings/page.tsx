@@ -14,6 +14,7 @@ import { Button } from '@/src/components/ui/Button';
 import Dialog from '@/src/components/ui/Dialog';
 import { Field, Input } from '@/src/components/ui/Field';
 import Section from '@/src/components/ui/Section';
+import DataTable, { type Column } from '@/src/components/ui/DataTable';
 import { Dot } from '@/src/components/ui/Indicators';
 import { InlineError, Loading } from '@/src/components/ui/States';
 import type { ClipPurgeResult, ClipStorage, DashboardSummary } from '@/src/types';
@@ -22,7 +23,78 @@ const TABS = [
   { id: 'profile', label: 'Profile' },
   { id: 'appearance', label: 'Appearance' },
   { id: 'health', label: 'System health' },
+  { id: 'users', label: 'Users', adminOnly: true },
 ] as const;
+
+interface AppUser {
+  user_id: string;
+  email: string;
+  role: string | null;
+  mfa_required: boolean;
+  mfa_enrolled: boolean;
+}
+
+function UsersTab() {
+  const { user: me } = useAuth();
+  const [users, setUsers] = useState<AppUser[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState<string | null>(null);
+
+  useEffect(() => {
+    apiJson<AppUser[]>('/api/auth/users').then(setUsers).catch(err => setError(errorMessage(err)));
+  }, []);
+
+  const toggle = async (target: AppUser, required: boolean) => {
+    setSaving(target.user_id);
+    try {
+      await apiSend(`/api/auth/users/${target.user_id}/mfa`, 'PUT', { required });
+      setUsers(list => list?.map(u => (u.user_id === target.user_id ? { ...u, mfa_required: required } : u)) ?? list);
+      pushToast({
+        title: required ? 'Two-step verification turned on' : 'Two-step verification turned off',
+        message: `${target.email}${required ? ' will need a 6-digit code at the next sign-in.' : ' signs in with a password only.'}`,
+        level: 'success',
+      });
+    } catch (err) {
+      pushToast({ title: 'The change was not saved', message: errorMessage(err), level: 'error' });
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  if (error) return <InlineError>{error}</InlineError>;
+
+  const columns: Column<AppUser>[] = [
+    { key: 'email', header: 'User', sortable: true, render: u => <>{u.email || u.user_id}{u.user_id === me?.id && <span className="text-muted"> (you)</span>}</> },
+    { key: 'role', header: 'Role', sortable: true, accessor: u => u.role ?? '', render: u => (u.role ? formatStatus(u.role) : 'No access'), hideBelow: 'sm' },
+    { key: 'mfa_enrolled', header: 'Authenticator app', accessor: u => (u.mfa_enrolled ? 1 : 0), render: u => (u.mfa_enrolled ? 'Set up' : 'Not set up'), hideBelow: 'md' },
+    {
+      key: 'mfa_required',
+      header: 'Two-step verification',
+      accessor: u => (u.mfa_required ? 1 : 0),
+      render: u => (
+        <label className="inline-flex cursor-pointer items-center gap-2">
+          <input
+            type="checkbox" role="switch" checked={u.mfa_required} disabled={saving === u.user_id}
+            aria-label={`Two-step verification for ${u.email || u.user_id}`}
+            onChange={event => void toggle(u, event.target.checked)}
+            className="size-4 accent-[var(--accent)]"
+          />
+          {u.mfa_required ? 'Required' : 'Off'}
+        </label>
+      ),
+    },
+  ];
+
+  return (
+    <Section
+      title="Two-step verification"
+      description="Choose who must enter a 6-digit code from an authenticator app when signing in. Users cannot change this themselves, and every change is recorded in the audit log."
+    >
+      <DataTable label="Users" columns={columns} rows={users ?? []} rowKey={u => u.user_id} loading={!users}
+        emptyTitle="No users" pageSize={25} />
+    </Section>
+  );
+}
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -305,12 +377,14 @@ function HealthTab() {
 
 function SettingsInner() {
   const [{ tab }, setUrl] = useUrlState({ tab: 'profile' });
-  const active = TABS.some(t => t.id === tab) ? tab : 'profile';
+  const { role } = useAuth();
+  const tabs = TABS.filter(t => !('adminOnly' in t) || role === 'admin');
+  const active = tabs.some(t => t.id === tab) ? tab : 'profile';
 
   return (
     <div className="max-w-3xl">
       <div role="tablist" aria-label="Settings sections" className="flex gap-6 overflow-x-auto border-b border-line">
-        {TABS.map(item => (
+        {tabs.map(item => (
           <button
             key={item.id}
             id={`tab-${item.id}`}
@@ -332,6 +406,7 @@ function SettingsInner() {
         {active === 'profile' && <ProfileTab />}
         {active === 'appearance' && <AppearanceTab />}
         {active === 'health' && <HealthTab />}
+        {active === 'users' && <UsersTab />}
       </div>
     </div>
   );

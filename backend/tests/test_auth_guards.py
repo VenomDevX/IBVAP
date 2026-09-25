@@ -83,6 +83,8 @@ def test_jwt_requires_second_factor(monkeypatch):
     import jwt as pyjwt
     from fastapi import HTTPException
 
+    required = {"role": "operator", "allowed_areas": [], "mfa_required": True}
+    monkeypatch.setattr(auth, "resolve_profile", lambda uid: required)
     claims = {"sub": "x", "aud": "authenticated", "exp": 9999999999}
     aal1 = pyjwt.encode({**claims, "aal": "aal1"}, "s3cret", algorithm="HS256")
     with pytest.raises(HTTPException) as err:
@@ -91,6 +93,10 @@ def test_jwt_requires_second_factor(monkeypatch):
 
     aal2 = pyjwt.encode({**claims, "aal": "aal2"}, "s3cret", algorithm="HS256")
     assert auth._verify_token(aal2)["sub"] == "x"
+
+    # An admin exempted this user: the password-only token is accepted.
+    monkeypatch.setattr(auth, "resolve_profile", lambda uid: {**required, "mfa_required": False})
+    assert auth._verify_token(aal1)["sub"] == "x"
     importlib.reload(auth)
 
 
@@ -98,4 +104,14 @@ def test_reset_mfa_is_admin_only(client, monkeypatch):
     make_token("operator", monkeypatch)
     r = client.post("/api/auth/users/00000000-0000-0000-0000-000000000000/reset-mfa",
                     headers={"Authorization": "Bearer x"})
+    assert r.status_code == 403
+
+
+@pytest.mark.parametrize("method,path", [
+    ("GET", "/api/auth/users"),
+    ("PUT", "/api/auth/users/00000000-0000-0000-0000-000000000000/mfa"),
+])
+def test_user_mfa_admin_routes_reject_operator(client, monkeypatch, method, path):
+    make_token("operator", monkeypatch)
+    r = client.request(method, path, json={"required": False}, headers={"Authorization": "Bearer x"})
     assert r.status_code == 403

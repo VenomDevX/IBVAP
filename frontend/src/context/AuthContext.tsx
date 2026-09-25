@@ -21,7 +21,16 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | null>(null);
 
-/** True once the session has passed the TOTP step; the backend refuses anything less. */
+/**
+ * Whether this user must enter a 6-digit code at sign-in. An admin sets it per user
+ * (Settings → Users); users can read but not change their own. Unknown means yes.
+ */
+export async function mfaRequiredFor(userId: string) {
+  const { data, error } = await supabase.from('user_profiles').select('mfa_required').eq('id', userId).maybeSingle();
+  return error || !data ? true : data.mfa_required !== false;
+}
+
+/** True once the session has passed the TOTP step. */
 function hasSecondFactor(session: Session | null) {
   if (!session) return false;
   try {
@@ -45,6 +54,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profileError, setProfileError] = useState(false);
   const [mediaTicket, setMediaTicket] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // For a password-only session: whether an admin exempted this user from the code step.
+  const [mfaCheck, setMfaCheck] = useState<{ userId: string; exempt: boolean } | null>(null);
 
   useEffect(() => {
     supabase.auth.getSession()
@@ -66,7 +77,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // The application role lives in user_profiles, not in the JWT.
   const accessToken = session?.access_token ?? null;
-  const hasSession = hasSecondFactor(session);
+  const secondFactor = hasSecondFactor(session);
+  const sessionUserId = session?.user.id ?? null;
+  useEffect(() => {
+    if (!sessionUserId || secondFactor) return;
+    let cancelled = false;
+    void mfaRequiredFor(sessionUserId).then(required => {
+      if (!cancelled) setMfaCheck({ userId: sessionUserId, exempt: !required });
+    });
+    return () => { cancelled = true; };
+  }, [sessionUserId, secondFactor]);
+  const mfaExempt = mfaCheck && mfaCheck.userId === sessionUserId ? mfaCheck.exempt : null;
+  const hasSession = secondFactor || mfaExempt === true;
+  const checkingMfa = !!session && !secondFactor && mfaExempt === null;
+
   useEffect(() => {
     let cancelled = false;
     if (!hasSession) {
@@ -117,7 +141,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ isAuthenticated: hasSession, user, session, role, allowedAreas, profileError, mediaTicket, loading, logout }}>
+    <AuthContext.Provider value={{ isAuthenticated: hasSession, user, session, role, allowedAreas, profileError, mediaTicket, loading: loading || checkingMfa, logout }}>
       {children}
     </AuthContext.Provider>
   );
