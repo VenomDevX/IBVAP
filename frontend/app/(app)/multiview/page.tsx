@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowsOut } from '@phosphor-icons/react';
 import { apiJson, errorMessage } from '@/src/api/client';
+import { supabase } from '@/src/api/supabase';
+import { useAuth } from '@/src/context/AuthContext';
 import { useInterval } from '@/src/hooks/useInterval';
 import { cn } from '@/src/lib/cn';
 import SegmentedControl from '@/src/components/ui/SegmentedControl';
@@ -32,15 +34,40 @@ const GRID: Record<GridSize, string> = {
   '16': 'sm:grid-cols-4 lg:grid-rows-4',
 };
 
+interface SavedLayout { size: GridSize; selections: string[] }
+
+/** The user's last grid, kept in their Supabase profile so it follows them to any workstation. */
+function savedLayout(metadata: Record<string, unknown> | undefined): SavedLayout | null {
+  const saved = metadata?.multiview as Partial<SavedLayout> | undefined;
+  if (!saved || !(saved.size && saved.size in GRID) || !Array.isArray(saved.selections)) return null;
+  return { size: saved.size, selections: saved.selections.filter(id => typeof id === 'string') };
+}
+
 export default function MultiViewPage() {
+  const { user } = useAuth();
+  const [initial] = useState(() => savedLayout(user?.user_metadata));
   const [cameras, setCameras] = useState<Camera[]>([]);
   const [threats, setThreats] = useState<ThreatsData | null>(null);
-  const [size, setSize] = useState<GridSize>('4');
+  const [size, setSize] = useState<GridSize>(initial?.size ?? '4');
   const [selections, setSelections] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const inFlight = useRef(false);
+  const lastSaved = useRef(initial ? JSON.stringify(initial) : '');
+
+  // Save the layout a moment after the user stops changing it (only real changes, and only once loaded).
+  useEffect(() => {
+    if (loading || !selections.length) return;
+    const layout = JSON.stringify({ size, selections });
+    if (layout === lastSaved.current) return;
+    const timer = window.setTimeout(() => {
+      lastSaved.current = layout;
+      supabase.auth.updateUser({ data: { multiview: { size, selections } } })
+        .then(({ error: saveError }) => { if (saveError) console.error('Saving the multiview layout failed:', saveError.message); });
+    }, 800);
+    return () => window.clearTimeout(timer);
+  }, [loading, size, selections]);
 
   const load = useCallback(async () => {
     if (inFlight.current) return;
@@ -52,14 +79,20 @@ export default function MultiViewPage() {
     inFlight.current = false;
     if (cameraResult.status === 'fulfilled') {
       setCameras(cameraResult.value);
-      setSelections(previous => (previous.length ? previous : cameraResult.value.map(c => c.camera_id)));
+      setSelections(previous => {
+        if (previous.length) return previous;
+        const all = cameraResult.value.map(c => c.camera_id);
+        // Restore the saved tiles, dropping cameras that were removed or are no longer assigned to this user.
+        const restored = (initial?.selections ?? []).filter(id => all.includes(id));
+        return restored.length ? [...restored, ...all.filter(id => !restored.includes(id))] : all;
+      });
       setError(null);
     } else {
       setError(errorMessage(cameraResult.reason));
     }
     if (threatResult.status === 'fulfilled') setThreats(threatResult.value);
     setLoading(false);
-  }, []);
+  }, [initial]);
 
   useEffect(() => { void load(); }, [load]);
   useInterval(load, 5000);
