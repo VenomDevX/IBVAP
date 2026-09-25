@@ -15,7 +15,6 @@ import json
 import cv2
 import torch
 from torchvision import models, transforms
-
 from ultralytics import YOLO
 
 

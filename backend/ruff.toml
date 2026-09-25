@@ -15,3 +15,8 @@ ignore = ["E402", "E741"]
 [lint.per-file-ignores]
 "scripts/*" = ["E402"]
 "tests/*" = ["E402"]
+
+[lint.isort]
+# A local, gitignored ./ultralytics settings folder otherwise makes ruff sort it as
+# first-party here but third-party in CI.
+known-third-party = ["ultralytics"]
