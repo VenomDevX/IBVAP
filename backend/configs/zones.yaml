@@ -65,3 +65,12 @@ fences:
       trigger_direction: "both"
       enabled: true
       trigger_classes: ["car", "truck"]
+
+  CAM_IN_FLYOVER:
+    - id: "FENCE_FLYOVER_BORDER"
+      name: "Flyover Virtual Borderline"
+      # 1920x1080 frame space: full carriageway, left edge to the flyover barrier
+      point_a: [0, 780]
+      point_b: [1300, 780]
+      trigger_direction: "both"
+      enabled: true
