@@ -1,0 +1,36 @@
+PROPRIETARY LICENSE — ALL RIGHTS RESERVED
+
+Copyright (c) 2026 Parth Sharma. All rights reserved.
+
+This repository and everything in it, including source code, trained model
+weights, datasets, configuration, documentation, images and any other material
+(together, the "Software"), are the exclusive property of the copyright holder.
+
+NO LICENSE IS GRANTED. Except with the prior written permission of the
+copyright holder, no person or organisation may, in whole or in part:
+
+  1. use, run, execute or deploy the Software for any purpose;
+  2. copy, reproduce, download, clone, mirror or store the Software;
+  3. modify, adapt, translate or create derivative works of the Software;
+  4. distribute, publish, share, sublicense, sell, rent or lend the Software;
+  5. use the Software, its models or its data to train, fine-tune or evaluate
+     any machine-learning or artificial-intelligence system;
+  6. reverse engineer, decompile or disassemble any part of the Software.
+
+Being able to view or access this repository (for example as an invited
+collaborator, a reviewer or an evaluator) does not grant any of the rights
+above. Access for review or evaluation is limited to viewing the Software for
+that purpose only, and ends when the review or evaluation ends.
+
+Any permission must be given in writing and signed by the copyright holder.
+Any use not expressly permitted in writing is prohibited and may result in
+civil and criminal liability under applicable copyright law, including the
+Indian Copyright Act, 1957.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM,
+DAMAGES OR OTHER LIABILITY ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR ITS USE.
+
+Permission requests: contact the copyright holder through
+https://github.com/VenomDevX

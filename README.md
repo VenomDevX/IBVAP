@@ -9,6 +9,7 @@
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.141-009688?logo=fastapi&logoColor=white)
 ![Next.js](https://img.shields.io/badge/Next.js-16-000000?logo=nextdotjs&logoColor=white)
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.14%20%2B%20CUDA-EE4C2C?logo=pytorch&logoColor=white)
+[![License: Proprietary](https://img.shields.io/badge/License-Proprietary%20%C2%B7%20All%20rights%20reserved-red)](LICENSE)
 
 Smart India Hackathon 2026 · Problem Statement **26187**
 
@@ -31,6 +32,7 @@ Smart India Hackathon 2026 · Problem Statement **26187**
 - [Repository layout](#repository-layout)
 - [Troubleshooting](#troubleshooting)
 - [Documentation](#documentation)
+- [License](#license)
 
 ## Overview
 
@@ -302,6 +304,12 @@ The detector's class list lives in one place: [`backend/ml/taxonomy.py`](backend
 | [DEPLOYMENT.md](docs/DEPLOYMENT.md) | Docker, GPU, TLS and production configuration |
 | [RUNBOOK_LOCAL_TRAINING.md](docs/RUNBOOK_LOCAL_TRAINING.md) | Rebuilding the dataset and training on a local GPU |
 | [SECURITY_AUDIT_2026-09-08.md](docs/SECURITY_AUDIT_2026-09-08.md) | Security review and the fixes applied |
+
+## License
+
+**Proprietary — all rights reserved.** Copyright © 2026 Parth Sharma.
+
+No one may use, copy, modify, distribute or deploy this software, or use its models or data to train other systems, without prior written permission. Having access to this repository does not grant any rights. See [LICENSE](LICENSE) for the full terms.
 
 ---
 
