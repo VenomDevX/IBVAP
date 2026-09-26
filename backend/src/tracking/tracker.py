@@ -256,7 +256,11 @@ class MultiObjectTracker:
             return sv.ByteTrack(
                 track_activation_threshold=0.25,
                 lost_track_buffer=max_age,
-                minimum_matching_threshold=iou_threshold,
+                # ByteTrack's threshold is a DISTANCE (1 - IoU): a pair matches when
+                # 1 - IoU < threshold. Passing the config's minimum IoU (0.3) straight
+                # through demanded IoU >= 0.7, so any moving object lost its track
+                # every few frames and left a trail of duplicate boxes.
+                minimum_matching_threshold=1.0 - iou_threshold,
                 frame_rate=frame_rate,
                 minimum_consecutive_frames=min_hits,
             )
@@ -275,13 +279,27 @@ class MultiObjectTracker:
 
     @staticmethod
     def draw_tracks(
-        frame: np.ndarray, tracks: dict[int, Track], show_trajectory: bool = True, trail_length: int = 30
+        frame: np.ndarray,
+        tracks: dict[int, Track],
+        show_trajectory: bool = True,
+        trail_length: int = 30,
+        now: float | None = None,
+        max_stale: float = 0.2,
     ) -> np.ndarray:
-        """Draw tracking information on frame."""
+        """Draw tracking information on frame.
+
+        A track stays active for a while after its last detection so events and
+        re-identification survive short occlusions, but its box is frozen where the
+        object was last seen. With `now`, only tracks seen within `max_stale`
+        seconds are drawn, so a lost track never leaves a ghost box behind a
+        moving object.
+        """
         annotated = frame.copy()
 
         for tid, track in tracks.items():
             if not track.is_active:
+                continue
+            if now is not None and now - track.last_seen > max_stale:
                 continue
 
             x1, y1, x2, y2 = track.bbox

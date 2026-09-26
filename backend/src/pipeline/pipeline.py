@@ -418,7 +418,7 @@ class CameraPipeline:
                 if fences:
                     annotated = FenceDetector.draw_fences(annotated, fences)
                 # Draw tracks
-                annotated = MultiObjectTracker.draw_tracks(annotated, active_tracks)
+                annotated = MultiObjectTracker.draw_tracks(annotated, active_tracks, now=detections.timestamp)
 
                 with self._frame_lock:
                     self._latest_annotated = annotated
