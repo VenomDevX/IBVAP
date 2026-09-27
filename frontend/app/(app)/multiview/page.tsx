@@ -125,7 +125,10 @@ export default function MultiViewPage() {
             <div key={index} data-tile className="relative aspect-video min-h-0 overflow-hidden rounded-lg bg-video lg:aspect-auto">
               {camera ? (
                 <>
-                  <StreamView path={camera.enabled === false ? null : `/api/stream/${camera.camera_id}`} alt={camera.name}
+                  <StreamView
+                    // Quarter-screen tiles do not need full-HD streams. Poll mode appends /snapshot, so no query there.
+                    path={camera.enabled === false ? null : `/api/stream/${camera.camera_id}${count > MAX_LIVE_STREAMS ? '' : '?w=960'}`}
+                    alt={camera.name}
                     mode={count > MAX_LIVE_STREAMS ? 'poll' : 'stream'} idleLabel="Camera disabled" className="size-full" />
                   <div className="absolute inset-x-0 bottom-0 flex items-center gap-2 bg-black/60 px-2 py-1 text-white">
                     <select

@@ -40,7 +40,14 @@ class VideoSource:
     """
     Thread-safe video source that handles RTSP streams and video files.
     Provides reconnection logic for stream interruptions.
+
+    Two rates: `fps_limit` is how often the pipeline analyses frames. While at
+    least one person is watching the live view (`add_viewer`), every frame is
+    decoded and kept at the source's own rate (up to MAX_DISPLAY_FPS) so playback
+    is smooth; with no viewers, decoding drops back to the analysis rate to save CPU.
     """
+
+    MAX_DISPLAY_FPS = 60.0
 
     def __init__(self, camera_info: CameraInfo, reconnect_delay: float = 5.0, max_reconnect_attempts: int = 10):
         self.camera_info = camera_info
@@ -49,7 +56,10 @@ class VideoSource:
 
         self._cap: cv2.VideoCapture | None = None
         self._status = CameraStatus.OFFLINE
-        self._lock = threading.Lock()
+        self._lock = threading.Lock()  # guards the latest-frame slot and status
+        # Guards the capture device. Separate from _lock so a 4K decode (~20 ms)
+        # never blocks readers of the latest frame (live view, analysis).
+        self._cap_lock = threading.Lock()
         self._running = False
         self._frame: Any | None = None
         self._frame_id: int = 0
@@ -62,6 +72,8 @@ class VideoSource:
         self._is_file: bool = False
         self._reader_thread: threading.Thread | None = None
         self._reader_stop = threading.Event()
+        self._viewers = 0
+        self._viewers_lock = threading.Lock()
 
     @property
     def status(self) -> CameraStatus:
@@ -88,6 +100,23 @@ class VideoSource:
     @property
     def source_resolution(self) -> tuple[int, int]:
         return (self._source_width, self._source_height)
+
+    @property
+    def display_active(self) -> bool:
+        return self._viewers > 0
+
+    def add_viewer(self) -> None:
+        with self._viewers_lock:
+            self._viewers += 1
+
+    def remove_viewer(self) -> None:
+        with self._viewers_lock:
+            self._viewers = max(0, self._viewers - 1)
+
+    def latest(self) -> tuple[int, Any | None, float]:
+        """(frame_id, frame, capture time) of the newest frame, read atomically."""
+        with self._lock:
+            return self._frame_id, self._frame, self._last_frame_time
 
     def connect(self) -> bool:
         """Establish connection to video source."""
@@ -174,15 +203,17 @@ class VideoSource:
                 if elapsed < min_interval:
                     return True, self._frame  # Return last frame
 
-            ret, frame = self._cap.read()
+            with self._cap_lock:
+                ret, frame = self._cap.read()
 
             if not ret:
                 # A file source that ran out of frames is not an error — loop it
                 # (the demo cameras are looping clips). Only a live stream that
                 # stops delivering frames is a genuine fault.
                 if self._is_file:
-                    self._cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                    ret, frame = self._cap.read()
+                    with self._cap_lock:
+                        self._cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        ret, frame = self._cap.read()
                 if not ret:
                     self._status = CameraStatus.ERROR if not self._is_file else CameraStatus.OFFLINE
                     return False, None
@@ -220,19 +251,22 @@ class VideoSource:
 
     def _reader_loop(self) -> None:
         """Capture continuously and drop superseded frames instead of queueing them."""
-        # Demo files do not need to be decoded at 30/60 FPS when analysis is
-        # intentionally capped lower. Pacing decoding itself avoids wasting a
-        # CPU core per 4K source merely to discard most decoded frames.
-        decode_fps = self._source_fps
-        if self.camera_info.fps_limit > 0:
-            decode_fps = min(decode_fps, float(self.camera_info.fps_limit))
-        source_interval = 1.0 / max(decode_fps, 1.0) if self._is_file else 0.0
-        output_interval = 1.0 / max(self.camera_info.fps_limit, 1) if self.camera_info.fps_limit > 0 else 0.0
+        # With nobody watching, demo files do not need decoding at 30/60 FPS when
+        # analysis is capped lower: pacing decoding to the analysis rate avoids
+        # wasting a CPU core per 4K source. While someone watches, every frame is
+        # kept so playback runs at the source's own rate.
+        source_fps = min(self._source_fps or 30.0, self.MAX_DISPLAY_FPS)
+        analysis_fps = float(self.camera_info.fps_limit) if self.camera_info.fps_limit > 0 else source_fps
+        idle_output_interval = 1.0 / max(analysis_fps, 1.0) if self.camera_info.fps_limit > 0 else 0.0
         last_stored = self._last_frame_time
+        next_due = time.perf_counter()
         try:
             while self._running and not self._reader_stop.is_set():
-                started = time.perf_counter()
-                with self._lock:
+                viewing = self.display_active
+                decode_fps = source_fps if viewing else min(source_fps, analysis_fps)
+                source_interval = 1.0 / max(decode_fps, 1.0) if self._is_file else 0.0
+                output_interval = 0.0 if viewing else idle_output_interval
+                with self._cap_lock:
                     capture = self._cap
                     if capture is None or not capture.isOpened():
                         break
@@ -252,9 +286,16 @@ class VideoSource:
                     last_stored = now
 
                 if source_interval:
-                    remaining = source_interval - (time.perf_counter() - started)
+                    # Pace against a running schedule, not "sleep what is left of
+                    # this frame": Windows sleeps round up to ~15.6 ms, which turned
+                    # a 33 ms frame budget into ~46 ms (30 FPS files played at ~21).
+                    # An oversleep here is made up by skipping the next wait.
+                    next_due += source_interval
+                    remaining = next_due - time.perf_counter()
                     if remaining > 0:
                         self._reader_stop.wait(remaining)
+                    elif remaining < -source_interval:
+                        next_due = time.perf_counter()  # fell far behind: resync, don't burst
         except Exception as exc:
             # Without this the thread dies silently (e.g. OpenCV out of memory)
             # while the camera keeps reporting ONLINE with a frozen last frame.
@@ -290,10 +331,11 @@ class VideoSource:
         self._running = False
         self._reader_stop.set()
         reader = self._reader_thread
-        with self._lock:
+        with self._cap_lock:
             if self._cap is not None:
                 self._cap.release()
                 self._cap = None
+        with self._lock:
             self._frame = None
             self._status = CameraStatus.STOPPED
         if reader is not None and reader is not threading.current_thread():

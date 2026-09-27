@@ -43,7 +43,7 @@ from src.temporal.loitering_detector import LoiteringDetector
 from src.temporal.night_detector import NightDetector
 from src.tracking.track import configure_type_upgrade
 from src.tracking.track_manager import TrackManager
-from src.tracking.tracker import MultiObjectTracker
+from src.tracking.tracker import MultiObjectTracker, OverlayBox, draw_overlay, overlay_snapshot
 from src.watchlist.service import get_watchlist, reload_watchlist
 
 _LIST_PRIORITY = {"wanted": 3, "vip": 2, "authorized": 1}
@@ -211,8 +211,13 @@ class CameraPipeline:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._latest_frame: np.ndarray | None = None
-        self._latest_annotated: np.ndarray | None = None
+        # Track boxes from the last analysed frame. The live view draws them on
+        # every newer video frame (see render_live_frame), so playback runs at the
+        # video's frame rate while analysis runs at `fps_limit`.
+        self._overlay: list[OverlayBox] = []
         self._frame_lock = threading.Lock()
+        self._analysis_interval = 1.0 / camera_info.fps_limit if camera_info.fps_limit > 0 else 0.0
+        self._next_analysis_at = 0.0
         self._stats = {
             "frames_processed": 0,
             "frames_dropped_for_analysis": 0,
@@ -275,6 +280,12 @@ class CameraPipeline:
         last_frame_id = -1
         while self._running:
             try:
+                # Analyse at `fps_limit`. The capture thread may deliver frames
+                # faster (every frame while someone is watching the live view).
+                wait = self._next_analysis_at - time.time()
+                if wait > 0:
+                    self._stop_event.wait(wait)
+                    continue
                 start_time = time.time()
 
                 # 1. Read frame
@@ -297,6 +308,12 @@ class CameraPipeline:
                 if frame_id == last_frame_id:
                     self._stop_event.wait(0.005)
                     continue
+                # Advance a running schedule (Windows sleeps overshoot by up to
+                # ~15 ms, which would otherwise quietly lower the analysis rate);
+                # resync instead of bursting if analysis fell behind.
+                self._next_analysis_at = max(
+                    self._next_analysis_at + self._analysis_interval, start_time - self._analysis_interval
+                )
                 if last_frame_id >= 0 and frame_id > last_frame_id + 1:
                     self._stats["frames_dropped_for_analysis"] += frame_id - last_frame_id - 1
                 last_frame_id = frame_id
@@ -407,21 +424,10 @@ class CameraPipeline:
                 for transition in self.event_state_machine.expire_inactive(active_uuids):
                     self._persist_transition(transition, frame=None)
 
-                # Annotate frame
-                annotated = frame.copy()
-                # Draw zones
-                camera_zones = self.zone_manager.get_camera_zones(camera_id)
-                if camera_zones:
-                    annotated = ZoneManager.draw_zones(annotated, camera_zones)
-                # Draw fences
-                fences = self.fence_detector.camera_fences(camera_id)
-                if fences:
-                    annotated = FenceDetector.draw_fences(annotated, fences)
-                # Draw tracks
-                annotated = MultiObjectTracker.draw_tracks(annotated, active_tracks, now=detections.timestamp)
-
+                # Publish this frame's boxes for the live view.
+                overlay = overlay_snapshot(active_tracks)
                 with self._frame_lock:
-                    self._latest_annotated = annotated
+                    self._overlay = overlay
 
                 # Update stats
                 self._stats["frames_processed"] += 1
@@ -879,10 +885,31 @@ class CameraPipeline:
         with self._frame_lock:
             return self._latest_frame.copy() if self._latest_frame is not None else None
 
-    def get_latest_annotated_frame(self) -> np.ndarray | None:
-        """Get the latest annotated frame (with overlays)."""
+    # A box is drawn for this long after its last detection, moved along its
+    # velocity. Longer than one analysis interval at the slowest configured rate
+    # (10 FPS) plus detector queueing, short enough that a lost track vanishes
+    # before it visibly drifts off its object.
+    LIVE_BOX_MAX_AGE = 0.35
+
+    def render_live_frame(self) -> tuple[int, np.ndarray | None]:
+        """Newest video frame with zones, fences and predicted track boxes drawn.
+
+        Returns (frame_id, frame); frame_id changes whenever a new video frame
+        arrives, so callers can skip re-rendering an unchanged frame.
+        """
+        frame_id, frame, captured_at = self.video_source.latest()
+        if frame is None:
+            return frame_id, None
         with self._frame_lock:
-            return self._latest_annotated.copy() if self._latest_annotated is not None else None
+            boxes = self._overlay
+        camera_id = self.camera_info.camera_id
+        zones = self.zone_manager.get_camera_zones(camera_id)
+        if zones:
+            frame = ZoneManager.draw_zones(frame, zones)
+        fences = self.fence_detector.camera_fences(camera_id)
+        if fences:
+            frame = FenceDetector.draw_fences(frame, fences)
+        return frame_id, draw_overlay(frame, boxes, now=captured_at, max_stale=self.LIVE_BOX_MAX_AGE)
 
     def get_stats(self) -> dict:
         return {

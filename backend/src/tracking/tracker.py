@@ -4,6 +4,7 @@ Integrates ByteTrack for persistent object tracking across frames.
 """
 
 import uuid
+from dataclasses import dataclass
 
 import cv2
 import numpy as np
@@ -294,48 +295,116 @@ class MultiObjectTracker:
         seconds are drawn, so a lost track never leaves a ghost box behind a
         moving object.
         """
-        annotated = frame.copy()
+        boxes = overlay_snapshot(tracks, trail_length if show_trajectory else 0)
+        return draw_overlay(frame, boxes, now=now, max_stale=max_stale, predict=False)
 
-        for tid, track in tracks.items():
-            if not track.is_active:
-                continue
-            if now is not None and now - track.last_seen > max_stale:
-                continue
 
-            x1, y1, x2, y2 = track.bbox
-            cx, cy = track.centroid
+# Box colours by object type (BGR); anything else is grey.
+_TRACK_COLORS = {
+    "person": (0, 255, 0),
+    "car": (255, 165, 0),
+    "motorcycle": (255, 255, 0),
+    "bus": (0, 165, 255),
+    "truck": (0, 0, 255),
+}
+_VELOCITY_WINDOW_S = 0.4  # recent trajectory used to estimate on-screen motion
 
-            # Color based on object type
-            colors = {
-                "person": (0, 255, 0),
-                "car": (255, 165, 0),
-                "motorcycle": (255, 255, 0),
-                "bus": (0, 165, 255),
-                "truck": (0, 0, 255),
-            }
-            color = colors.get(track.object_type, (128, 128, 128))
 
-            # Bounding box
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+@dataclass(frozen=True)
+class OverlayBox:
+    """What the live view needs to draw one track, frozen at analysis time.
 
-            # Track ID label
-            label = f"ID:{tid} {track.effective_label()}"
-            (lw, lh), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-            cv2.rectangle(annotated, (x1, y1 - lh - 8), (x1 + lw, y1), color, -1)
-            cv2.putText(annotated, label, (x1, y1 - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    The pipeline publishes a list of these after each analysed frame; the stream
+    draws them on every newer video frame, shifted by velocity x elapsed time, so
+    boxes glide at the video's frame rate instead of jumping at the analysis rate.
+    """
 
-            # Trajectory trail
-            if show_trajectory and len(track.trajectory) > 1:
-                recent = track.get_recent_trajectory(trail_length)
-                pts = np.array([(p[0], p[1]) for p in recent], dtype=np.int32)
-                # Older half thin, newer half thick: the same tapered trail in
-                # two draw calls instead of one cv2.line per segment per track.
-                half = len(pts) // 2
-                if half >= 1:
-                    cv2.polylines(annotated, [pts[: half + 1]], False, color, 1)
-                cv2.polylines(annotated, [pts[half:]], False, color, 2)
+    track_id: int
+    label: str
+    color: tuple[int, int, int]
+    bbox: tuple[int, int, int, int]
+    last_seen: float
+    velocity: tuple[float, float]  # pixels per second
+    trail: np.ndarray  # (N, 2) int32 recent centroids, oldest first
 
-            # Centroid dot
-            cv2.circle(annotated, (cx, cy), 4, color, -1)
 
-        return annotated
+def _velocity(track: Track) -> tuple[float, float]:
+    points = track.trajectory
+    if len(points) < 2:
+        return (0.0, 0.0)
+    last_x, last_y, last_t = points[-1]
+    first = points[-1]
+    for point in reversed(points[:-1]):
+        if last_t - point[2] > _VELOCITY_WINDOW_S:
+            break
+        first = point
+    dt = last_t - first[2]
+    if dt <= 0:
+        return (0.0, 0.0)
+    return ((last_x - first[0]) / dt, (last_y - first[1]) / dt)
+
+
+def overlay_snapshot(tracks: dict[int, Track], trail_length: int = 30) -> list[OverlayBox]:
+    """Freeze the drawable state of every active track."""
+    boxes = []
+    for tid, track in tracks.items():
+        if not track.is_active:
+            continue
+        recent = track.get_recent_trajectory(trail_length) if trail_length else []
+        boxes.append(
+            OverlayBox(
+                track_id=tid,
+                label=f"ID:{tid} {track.effective_label()}",
+                color=_TRACK_COLORS.get(track.object_type, (128, 128, 128)),
+                bbox=tuple(int(v) for v in track.bbox),
+                last_seen=track.last_seen,
+                velocity=_velocity(track),
+                trail=np.array([(p[0], p[1]) for p in recent], dtype=np.int32).reshape(-1, 2),
+            )
+        )
+    return boxes
+
+
+def draw_overlay(
+    frame: np.ndarray,
+    boxes: list[OverlayBox],
+    now: float | None = None,
+    max_stale: float = 0.2,
+    predict: bool = True,
+) -> np.ndarray:
+    """Draw track boxes on a copy of `frame`.
+
+    Boxes last seen more than `max_stale` seconds before `now` are skipped (their
+    position is frozen, so they would trail behind the object). With `predict`,
+    each box is moved along its velocity to where the object should be at `now`.
+    """
+    annotated = frame.copy()
+    for box in boxes:
+        age = 0.0 if now is None else now - box.last_seen
+        if age > max_stale:
+            continue
+        dx = dy = 0
+        if predict and age > 0:
+            dx, dy = round(box.velocity[0] * age), round(box.velocity[1] * age)
+        x1, y1, x2, y2 = box.bbox
+        x1, y1, x2, y2 = x1 + dx, y1 + dy, x2 + dx, y2 + dy
+        color = box.color
+
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+        (lw, lh), _ = cv2.getTextSize(box.label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+        cv2.rectangle(annotated, (x1, y1 - lh - 8), (x1 + lw, y1), color, -1)
+        cv2.putText(annotated, box.label, (x1, y1 - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
+        pts = box.trail
+        if len(pts) > 1:
+            if dx or dy:
+                # Extend the trail to the predicted position so it stays attached.
+                pts = np.vstack([pts, pts[-1] + (dx, dy)])
+            # Older half thin, newer half thick: the same tapered trail in two
+            # draw calls instead of one cv2.line per segment per track.
+            half = len(pts) // 2
+            if half >= 1:
+                cv2.polylines(annotated, [pts[: half + 1]], False, color, 1)
+            cv2.polylines(annotated, [pts[half:]], False, color, 2)
+        cv2.circle(annotated, ((x1 + x2) // 2, (y1 + y2) // 2), 4, color, -1)
+    return annotated
